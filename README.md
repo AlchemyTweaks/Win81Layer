@@ -1,11 +1,33 @@
 # Win81Layer
 
 A Windows 8.1 style desktop shell for Windows 10 and 11. It runs as a normal
-user program and draws its own Start screen, taskbar, charms bar, app switcher,
-context menus and related UI on top of the current desktop. It does not replace
-the Windows shell files and it does not modify the operating system.
+user program and draws its own Start screen, taskbar, Windows 7 style Start
+menu, charms bar, app switcher, search, action center and context menus on top
+of the current desktop. It does not replace the Windows shell files and it does
+not modify the operating system.
 
 Built with C# and WPF on .NET 10.
+
+## Screenshots
+
+The app UI only. These are synthetic renders with sample data, not real content.
+
+![Start screen](docs/images/start.png)
+
+![Search](docs/images/search.png)
+
+![Settings](docs/images/settings.png)
+
+## Features
+
+- Start screen with tiles and groups
+- Taskbar with pinned apps and running windows
+- Windows 7 style Start menu with a most used list and per item actions
+- Charms bar, app switcher and action center with quick toggles
+- Search for apps, settings, a calculator and place cards
+- Per user settings, applied without a restart where possible
+- Multi monitor support
+- Reversible by design. It changes per user settings and its own files only.
 
 ## Requirements
 
@@ -43,6 +65,17 @@ there. The layout the code expects is:
 - `assets/Windows81` for the icon library and its `.json` manifests
 - `assets/Win81Icons`, `assets/Wallpapers`, `assets/Weather` for the rest
 
+## Contributing
+
+Bug reports and pull requests are welcome. Please read
+[CONTRIBUTING.md](CONTRIBUTING.md) first. It covers how to report a bug, how to
+build for development, and how to send a change safely.
+
+## Security
+
+Please do not open a public issue for a security problem. See
+[SECURITY.md](SECURITY.md) for how to report it privately.
+
 ## Notes
 
 - This code was produced by decompiling and cleaning an earlier build, so some
@@ -50,9 +83,7 @@ there. The layout the code expects is:
 - The Google Calendar and Gmail tiles are optional. They use your own Google
   OAuth client id and secret, which you enter at runtime. No credentials are
   stored in this repository.
-- The app changes only per user settings and its own files. It never edits
-  system files.
 
 ## License
 
-MIT. See the LICENSE file.
+MIT. See the [LICENSE](LICENSE) file.
