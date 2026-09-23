@@ -1,0 +1,21 @@
+# Build output
+bin/
+obj/
+[Dd]ebug/
+[Rr]elease/
+*.user
+*.suo
+.vs/
+
+# Local publish / packaging
+publish/
+dist/
+artifacts/
+
+# Windows 8.1 assets are Microsoft material and are not tracked here.
+# Put your own asset files under src/Win81Layer/assets to build the full look.
+src/Win81Layer/assets/
+
+# OS noise
+Thumbs.db
+desktop.ini

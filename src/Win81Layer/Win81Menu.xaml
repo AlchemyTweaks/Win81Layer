@@ -1,0 +1,120 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <!-- Fallbacks only; TaskbarContextMenu.ApplyTheme overwrites these live per menu. VM-authentic Build 9600 values. -->
+  <SolidColorBrush x:Key="M.Bg" Color="#FFFFFF" />
+  <SolidColorBrush x:Key="M.Fg" Color="#000000" />
+  <SolidColorBrush x:Key="M.Dis" Color="#767676" />
+  <SolidColorBrush x:Key="M.Hover" Color="#DEDEDE" />
+  <SolidColorBrush x:Key="M.HoverBorder" Color="Transparent" />
+  <SolidColorBrush x:Key="M.Border" Color="#000000" />
+  <SolidColorBrush x:Key="M.Sep" Color="#C8C8C8" />
+  <SolidColorBrush x:Key="M.Arrow" Color="#000000" />
+  <Style x:Key="Win81Separator" TargetType="{x:Type Separator}">
+    <Setter Property="FrameworkElement.OverridesDefaultStyle" Value="True" />
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="{x:Type Separator}">
+          <Border Height="1" Background="{DynamicResource M.Sep}" Margin="0,3" SnapsToDevicePixels="True" />
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+  <Style x:Key="Win81MenuItem" TargetType="{x:Type MenuItem}">
+    <Setter Property="FrameworkElement.OverridesDefaultStyle" Value="True" />
+    <Setter Property="Foreground" Value="{DynamicResource M.Fg}" />
+    <Setter Property="FontFamily" Value="Segoe UI" />
+    <Setter Property="FontSize" Value="15" />
+    <Setter Property="ItemContainerStyle" Value="{DynamicResource Win81MenuItem}" />
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="{x:Type MenuItem}">
+          <Border Name="Bd" Background="#00FFFFFF" BorderBrush="Transparent" BorderThickness="1" SnapsToDevicePixels="True">
+            <Grid MinHeight="34" MinWidth="180">
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="26" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="46" />
+              </Grid.ColumnDefinitions>
+              <ContentPresenter Name="IconHost" Grid.Column="0" ContentSource="Icon" HorizontalAlignment="Center" VerticalAlignment="Center" SnapsToDevicePixels="True" />
+              <TextBlock Name="Check" Grid.Column="0" Text="✓" FontSize="12" Foreground="{DynamicResource M.Fg}" HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed" />
+              <ContentPresenter Grid.Column="1" ContentSource="Header" RecognizesAccessKey="True" VerticalAlignment="Center" Margin="4,0,0,0" />
+              <Grid Name="Arrow" Column="2" HorizontalAlignment="Right" VerticalAlignment="Center" Visibility="Collapsed"><TextBlock Name="ArrowText" Text="&#x25B8;" FontFamily="Segoe UI Symbol" FontSize="11" Foreground="{DynamicResource M.Arrow}" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,9,0" /></Grid>
+              <Grid Name="Toggle" Column="2" Width="32" Height="15" Visibility="Collapsed" HorizontalAlignment="Center" VerticalAlignment="Center">
+                <Border Name="Track" Background="#B0B0B0" BorderBrush="Transparent" BorderThickness="1" SnapsToDevicePixels="True" />
+                <Border Name="Knob" Width="9" Margin="1" Background="#000000" HorizontalAlignment="Left" SnapsToDevicePixels="True" />
+              </Grid>
+              <TextBlock Name="Gesture" Grid.Column="2" Text="{Binding InputGestureText, RelativeSource={RelativeSource TemplatedParent}}" Foreground="{DynamicResource M.Dis}" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,12,0" />
+              <Popup Name="PART_Popup" AllowsTransparency="True" Placement="Right" HorizontalOffset="-2" VerticalOffset="-4" Focusable="False" PopupAnimation="None" IsOpen="{Binding IsSubmenuOpen, RelativeSource={RelativeSource TemplatedParent}}">
+                <Border Background="{DynamicResource M.Bg}" BorderBrush="{DynamicResource M.Border}" BorderThickness="2" Padding="0,4" Margin="0,0,6,6">
+                  <ItemsPresenter KeyboardNavigation.DirectionalNavigation="Cycle" />
+                </Border>
+              </Popup>
+            </Grid>
+          </Border>
+          <ControlTemplate.Triggers>
+            <Trigger Property="MenuItem.Role" Value="SubmenuHeader">
+              <Setter TargetName="Arrow" Property="Visibility" Value="Visible" />
+            </Trigger>
+            <Trigger Property="MenuItem.IsChecked" Value="True">
+              <Setter TargetName="Check" Property="Visibility" Value="Visible" />
+              <Setter TargetName="IconHost" Property="Visibility" Value="Collapsed" />
+            </Trigger>
+            <Trigger Property="FrameworkElement.Tag" Value="radio">
+              <Setter TargetName="Check" Property="Text" Value="&#x25CF;" />
+              <Setter TargetName="Check" Property="FontSize" Value="10" />
+            </Trigger>
+            <Trigger Property="FrameworkElement.Tag" Value="toggle">
+              <Setter TargetName="Toggle" Property="Visibility" Value="Visible" />
+              <Setter TargetName="Check" Property="Visibility" Value="Collapsed" />
+            </Trigger>
+            <MultiTrigger>
+              <MultiTrigger.Conditions>
+                <Condition Property="FrameworkElement.Tag" Value="toggle" />
+                <Condition Property="MenuItem.IsChecked" Value="True" />
+              </MultiTrigger.Conditions>
+              <Setter TargetName="Track" Value="{DynamicResource MenuAccent}" Property="Border.Background" />
+              <Setter TargetName="Knob" Property="HorizontalAlignment" Value="Right" />
+            </MultiTrigger>
+            <Trigger Property="UIElement.IsMouseOver" Value="True">
+              <Setter TargetName="Bd" Value="{DynamicResource M.Hover}" Property="Border.Background" />
+              <Setter TargetName="Bd" Value="{DynamicResource M.HoverBorder}" Property="Border.BorderBrush" />
+            </Trigger>
+            <MultiTrigger>
+              <!-- Pattern 7: the keyboard-highlighted Content-Menu item INVERTS to solid black. -->
+              <MultiTrigger.Conditions>
+                <Condition Property="MenuItem.IsHighlighted" Value="True" />
+                <Condition Property="UIElement.IsMouseOver" Value="False" />
+              </MultiTrigger.Conditions>
+              <Setter TargetName="Bd" Property="Border.Background" Value="#FF000000" />
+              <Setter Property="Foreground" Value="#FFFFFFFF" />
+              <Setter TargetName="ArrowText" Property="TextBlock.Foreground" Value="#FFFFFFFF" />
+              <Setter TargetName="Check" Property="TextBlock.Foreground" Value="#FFFFFFFF" />
+              <Setter TargetName="Gesture" Property="TextBlock.Foreground" Value="#FFC8C8C8" />
+            </MultiTrigger>
+            <Trigger Property="IsEnabled" Value="False">
+              <Setter Value="{DynamicResource M.Dis}" Property="Foreground" />
+              <Setter TargetName="Check" Value="{DynamicResource M.Dis}" Property="TextBlock.Foreground" />
+            </Trigger>
+          </ControlTemplate.Triggers>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+  <Style x:Key="Win81ContextMenu" TargetType="{x:Type ContextMenu}">
+    <Setter Property="FrameworkElement.OverridesDefaultStyle" Value="True" />
+    <Setter Property="UIElement.SnapsToDevicePixels" Value="True" />
+    <Setter Property="ContextMenu.HasDropShadow" Value="False" />
+    <Setter Property="FontFamily" Value="Segoe UI" />
+    <Setter Property="FontSize" Value="15" />
+    <Setter Property="ItemContainerStyle" Value="{DynamicResource Win81MenuItem}" />
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="{x:Type ContextMenu}">
+          <Border Background="{DynamicResource M.Bg}" BorderBrush="{DynamicResource M.Border}" BorderThickness="2" Padding="0,4" Margin="0,0,6,6" SnapsToDevicePixels="True">
+            <ItemsPresenter KeyboardNavigation.DirectionalNavigation="Cycle" />
+          </Border>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+</ResourceDictionary>

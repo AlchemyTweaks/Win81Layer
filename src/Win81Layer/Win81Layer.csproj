@@ -1,0 +1,98 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <AssemblyName>Win81Layer</AssemblyName>
+    <RootNamespace>Win81Layer</RootNamespace>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <UseWindowsForms>true</UseWindowsForms>
+    <SupportedOSPlatformVersion>10.0.19041.0</SupportedOSPlatformVersion>
+    <EnableDefaultPageItems>false</EnableDefaultPageItems>
+    <EnableDefaultApplicationDefinition>false</EnableDefaultApplicationDefinition>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <PublishReadyToRun>true</PublishReadyToRun>
+    <!-- lighter always-on process: strip unused runtime features + smaller self-contained publish -->
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <EventSourceSupport>false</EventSourceSupport>
+    <HttpActivityPropagationSupport>false</HttpActivityPropagationSupport>
+    <MetadataUpdaterSupport>false</MetadataUpdaterSupport>
+    <DebuggerSupport>false</DebuggerSupport>
+    <UseSystemResourceKeys>true</UseSystemResourceKeys>
+    <AutoreleasePoolSupport>false</AutoreleasePoolSupport>
+    <!-- No third-party startup hooks in this app: skip DOTNET_STARTUP_HOOKS resolution + hook probing during host init. -->
+    <StartupHookSupport>false</StartupHookSupport>
+  </PropertyGroup>
+
+  <!-- GC tuned for a small resident footprint (Workstation, NOT Server — Server GC would raise RAM). Concurrent GC
+       is intentionally LEFT ON so gen2 collections stay non-blocking and don't stutter animations. -->
+  <ItemGroup Condition="'$(Configuration)' == 'Release'">
+    <RuntimeHostConfigurationOption Include="System.GC.Server" Value="false" Trim="false" />
+    <RuntimeHostConfigurationOption Include="System.GC.RetainVM" Value="false" Trim="false" />
+    <RuntimeHostConfigurationOption Include="System.GC.ConserveMemory" Value="7" Trim="false" />
+  </ItemGroup>
+
+  <!-- WPF application definition + pages (BAML) -->
+  <ItemGroup>
+    <ApplicationDefinition Include="App.xaml">
+      <Generator>MSBuild:Compile</Generator>
+      <SubType>Designer</SubType>
+    </ApplicationDefinition>
+    <Page Include="StartScreen.xaml" />
+    <Page Include="TaskbarWindow.xaml" />
+    <Page Include="CharmsBar.xaml" />
+    <Page Include="CharmsClock.xaml" />
+    <Page Include="ThumbnailPreview.xaml" />
+    <Page Include="FileBrowserBody.xaml" />
+    <Page Include="Win81Window.xaml" />
+    <Page Include="Win81Menu.xaml" />
+    <Page Include="Themes/Metro81.Controls.xaml" />
+  </ItemGroup>
+
+  <!-- pack:// resources compiled into the assembly (icons, start bg, charm glyphs) -->
+  <ItemGroup>
+    <PackageReference Include="System.ServiceModel.Syndication" Version="10.0.11" />
+  </ItemGroup>
+  <ItemGroup>
+    <Resource Include="assets\**\*.png"
+              Exclude="assets\Wallpapers\**\*.png;assets\Win81Icons\uwp\**\*.png;assets\Windows81\**\*.png" />
+    <Resource Include="assets\**\*.ico" Exclude="assets\Windows81\**\*.ico" />
+  </ItemGroup>
+
+  <!-- loose content copied to output, loaded from disk at runtime -->
+  <ItemGroup>
+	<Content Include="DWM_DISABLED.marker">
+	  <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+	</Content>
+    <Content Include="assets\Wallpapers\**\*.*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="assets\Win81Icons\uwp\**\*.png">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="assets\Weather\**\*.jpg">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <!-- authentic 8.1 pointer scheme (.cur/.ani) — copied loose so CursorScheme can point the registry at real files -->
+    <Content Include="assets\Cursors81\**\*.cur;assets\Cursors81\**\*.ani">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <!-- system-icon override .ico must ALSO be loose (Explorer DefaultIcon needs a real path); still embedded above for pack:// -->
+    <Content Include="assets\Win81Icons\*.ico">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <!-- authentic Windows 8.1 asset library (extracted from the user's ISO) + manifests — loose on disk so Win81AssetResolver reads them at runtime -->
+    <Content Include="assets\Windows81\**\*.png;assets\Windows81\**\*.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
+</Project>

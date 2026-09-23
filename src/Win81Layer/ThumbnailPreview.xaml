@@ -1,0 +1,6 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Window x:Class="Win81Layer.ThumbnailPreview" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" WindowStyle="None" ResizeMode="NoResize" ShowInTaskbar="False" Topmost="True" ShowActivated="False" AllowsTransparency="False" Background="#FF1C1C20" SizeToContent="WidthAndHeight" UseLayoutRounding="True" SnapsToDevicePixels="True" xmlns:win81layer="clr-namespace:Win81Layer;assembly=Win81Layer">
+  <Border BorderBrush="{DynamicResource WindowAccent}" BorderThickness="1" Padding="5">
+    <StackPanel Name="Cells" Orientation="Horizontal" />
+  </Border>
+</Window>

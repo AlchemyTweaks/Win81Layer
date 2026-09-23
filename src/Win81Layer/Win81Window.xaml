@@ -1,0 +1,221 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Window x:Class="Win81Layer.Win81Window" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework" Title="Windows 8.1 Layer" Height="460" Width="720" WindowStartupLocation="CenterScreen" WindowStyle="SingleBorderWindow" Background="#FF1B1B1B" UseLayoutRounding="True" SnapsToDevicePixels="True" xmlns:win81layer="clr-namespace:Win81Layer;assembly=Win81Layer">
+  <shell:WindowChrome.WindowChrome>
+    <shell:WindowChrome CaptionHeight="30" ResizeBorderThickness="4" GlassFrameThickness="0" CornerRadius="0" UseAeroCaptionButtons="False" />
+  </shell:WindowChrome.WindowChrome>
+  <FrameworkElement.Resources>
+    <ResourceDictionary>
+      <!-- Defaults; ApplyAccent() overrides these per composition mode (8.1 contrast ink / Win7 dark ink + glow). -->
+      <SolidColorBrush x:Key="CaptionInk" Color="#F2FFFFFF" />
+      <SolidColorBrush x:Key="CaptionHover" Color="#22000000" />
+      <SolidColorBrush x:Key="CaptionPress" Color="#3A000000" />
+      <SolidColorBrush x:Key="ClientEdge" Color="#80666F78" />
+      <LinearGradientBrush x:Key="AeroButtonNormal" StartPoint="0,0" EndPoint="0,1">
+        <GradientStop Color="#70FFFFFF" Offset="0" />
+        <GradientStop Color="#302E79AB" Offset="0.48" />
+        <GradientStop Color="#54205E8C" Offset="0.52" />
+        <GradientStop Color="#7A153B5D" Offset="1" />
+      </LinearGradientBrush>
+      <LinearGradientBrush x:Key="AeroButtonHover" StartPoint="0,0" EndPoint="0,1">
+        <GradientStop Color="#E8FFFFFF" Offset="0" />
+        <GradientStop Color="#D07BD9FF" Offset="0.46" />
+        <GradientStop Color="#E0279FD5" Offset="0.52" />
+        <GradientStop Color="#D5166CA6" Offset="1" />
+      </LinearGradientBrush>
+      <LinearGradientBrush x:Key="AeroButtonPress" StartPoint="0,0" EndPoint="0,1">
+        <GradientStop Color="#C82D6F98" Offset="0" />
+        <GradientStop Color="#E013446B" Offset="0.5" />
+        <GradientStop Color="#F0082C4B" Offset="1" />
+      </LinearGradientBrush>
+      <LinearGradientBrush x:Key="AeroCloseNormal" StartPoint="0,0" EndPoint="0,1">
+        <GradientStop Color="#F4F8C4B9" Offset="0" />
+        <GradientStop Color="#F4D76B5B" Offset="0.45" />
+        <GradientStop Color="#F4B93226" Offset="0.52" />
+        <GradientStop Color="#F47B160E" Offset="1" />
+      </LinearGradientBrush>
+      <LinearGradientBrush x:Key="AeroCloseHover" StartPoint="0,0" EndPoint="0,1">
+        <GradientStop Color="#FFFFE7D5" Offset="0" />
+        <GradientStop Color="#FFFF9A63" Offset="0.42" />
+        <GradientStop Color="#FFFF431F" Offset="0.52" />
+        <GradientStop Color="#FFD71909" Offset="1" />
+      </LinearGradientBrush>
+      <LinearGradientBrush x:Key="AeroClosePress" StartPoint="0,0" EndPoint="0,1">
+        <GradientStop Color="#FFD56A53" Offset="0" />
+        <GradientStop Color="#FFAE2818" Offset="0.5" />
+        <GradientStop Color="#FF741007" Offset="1" />
+      </LinearGradientBrush>
+      <DataTemplate x:Key="MinGlyph">
+        <Grid Width="10" Height="8">
+          <Rectangle Width="8" Height="1" HorizontalAlignment="Center" VerticalAlignment="Bottom" SnapsToDevicePixels="True" Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType={x:Type Button}}}" />
+        </Grid>
+      </DataTemplate>
+      <DataTemplate x:Key="MaxGlyph">
+        <Grid Width="10" Height="9">
+          <Border Width="9" Height="8" HorizontalAlignment="Center" VerticalAlignment="Center" BorderThickness="1" SnapsToDevicePixels="True" BorderBrush="{Binding Foreground, RelativeSource={RelativeSource AncestorType={x:Type Button}}}" />
+        </Grid>
+      </DataTemplate>
+      <DataTemplate x:Key="RestoreGlyph">
+        <Grid Width="11" Height="10">
+          <Border Width="8" Height="7" Margin="0,0,0,0" HorizontalAlignment="Right" VerticalAlignment="Top" BorderThickness="1" BorderBrush="{Binding Foreground, RelativeSource={RelativeSource AncestorType={x:Type Button}}}" />
+          <Border Width="8" Height="7" Margin="0,0,2,1" HorizontalAlignment="Left" VerticalAlignment="Bottom" Background="#28000000" BorderThickness="1" BorderBrush="{Binding Foreground, RelativeSource={RelativeSource AncestorType={x:Type Button}}}" />
+        </Grid>
+      </DataTemplate>
+      <DataTemplate x:Key="CloseGlyph">
+        <Grid Width="11" Height="11">
+          <Path Data="M 1.5,1.5 L 9.5,9.5 M 9.5,1.5 L 1.5,9.5" StrokeThickness="1.35" StrokeStartLineCap="Square" StrokeEndLineCap="Square" SnapsToDevicePixels="True" Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType={x:Type Button}}}" />
+        </Grid>
+      </DataTemplate>
+      <Style x:Key="CaptionButton" TargetType="{x:Type Button}">
+        <Setter Property="Width" Value="46" />
+        <Setter Property="Height" Value="29" />
+        <Setter Property="Foreground" Value="{DynamicResource CaptionInk}" />
+        <Setter Property="FrameworkElement.FocusVisualStyle" Value="{x:Null}" />
+        <Setter Property="shell:WindowChrome.IsHitTestVisibleInChrome" Value="True" />
+        <Setter Property="Template">
+          <Setter.Value>
+            <ControlTemplate TargetType="{x:Type Button}">
+              <Border Name="Bd" Background="#00FFFFFF">
+                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+              </Border>
+              <ControlTemplate.Triggers>
+                <Trigger Property="UIElement.IsMouseOver" Value="True">
+                  <Setter TargetName="Bd" Property="Border.Background" Value="{DynamicResource CaptionHover}" />
+                </Trigger>
+                <Trigger Property="IsPressed" Value="True">
+                  <Setter TargetName="Bd" Property="Border.Background" Value="{DynamicResource CaptionPress}" />
+                </Trigger>
+              </ControlTemplate.Triggers>
+            </ControlTemplate>
+          </Setter.Value>
+        </Setter>
+      </Style>
+      <Style x:Key="CloseButton" TargetType="{x:Type Button}" BasedOn="{StaticResource CaptionButton}">
+        <!-- AUTHENTIC 8.1 (VM-verified, Build 9600): the close button is RED AT REST with a white glyph, brighter red
+             on hover, lighter red on press. (Win10 later moved to no-fill-at-rest; 8.1 is red at rest.) -->
+        <Setter Property="Foreground" Value="#FFFFFFFF" />
+        <Setter Property="Template">
+          <Setter.Value>
+            <ControlTemplate TargetType="{x:Type Button}">
+              <Border Name="Bd" Background="#C75450">
+                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+              </Border>
+              <ControlTemplate.Triggers>
+                <Trigger Property="UIElement.IsMouseOver" Value="True">
+                  <Setter TargetName="Bd" Property="Border.Background" Value="#E81123" />
+                </Trigger>
+                <Trigger Property="IsPressed" Value="True">
+                  <Setter TargetName="Bd" Property="Border.Background" Value="#F1707A" />
+                </Trigger>
+              </ControlTemplate.Triggers>
+            </ControlTemplate>
+          </Setter.Value>
+        </Setter>
+      </Style>
+      <Style x:Key="ExplorerQuickAccessButton" TargetType="{x:Type Button}">
+        <Setter Property="Width" Value="22" />
+        <Setter Property="Height" Value="23" />
+        <Setter Property="Padding" Value="2" />
+        <Setter Property="Background" Value="#00FFFFFF" />
+        <Setter Property="BorderBrush" Value="#00FFFFFF" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="FrameworkElement.FocusVisualStyle" Value="{x:Null}" />
+        <Setter Property="shell:WindowChrome.IsHitTestVisibleInChrome" Value="True" />
+        <Setter Property="Template">
+          <Setter.Value>
+            <ControlTemplate TargetType="{x:Type Button}">
+              <Border Name="Bd" Background="{TemplateBinding Control.Background}" BorderBrush="{TemplateBinding Control.BorderBrush}" BorderThickness="{TemplateBinding Control.BorderThickness}">
+                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+              </Border>
+              <ControlTemplate.Triggers>
+                <Trigger Property="UIElement.IsMouseOver" Value="True"><Setter TargetName="Bd" Property="Border.Background" Value="#35FFFFFF" /><Setter TargetName="Bd" Property="Border.BorderBrush" Value="#50FFFFFF" /></Trigger>
+                <Trigger Property="IsPressed" Value="True"><Setter TargetName="Bd" Property="Border.Background" Value="#55000000" /></Trigger>
+              </ControlTemplate.Triggers>
+            </ControlTemplate>
+          </Setter.Value>
+        </Setter>
+      </Style>
+      <Style x:Key="AeroCaptionButton" TargetType="{x:Type Button}" BasedOn="{StaticResource CaptionButton}">
+        <Setter Property="Width" Value="28" />
+        <Setter Property="Height" Value="21" />
+        <Setter Property="Foreground" Value="#E6222A31" />
+        <Setter Property="Template">
+          <Setter.Value>
+            <ControlTemplate TargetType="{x:Type Button}">
+              <Border Name="Bd" Background="{StaticResource AeroButtonNormal}" BorderBrush="#A040617B" BorderThickness="1" CornerRadius="0,0,3,3">
+                <Grid>
+                  <Border Height="1" VerticalAlignment="Top" Margin="1,0" Background="#A0FFFFFF" IsHitTestVisible="False" />
+                  <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                </Grid>
+              </Border>
+              <ControlTemplate.Triggers>
+                <Trigger Property="UIElement.IsMouseOver" Value="True">
+                  <Setter TargetName="Bd" Property="Border.Background" Value="{StaticResource AeroButtonHover}" />
+                  <Setter TargetName="Bd" Property="Border.BorderBrush" Value="#D056B6E7" />
+                </Trigger>
+                <Trigger Property="IsPressed" Value="True">
+                  <Setter TargetName="Bd" Property="Border.Background" Value="{StaticResource AeroButtonPress}" />
+                  <Setter TargetName="Bd" Property="Border.BorderBrush" Value="#E00A2B44" />
+                </Trigger>
+              </ControlTemplate.Triggers>
+            </ControlTemplate>
+          </Setter.Value>
+        </Setter>
+      </Style>
+      <Style x:Key="AeroCloseButton" TargetType="{x:Type Button}" BasedOn="{StaticResource AeroCaptionButton}">
+        <Setter Property="Width" Value="46" />
+        <Setter Property="Foreground" Value="#FFFFFFFF" />
+        <Setter Property="Template">
+          <Setter.Value>
+            <ControlTemplate TargetType="{x:Type Button}">
+              <Border Name="Bd" Background="{StaticResource AeroCloseNormal}" BorderBrush="#C07A2118" BorderThickness="1" CornerRadius="0,0,3,3">
+                <Grid>
+                  <Border Height="1" VerticalAlignment="Top" Margin="1,0" Background="#C0FFFFFF" IsHitTestVisible="False" />
+                  <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                </Grid>
+              </Border>
+              <ControlTemplate.Triggers>
+                <Trigger Property="UIElement.IsMouseOver" Value="True">
+                  <Setter TargetName="Bd" Property="Border.Background" Value="{StaticResource AeroCloseHover}" />
+                  <Setter TargetName="Bd" Property="Border.BorderBrush" Value="#F0FF7B4A" />
+                </Trigger>
+                <Trigger Property="IsPressed" Value="True">
+                  <Setter TargetName="Bd" Property="Border.Background" Value="{StaticResource AeroClosePress}" />
+                  <Setter TargetName="Bd" Property="Border.BorderBrush" Value="#F078160B" />
+                </Trigger>
+              </ControlTemplate.Triggers>
+            </ControlTemplate>
+          </Setter.Value>
+        </Setter>
+      </Style>
+    </ResourceDictionary>
+  </FrameworkElement.Resources>
+  <Border Name="WinBorder" BorderBrush="{DynamicResource WindowAccent}" BorderThickness="1">
+    <Grid Name="ChromeRoot">
+      <Grid.RowDefinitions>
+        <RowDefinition x:Name="CaptionRow" Height="29" />
+        <RowDefinition Height="*" />
+      </Grid.RowDefinitions>
+      <Border Name="TitleBar" Grid.Row="0" Background="{DynamicResource WindowAccent}">
+        <Grid>
+          <Border Name="AeroTopHighlight" Height="1" VerticalAlignment="Top" Margin="1,0" Background="#80FFFFFF" Visibility="Collapsed" IsHitTestVisible="False" />
+          <StackPanel Name="ExplorerQuickAccess" Visibility="Collapsed" Orientation="Horizontal" HorizontalAlignment="Left" VerticalAlignment="Center" Margin="6,0,0,0" shell:WindowChrome.IsHitTestVisibleInChrome="True">
+            <Image Source="pack://application:,,,/Assets/win81icons/thispc.ico" Width="16" Height="16" Margin="0,0,2,0" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality" SnapsToDevicePixels="True" />
+            <Button Style="{StaticResource ExplorerQuickAccessButton}" ToolTip="Properties" Click="OnExplorerProperties"><Image Source="pack://application:,,,/Assets/win81icons/explorer81/properties-16.png" Width="16" Height="16" RenderOptions.BitmapScalingMode="NearestNeighbor" /></Button>
+            <Button Style="{StaticResource ExplorerQuickAccessButton}" ToolTip="New folder" Click="OnExplorerNewFolder"><Image Source="pack://application:,,,/Assets/win81icons/explorer81/folder-16.png" Width="16" Height="16" RenderOptions.BitmapScalingMode="NearestNeighbor" /></Button>
+            <Button Width="18" Style="{StaticResource ExplorerQuickAccessButton}" ToolTip="Customize Quick Access Toolbar" Click="OnExplorerQuickAccessMenu"><Path Data="M 3,5 L 7,9 L 11,5" Stroke="#FF333333" StrokeThickness="1" Stretch="None" /></Button>
+          </StackPanel>
+          <Image Name="CaptionIcon" Source="pack://application:,,,/Assets/start81_16.png" Width="16" Height="16" RenderOptions.BitmapScalingMode="HighQuality" SnapsToDevicePixels="True" HorizontalAlignment="Left" VerticalAlignment="Center" Margin="8,0,0,0" shell:WindowChrome.IsHitTestVisibleInChrome="True" PreviewMouseLeftButtonDown="OnCaptionIconMouseDown" />
+          <TextBlock Name="TitleText" Foreground="#FFFFFFFF" FontFamily="Segoe UI" FontSize="12" FontWeight="Normal" HorizontalAlignment="Left" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Margin="31,0,112,0" IsHitTestVisible="False" Text="{Binding Title, RelativeSource={RelativeSource AncestorType=Window}}" />
+          <StackPanel Name="CaptionHost" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Top">
+            <Button Name="MinBtn" Style="{StaticResource CaptionButton}" ContentTemplate="{StaticResource MinGlyph}" ToolTip="Minimize" Click="OnMinimize" />
+            <Button Name="MaxBtn" Style="{StaticResource CaptionButton}" ContentTemplate="{StaticResource MaxGlyph}" ToolTip="Maximize" Click="OnMaximizeRestore" />
+            <Button Name="CloseBtn" Style="{StaticResource CloseButton}" ContentTemplate="{StaticResource CloseGlyph}" ToolTip="Close" Click="OnClose" />
+          </StackPanel>
+        </Grid>
+      </Border>
+      <Border Name="ClientFrame" Grid.Row="1" Background="#FF1B1B1B">
+        <ContentControl Name="Body" />
+      </Border>
+    </Grid>
+  </Border>
+</Window>

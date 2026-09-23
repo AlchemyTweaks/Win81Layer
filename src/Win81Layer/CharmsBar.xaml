@@ -1,0 +1,46 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Window x:Class="Win81Layer.CharmsBar" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="Charms" Width="90" WindowStyle="None" ResizeMode="NoResize" ShowInTaskbar="False" AllowsTransparency="True" Background="#00FFFFFF" Topmost="True" xmlns:win81layer="clr-namespace:Win81Layer;assembly=Win81Layer" Deactivated="OnDeactivated" PreviewKeyDown="OnPreviewKeyDown" MouseLeave="OnMouseLeave">
+  <FrameworkElement.Resources>
+    <ResourceDictionary>
+      <Style x:Key="Charm" TargetType="{x:Type Button}">
+        <Setter Property="Height" Value="96" />
+        <Setter Property="FrameworkElement.Cursor" Value="Hand" />
+        <Setter Property="Foreground" Value="#FFFFFFFF" />
+        <Setter Property="FrameworkElement.FocusVisualStyle" Value="{x:Null}" />
+        <Setter Property="Template">
+          <Setter.Value>
+            <ControlTemplate TargetType="{x:Type Button}">
+              <Border Name="Root" Background="#00FFFFFF">
+                <StackPanel VerticalAlignment="Center">
+                  <Rectangle Width="40" Height="40" HorizontalAlignment="Center" Fill="{TemplateBinding Control.Foreground}">
+                    <UIElement.OpacityMask>
+                      <ImageBrush Stretch="Uniform" ImageSource="{Binding Tag, RelativeSource={RelativeSource TemplatedParent}}" />
+                    </UIElement.OpacityMask>
+                  </Rectangle>
+                  <TextBlock Text="{TemplateBinding ContentControl.Content}" FontFamily="Segoe UI Light" FontSize="13" Foreground="#FFFFFFFF" HorizontalAlignment="Center" Margin="0,7,0,0" />
+                </StackPanel>
+              </Border>
+              <ControlTemplate.Triggers>
+                <Trigger Property="UIElement.IsMouseOver" Value="True">
+                  <Setter TargetName="Root" Property="Border.Background" Value="#26FFFFFF" />
+                </Trigger>
+                <Trigger Property="IsPressed" Value="True">
+                  <Setter TargetName="Root" Property="Border.Background" Value="#40FFFFFF" />
+                </Trigger>
+              </ControlTemplate.Triggers>
+            </ControlTemplate>
+          </Setter.Value>
+        </Setter>
+      </Style>
+    </ResourceDictionary>
+  </FrameworkElement.Resources>
+  <Border Name="BarRoot" Background="#FF1C1C1C">
+    <StackPanel VerticalAlignment="Center">
+      <Button Style="{StaticResource Charm}" Tag="pack://application:,,,/Assets/charm-search.png" Content="Search" Click="OnSearch" />
+      <Button Style="{StaticResource Charm}" Tag="pack://application:,,,/Assets/charm-share.png" Content="Share" Click="OnShare" />
+      <Button Name="StartCharm" Style="{StaticResource Charm}" Tag="pack://application:,,,/Assets/start81.png" Content="Start" Click="OnStart" />
+      <Button Style="{StaticResource Charm}" Tag="pack://application:,,,/Assets/charm-devices.png" Content="Devices" Click="OnDevices" />
+      <Button Style="{StaticResource Charm}" Tag="pack://application:,,,/Assets/charm-settings.png" Content="Settings" Click="OnSettings" />
+    </StackPanel>
+  </Border>
+</Window>
