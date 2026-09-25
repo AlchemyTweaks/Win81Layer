@@ -6,6 +6,12 @@ public sealed class AppSettings
 {
 	public bool HotCornersEnabled { get; set; } = true;
 
+	// App switcher (left-edge / top-left) mouse reveal. Off = open it only via Win+Tab or the taskbar Task View button.
+	public bool SwitcherEdgeReveal { get; set; } = true;
+
+	// How long the mouse must rest at the left edge before the switcher appears (ms). Higher = fewer accidental reveals.
+	public int SwitcherEdgeDwellMs { get; set; } = 900;
+
 	public bool BootToStart { get; set; } = true;
 
 	public bool ReplaceStartMenu { get; set; } = true;

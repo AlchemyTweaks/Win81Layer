@@ -22,9 +22,10 @@ internal static class TextPrompt
 				Owner = owner,
 				WindowStartupLocation = ((owner == null) ? WindowStartupLocation.CenterScreen : WindowStartupLocation.CenterOwner),
 				ResizeMode = ResizeMode.NoResize,
-				ShowInTaskbar = false,
-				Background = Brushes.White   // pattern 8: a flyout is a light surface with regular pattern controls
+				ShowInTaskbar = false
 			};
+			// Follow the theme live: bind to the app-scope token so a light/dark flip while the prompt is open repaints it.
+			win.SetResourceReference(Control.BackgroundProperty, "Metro81.Surface");
 			Grid grid = new Grid
 			{
 				Margin = new Thickness(18.0)
@@ -44,11 +45,11 @@ internal static class TextPrompt
 			TextBlock label = new TextBlock
 			{
 				Text = title,
-				Foreground = Brushes.Black,
 				FontFamily = new FontFamily("Segoe UI"),
 				FontSize = 14.0,
 				Margin = new Thickness(0.0, 0.0, 0.0, 8.0)
 			};
+			label.SetResourceReference(TextBlock.ForegroundProperty, "Metro81.Ink");
 			TextBox box = new TextBox
 			{
 				Text = initial,

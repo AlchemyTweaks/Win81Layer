@@ -37,6 +37,8 @@ public static class TaskbarContextMenu
 
 	private static bool _themePaletteGlass;
 
+	private static bool _themePaletteLight;
+
 	private static bool _preferenceHooked;
 
 	internal static Style ItemStyle => (Style)Application.Current.Resources["Win81MenuItem"];
@@ -1036,14 +1038,14 @@ public static class TaskbarContextMenu
 	private static Dictionary<string, Brush> GetThemePalette()
 	{
 		bool glass = ShellSkin.GlassOn;
+		bool light = IsLightTheme();
 		lock (ThemeGate)
 		{
-			if (_themePalette != null && _themePaletteGlass == glass)
+			if (_themePalette != null && _themePaletteGlass == glass && _themePaletteLight == light)
 			{
 				return _themePalette;
 			}
 
-			bool light = IsLightTheme();
 			Color accent;
 			try
 			{
@@ -1066,13 +1068,15 @@ public static class TaskbarContextMenu
 				Add("M.Sep", Color.FromArgb(0x40, byte.MaxValue, byte.MaxValue, byte.MaxValue));
 				AddHex("M.Arrow", "#C8C8C8");
 				Add("M.HoverBorder", Color.FromArgb(0x88, accent.R, accent.G, accent.B));
+				Add("M.KbBg", Color.FromArgb(0xFF, accent.R, accent.G, accent.B));
+				AddHex("M.KbFg", "#FFFFFF");
+				AddHex("M.KbGesture", "#D0D0D0");
 			}
-			else
+			else if (light)
 			{
 				// Windows 8 "Content Menu" pattern (the user's Patterns reference): WHITE surface, black text,
-				// 2px black border, #DEDEDE mouse hover, and the keyboard-highlighted row inverts to solid black
-				// (that state lives in Win81Menu.xaml). Glass mode above stays translucent (Aero identity).
-				_ = light; _ = accent;
+				// 2px black border, #DEDEDE mouse hover, and the keyboard-highlighted row inverts to solid black.
+				// These LIGHT values are kept byte-identical to the authentic look.
 				AddHex("M.Bg", "#FFFFFF");
 				AddHex("M.Fg", "#000000");
 				AddHex("M.Dis", "#767676");
@@ -1081,9 +1085,30 @@ public static class TaskbarContextMenu
 				AddHex("M.Border", "#000000");
 				AddHex("M.Sep", "#C8C8C8");
 				AddHex("M.Arrow", "#000000");
+				AddHex("M.KbBg", "#000000");
+				AddHex("M.KbFg", "#FFFFFF");
+				AddHex("M.KbGesture", "#C8C8C8");
+			}
+			else
+			{
+				// Dark menu (AppsUseLightTheme=0). Windows 8.1 shipped no dark context menu, so these values track
+				// Windows 11 dark chrome and stay legible. The keyboard-highlighted row inverts to a WHITE bar with
+				// black text (the mirror of the light-mode black bar / white text). Matches ShellTheme's Metro81.* dark set.
+				AddHex("M.Bg", "#2B2B2B");
+				AddHex("M.Fg", "#F2F2F2");
+				AddHex("M.Dis", "#8A8A8A");
+				AddHex("M.Hover", "#3F3F3F");
+				AddHex("M.HoverBorder", "#00000000");
+				AddHex("M.Border", "#5A5A5A");
+				AddHex("M.Sep", "#3F3F3F");
+				AddHex("M.Arrow", "#DDDDDD");
+				AddHex("M.KbBg", "#FFFFFF");
+				AddHex("M.KbFg", "#000000");
+				AddHex("M.KbGesture", "#3A3A3A");
 			}
 
 			_themePaletteGlass = glass;
+			_themePaletteLight = light;
 			_themePalette = palette;
 			return palette;
 
@@ -1112,15 +1137,7 @@ public static class TaskbarContextMenu
 
 	private static bool IsLightTheme()
 	{
-		try
-		{
-			using RegistryKey k = Registry.CurrentUser.OpenSubKey("Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize");
-			return ((k?.GetValue("AppsUseLightTheme") as int?) ?? 1) != 0;
-		}
-		catch
-		{
-			return true;
-		}
+		return ShellTheme.IsLight;   // single source of truth (cached + change-signalled)
 	}
 
 	private static void ShellCmd(string method)

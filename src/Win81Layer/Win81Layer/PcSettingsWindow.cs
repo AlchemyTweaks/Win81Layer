@@ -1729,6 +1729,11 @@ public sealed class PcSettingsWindow : Window
 			SettingsStore.Update(delegate(AppSettings x) { x.HotCornersEnabled = on; });
 			HostApp?.ApplyHotCorners(on);
 		}));
+		panel.Children.Add(ToggleRow("App switcher edge reveal", "Open the left-edge app switcher by pushing the mouse to the left edge. Turn this off to stop it appearing; you can still open the switcher with Win+Tab or the taskbar Task View button.", s.SwitcherEdgeReveal, delegate(bool on)
+		{
+			SettingsStore.Update(delegate(AppSettings x) { x.SwitcherEdgeReveal = on; });
+			HostApp?.ApplySwitcherEdge(on);
+		}));
 
 		// ===== Taskbar =====
 		panel.Children.Add(SubHeader("Taskbar"));

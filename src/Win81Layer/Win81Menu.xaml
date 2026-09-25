@@ -9,6 +9,10 @@
   <SolidColorBrush x:Key="M.Border" Color="#000000" />
   <SolidColorBrush x:Key="M.Sep" Color="#C8C8C8" />
   <SolidColorBrush x:Key="M.Arrow" Color="#000000" />
+  <!-- Keyboard-highlighted row (inverts in both themes); TaskbarContextMenu.ApplyTheme overwrites these live per menu. -->
+  <SolidColorBrush x:Key="M.KbBg" Color="#000000" />
+  <SolidColorBrush x:Key="M.KbFg" Color="#FFFFFF" />
+  <SolidColorBrush x:Key="M.KbGesture" Color="#C8C8C8" />
   <Style x:Key="Win81Separator" TargetType="{x:Type Separator}">
     <Setter Property="FrameworkElement.OverridesDefaultStyle" Value="True" />
     <Setter Property="Template">
@@ -40,8 +44,8 @@
               <ContentPresenter Grid.Column="1" ContentSource="Header" RecognizesAccessKey="True" VerticalAlignment="Center" Margin="4,0,0,0" />
               <Grid Name="Arrow" Column="2" HorizontalAlignment="Right" VerticalAlignment="Center" Visibility="Collapsed"><TextBlock Name="ArrowText" Text="&#x25B8;" FontFamily="Segoe UI Symbol" FontSize="11" Foreground="{DynamicResource M.Arrow}" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,9,0" /></Grid>
               <Grid Name="Toggle" Column="2" Width="32" Height="15" Visibility="Collapsed" HorizontalAlignment="Center" VerticalAlignment="Center">
-                <Border Name="Track" Background="#B0B0B0" BorderBrush="Transparent" BorderThickness="1" SnapsToDevicePixels="True" />
-                <Border Name="Knob" Width="9" Margin="1" Background="#000000" HorizontalAlignment="Left" SnapsToDevicePixels="True" />
+                <Border Name="Track" Background="{DynamicResource M.Dis}" BorderBrush="Transparent" BorderThickness="1" SnapsToDevicePixels="True" />
+                <Border Name="Knob" Width="9" Margin="1" Background="{DynamicResource M.Fg}" HorizontalAlignment="Left" SnapsToDevicePixels="True" />
               </Grid>
               <TextBlock Name="Gesture" Grid.Column="2" Text="{Binding InputGestureText, RelativeSource={RelativeSource TemplatedParent}}" Foreground="{DynamicResource M.Dis}" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,12,0" />
               <Popup Name="PART_Popup" AllowsTransparency="True" Placement="Right" HorizontalOffset="-2" VerticalOffset="-4" Focusable="False" PopupAnimation="None" IsOpen="{Binding IsSubmenuOpen, RelativeSource={RelativeSource TemplatedParent}}">
@@ -85,11 +89,14 @@
                 <Condition Property="MenuItem.IsHighlighted" Value="True" />
                 <Condition Property="UIElement.IsMouseOver" Value="False" />
               </MultiTrigger.Conditions>
-              <Setter TargetName="Bd" Property="Border.Background" Value="#FF000000" />
-              <Setter Property="Foreground" Value="#FFFFFFFF" />
-              <Setter TargetName="ArrowText" Property="TextBlock.Foreground" Value="#FFFFFFFF" />
-              <Setter TargetName="Check" Property="TextBlock.Foreground" Value="#FFFFFFFF" />
-              <Setter TargetName="Gesture" Property="TextBlock.Foreground" Value="#FFC8C8C8" />
+              <Setter TargetName="Bd" Property="Border.Background" Value="{DynamicResource M.KbBg}" />
+              <Setter Property="Foreground" Value="{DynamicResource M.KbFg}" />
+              <Setter TargetName="ArrowText" Property="TextBlock.Foreground" Value="{DynamicResource M.KbFg}" />
+              <Setter TargetName="Check" Property="TextBlock.Foreground" Value="{DynamicResource M.KbFg}" />
+              <Setter TargetName="Gesture" Property="TextBlock.Foreground" Value="{DynamicResource M.KbGesture}" />
+              <!-- Keep the toggle knob readable on the inverted (white in dark) highlight bar; the checked-state
+                   Track=MenuAccent above is left intact since we only retarget the knob, not the track. -->
+              <Setter TargetName="Knob" Property="Border.Background" Value="{DynamicResource M.KbFg}" />
             </MultiTrigger>
             <Trigger Property="IsEnabled" Value="False">
               <Setter Value="{DynamicResource M.Dis}" Property="Foreground" />

@@ -16,6 +16,25 @@
   <SolidColorBrush x:Key="Metro81.ScrollButtonPressedBrush" Color="#B0B0B0" />
   <SolidColorBrush x:Key="Metro81.ScrollGlyphBrush" Color="#000000" />
   <SolidColorBrush x:Key="Metro81.FieldBorder" Color="#767676" />
+  <!-- Semantic role tokens: ShellTheme.ApplyResourceTokens overrides these at Application scope on a light/dark flip.
+       LIGHT values below are the authentic defaults so the shell looks identical in light mode. -->
+  <SolidColorBrush x:Key="Metro81.Ink2" Color="#5A5A5A" />
+  <SolidColorBrush x:Key="Metro81.HoverSurface" Color="#DEDEDE" />
+  <SolidColorBrush x:Key="Metro81.PressedSurface" Color="#CCCCCC" />
+  <SolidColorBrush x:Key="Metro81.Separator" Color="#C8C8C8" />
+  <SolidColorBrush x:Key="Metro81.SubtleBorder" Color="#CCCCCC" />
+  <SolidColorBrush x:Key="Metro81.GlyphBorder" Color="#333333" />
+  <SolidColorBrush x:Key="Metro81.ControlFill" Color="#D3D3D3" />
+  <SolidColorBrush x:Key="Metro81.ControlFillHover" Color="#BEBEBE" />
+  <SolidColorBrush x:Key="Metro81.ControlFillBorder" Color="#808080" />
+  <SolidColorBrush x:Key="Metro81.ToggleTrack" Color="#B0B0B0" />
+  <SolidColorBrush x:Key="Metro81.ToggleThumb" Color="#000000" />
+  <SolidColorBrush x:Key="Metro81.SliderThumbFill" Color="#000000" />
+  <SolidColorBrush x:Key="Metro81.MenuSurface" Color="#FFFFFF" />
+  <SolidColorBrush x:Key="Metro81.MenuBorder" Color="#000000" />
+  <SolidColorBrush x:Key="Metro81.MenuHover" Color="#DEDEDE" />
+  <SolidColorBrush x:Key="Metro81.HighlightSurface" Color="#000000" />
+  <SolidColorBrush x:Key="Metro81.HighlightInk" Color="#FFFFFF" />
   <!-- Dark-surface scrollbar set (flyouts, Action Center, app switcher, search/charms panes, Start board). -->
   <SolidColorBrush x:Key="Metro81.ScrollTrackBrushDark" Color="#1A1A1A" />
   <SolidColorBrush x:Key="Metro81.ScrollThumbBrushDark" Color="#8A8A8A" />
@@ -51,7 +70,7 @@
     <Setter Property="MinWidth" Value="80" />
     <Setter Property="MinHeight" Value="32" />
     <Setter Property="Padding" Value="12,4" />
-    <Setter Property="Background" Value="#D3D3D3" />
+    <Setter Property="Background" Value="{DynamicResource Metro81.ControlFill}" />
     <Setter Property="BorderBrush" Value="Transparent" />
     <Setter Property="BorderThickness" Value="2" />
     <Setter Property="HorizontalContentAlignment" Value="Center" />
@@ -66,9 +85,9 @@
           </Border>
           <ControlTemplate.Triggers>
             <Trigger Property="IsDefaulted" Value="True"><Setter TargetName="Chrome" Property="BorderBrush" Value="{DynamicResource MenuAccent}" /></Trigger>
-            <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Chrome" Property="Background" Value="#BEBEBE" /><Setter TargetName="Chrome" Property="BorderBrush" Value="#808080" /></Trigger>
+            <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Chrome" Property="Background" Value="{DynamicResource Metro81.ControlFillHover}" /><Setter TargetName="Chrome" Property="BorderBrush" Value="{DynamicResource Metro81.ControlFillBorder}" /></Trigger>
             <Trigger Property="IsPressed" Value="True">
-              <Setter TargetName="Chrome" Property="Background" Value="Black" /><Setter Property="Foreground" Value="White" />
+              <Setter TargetName="Chrome" Property="Background" Value="{DynamicResource Metro81.HighlightSurface}" /><Setter Property="Foreground" Value="{DynamicResource Metro81.HighlightInk}" />
             </Trigger>
             <Trigger Property="IsEnabled" Value="False">
               <Setter TargetName="Chrome" Property="Background" Value="{DynamicResource Metro81.DisabledSurface}" />
@@ -92,7 +111,7 @@
           </Border>
           <ControlTemplate.Triggers>
             <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Chrome" Property="Background" Value="{DynamicResource MenuAccentPressed}" /></Trigger>
-            <Trigger Property="IsPressed" Value="True"><Setter TargetName="Chrome" Property="Background" Value="{DynamicResource MenuAccentPressed}" /><Setter TargetName="Chrome" Property="BorderBrush" Value="Black" /></Trigger>
+            <Trigger Property="IsPressed" Value="True"><Setter TargetName="Chrome" Property="Background" Value="{DynamicResource MenuAccentPressed}" /><Setter TargetName="Chrome" Property="BorderBrush" Value="{DynamicResource Metro81.Ink}" /></Trigger>
             <Trigger Property="IsEnabled" Value="False">
               <Setter TargetName="Chrome" Property="Background" Value="{DynamicResource Metro81.DisabledSurface}" />
               <Setter Property="Foreground" Value="{DynamicResource Metro81.DisabledInk}" />
@@ -136,10 +155,10 @@
           <Border Background="Transparent" Padding="{TemplateBinding Padding}">
             <Grid>
               <Grid.ColumnDefinitions><ColumnDefinition Width="28" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-              <Border x:Name="Box" Width="23" Height="23" Background="White" BorderBrush="#333333" BorderThickness="2" HorizontalAlignment="Left" VerticalAlignment="Center">
+              <Border x:Name="Box" Width="23" Height="23" Background="{DynamicResource Metro81.Surface}" BorderBrush="{DynamicResource Metro81.GlyphBorder}" BorderThickness="2" HorizontalAlignment="Left" VerticalAlignment="Center">
                 <Grid>
-                  <Path x:Name="Tick" Visibility="Collapsed" Data="M 2,9 L 7,14 L 17,2" Stroke="Black" StrokeThickness="3.5" HorizontalAlignment="Center" VerticalAlignment="Center" />
-                  <Rectangle x:Name="Mixed" Visibility="Collapsed" Fill="Black" Width="11" Height="4" />
+                  <Path x:Name="Tick" Visibility="Collapsed" Data="M 2,9 L 7,14 L 17,2" Stroke="{DynamicResource Metro81.Ink}" StrokeThickness="3.5" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                  <Rectangle x:Name="Mixed" Visibility="Collapsed" Fill="{DynamicResource Metro81.Ink}" Width="11" Height="4" />
                 </Grid>
               </Border>
               <ContentPresenter Grid.Column="1" Margin="6,0,0,0" VerticalAlignment="Center" RecognizesAccessKey="True" />
@@ -148,8 +167,8 @@
           <ControlTemplate.Triggers>
             <Trigger Property="IsChecked" Value="True"><Setter TargetName="Tick" Property="Visibility" Value="Visible" /></Trigger>
             <Trigger Property="IsChecked" Value="{x:Null}"><Setter TargetName="Mixed" Property="Visibility" Value="Visible" /></Trigger>
-            <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Box" Property="BorderBrush" Value="Black" /></Trigger>
-            <Trigger Property="IsPressed" Value="True"><Setter TargetName="Box" Property="Background" Value="#CCCCCC" /></Trigger>
+            <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Box" Property="BorderBrush" Value="{DynamicResource Metro81.Ink}" /></Trigger>
+            <Trigger Property="IsPressed" Value="True"><Setter TargetName="Box" Property="Background" Value="{DynamicResource Metro81.PressedSurface}" /></Trigger>
             <Trigger Property="IsEnabled" Value="False">
               <Setter Property="Foreground" Value="{DynamicResource Metro81.DisabledInk}" /><Setter TargetName="Box" Property="Opacity" Value="0.4" />
             </Trigger>
@@ -167,16 +186,16 @@
             <Grid>
               <Grid.ColumnDefinitions><ColumnDefinition Width="28" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
               <Grid x:Name="Disc" Width="23" Height="23" HorizontalAlignment="Left" VerticalAlignment="Center">
-                <Ellipse x:Name="Ring" Fill="White" Stroke="#333333" StrokeThickness="2" />
-                <Ellipse x:Name="Dot" Fill="Black" Width="11" Height="11" Visibility="Collapsed" />
+                <Ellipse x:Name="Ring" Fill="{DynamicResource Metro81.Surface}" Stroke="{DynamicResource Metro81.GlyphBorder}" StrokeThickness="2" />
+                <Ellipse x:Name="Dot" Fill="{DynamicResource Metro81.Ink}" Width="11" Height="11" Visibility="Collapsed" />
               </Grid>
               <ContentPresenter Grid.Column="1" Margin="6,0,0,0" VerticalAlignment="Center" RecognizesAccessKey="True" />
             </Grid>
           </Border>
           <ControlTemplate.Triggers>
             <Trigger Property="IsChecked" Value="True"><Setter TargetName="Dot" Property="Visibility" Value="Visible" /></Trigger>
-            <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Ring" Property="Stroke" Value="Black" /></Trigger>
-            <Trigger Property="IsPressed" Value="True"><Setter TargetName="Ring" Property="Fill" Value="#CCCCCC" /></Trigger>
+            <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Ring" Property="Stroke" Value="{DynamicResource Metro81.Ink}" /></Trigger>
+            <Trigger Property="IsPressed" Value="True"><Setter TargetName="Ring" Property="Fill" Value="{DynamicResource Metro81.PressedSurface}" /></Trigger>
             <Trigger Property="IsEnabled" Value="False"><Setter TargetName="Disc" Property="Opacity" Value="0.4" /><Setter Property="Foreground" Value="{DynamicResource Metro81.DisabledInk}" /></Trigger>
           </ControlTemplate.Triggers>
         </ControlTemplate>
@@ -193,10 +212,10 @@
             <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
               <ContentPresenter x:Name="SwitchLabel" MinWidth="34" Margin="0,0,12,0" VerticalAlignment="Center" RecognizesAccessKey="True" />
               <Grid x:Name="Switch" Width="50" Height="22">
-                <Border x:Name="Rail" BorderBrush="#A6A6A6" BorderThickness="2" Padding="2" Background="White">
-                  <Border x:Name="Fill" Background="#B0B0B0" />
+                <Border x:Name="Rail" BorderBrush="{DynamicResource Metro81.Border}" BorderThickness="2" Padding="2" Background="{DynamicResource Metro81.Surface}">
+                  <Border x:Name="Fill" Background="{DynamicResource Metro81.ToggleTrack}" />
                 </Border>
-                <Border x:Name="Thumb" Width="13" Background="Black" HorizontalAlignment="Left" />
+                <Border x:Name="Thumb" Width="13" Background="{DynamicResource Metro81.ToggleThumb}" HorizontalAlignment="Left" />
               </Grid>
             </StackPanel>
           </Border>
@@ -206,7 +225,7 @@
               <Setter TargetName="Fill" Property="Background" Value="{DynamicResource MenuAccent}" />
               <Setter TargetName="Thumb" Property="HorizontalAlignment" Value="Right" />
             </Trigger>
-            <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Rail" Property="BorderBrush" Value="Black" /></Trigger>
+            <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Rail" Property="BorderBrush" Value="{DynamicResource Metro81.Ink}" /></Trigger>
             <Trigger Property="IsPressed" Value="True"><Setter TargetName="Thumb" Property="Background" Value="#404040" /></Trigger>
             <Trigger Property="IsEnabled" Value="False"><Setter TargetName="Switch" Property="Opacity" Value="0.4" /><Setter Property="Foreground" Value="{DynamicResource Metro81.DisabledInk}" /></Trigger>
           </ControlTemplate.Triggers>
@@ -222,8 +241,8 @@
   </Style>
   <Style x:Key="Metro81.TextBox" TargetType="TextBox" BasedOn="{StaticResource Metro81.Control}">
     <Setter Property="MinHeight" Value="36" /><Setter Property="Padding" Value="8,4" />
-    <Setter Property="Background" Value="White" /><Setter Property="BorderBrush" Value="{DynamicResource Metro81.FieldBorder}" /><Setter Property="BorderThickness" Value="2" />
-    <Setter Property="SelectionBrush" Value="{DynamicResource MenuAccent}" /><Setter Property="SelectionOpacity" Value="0.4" />
+    <Setter Property="Background" Value="{DynamicResource Metro81.Surface}" /><Setter Property="BorderBrush" Value="{DynamicResource Metro81.FieldBorder}" /><Setter Property="BorderThickness" Value="2" />
+    <Setter Property="SelectionBrush" Value="{DynamicResource MenuAccent}" /><Setter Property="SelectionOpacity" Value="0.4" /><Setter Property="CaretBrush" Value="{DynamicResource Metro81.Ink}" />
     <Setter Property="VerticalContentAlignment" Value="Center" /><Setter Property="KeyboardNavigation.TabNavigation" Value="Local" />
     <Setter Property="Template">
       <Setter.Value>
@@ -242,7 +261,7 @@
             <Trigger Property="Text" Value=""><Setter TargetName="Clear" Property="Visibility" Value="Collapsed" /></Trigger>
             <Trigger Property="IsReadOnly" Value="True"><Setter TargetName="Clear" Property="Visibility" Value="Collapsed" /></Trigger>
             <Trigger Property="AcceptsReturn" Value="True"><Setter TargetName="Clear" Property="Visibility" Value="Collapsed" /></Trigger>
-            <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Chrome" Property="BorderBrush" Value="Black" /></Trigger>
+            <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Chrome" Property="BorderBrush" Value="{DynamicResource Metro81.Ink}" /></Trigger>
             <Trigger Property="IsKeyboardFocusWithin" Value="True"><Setter TargetName="Chrome" Property="BorderBrush" Value="{DynamicResource MenuAccent}" /></Trigger>
             <Trigger Property="Validation.HasError" Value="True"><Setter TargetName="Chrome" Property="BorderBrush" Value="#C42B1C" /></Trigger>
             <Trigger Property="IsEnabled" Value="False">
@@ -256,8 +275,8 @@
   </Style>
   <Style x:Key="Metro81.PasswordBox" TargetType="PasswordBox" BasedOn="{StaticResource Metro81.Control}">
     <Setter Property="MinHeight" Value="36" /><Setter Property="Padding" Value="8,4" />
-    <Setter Property="Background" Value="White" /><Setter Property="BorderBrush" Value="{DynamicResource Metro81.FieldBorder}" /><Setter Property="BorderThickness" Value="2" />
-    <Setter Property="VerticalContentAlignment" Value="Center" /><Setter Property="SelectionBrush" Value="{DynamicResource MenuAccent}" />
+    <Setter Property="Background" Value="{DynamicResource Metro81.Surface}" /><Setter Property="BorderBrush" Value="{DynamicResource Metro81.FieldBorder}" /><Setter Property="BorderThickness" Value="2" />
+    <Setter Property="VerticalContentAlignment" Value="Center" /><Setter Property="SelectionBrush" Value="{DynamicResource MenuAccent}" /><Setter Property="CaretBrush" Value="{DynamicResource Metro81.Ink}" />
     <Setter Property="Template">
       <Setter.Value>
         <ControlTemplate TargetType="PasswordBox">
@@ -275,7 +294,7 @@
             </Grid>
           </Border>
           <ControlTemplate.Triggers>
-            <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Chrome" Property="BorderBrush" Value="Black" /></Trigger>
+            <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Chrome" Property="BorderBrush" Value="{DynamicResource Metro81.Ink}" /></Trigger>
             <Trigger Property="IsKeyboardFocusWithin" Value="True"><Setter TargetName="Chrome" Property="BorderBrush" Value="{DynamicResource MenuAccent}" /></Trigger>
             <Trigger Property="Validation.HasError" Value="True"><Setter TargetName="Chrome" Property="BorderBrush" Value="#C42B1C" /></Trigger>
             <Trigger Property="IsEnabled" Value="False"><Setter TargetName="Chrome" Property="Background" Value="{DynamicResource Metro81.DisabledSurface}" /><Setter Property="Foreground" Value="{DynamicResource Metro81.DisabledInk}" /></Trigger>
@@ -291,7 +310,7 @@
         <ControlTemplate TargetType="ComboBoxItem">
           <Border x:Name="Chrome" Background="Transparent" Padding="{TemplateBinding Padding}"><ContentPresenter /></Border>
           <ControlTemplate.Triggers>
-            <Trigger Property="IsHighlighted" Value="True"><Setter TargetName="Chrome" Property="Background" Value="#DEDEDE" /></Trigger>
+            <Trigger Property="IsHighlighted" Value="True"><Setter TargetName="Chrome" Property="Background" Value="{DynamicResource Metro81.HoverSurface}" /></Trigger>
             <Trigger Property="IsSelected" Value="True"><Setter TargetName="Chrome" Property="Background" Value="{DynamicResource MenuAccent}" /><Setter Property="Foreground" Value="White" /></Trigger>
             <Trigger Property="IsEnabled" Value="False"><Setter Property="Foreground" Value="{DynamicResource Metro81.DisabledInk}" /></Trigger>
           </ControlTemplate.Triggers>
@@ -301,7 +320,7 @@
   </Style>
   <Style x:Key="Metro81.ComboBox" TargetType="ComboBox" BasedOn="{StaticResource Metro81.Control}">
     <Setter Property="MinHeight" Value="36" /><Setter Property="Padding" Value="8,4" />
-    <Setter Property="Background" Value="White" /><Setter Property="BorderBrush" Value="{DynamicResource Metro81.FieldBorder}" /><Setter Property="BorderThickness" Value="2" />
+    <Setter Property="Background" Value="{DynamicResource Metro81.Surface}" /><Setter Property="BorderBrush" Value="{DynamicResource Metro81.FieldBorder}" /><Setter Property="BorderThickness" Value="2" />
     <Setter Property="ScrollViewer.HorizontalScrollBarVisibility" Value="Auto" /><Setter Property="ScrollViewer.VerticalScrollBarVisibility" Value="Auto" />
     <Setter Property="ItemContainerStyle" Value="{StaticResource Metro81.ComboBoxItem}" />
     <Setter Property="Template">
@@ -315,23 +334,23 @@
                                   Content="{TemplateBinding SelectionBoxItem}" ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}" ContentStringFormat="{TemplateBinding SelectionBoxItemStringFormat}" />
                 <ToggleButton x:Name="DropDown" Grid.ColumnSpan="2" Focusable="False" IsChecked="{Binding IsDropDownOpen, RelativeSource={RelativeSource TemplatedParent}, Mode=TwoWay}" ClickMode="Press">
                   <ToggleButton.Template>
-                    <ControlTemplate TargetType="ToggleButton"><Border Background="Transparent"><Path Data="M 0,0 L 5,5 L 10,0 L 10,4 L 5,9 L 0,4 Z" Fill="Black" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,10,0" /></Border></ControlTemplate>
+                    <ControlTemplate TargetType="ToggleButton"><Border Background="Transparent"><Path Data="M 0,0 L 5,5 L 10,0 L 10,4 L 5,9 L 0,4 Z" Fill="{DynamicResource Metro81.Ink}" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,10,0" /></Border></ControlTemplate>
                   </ToggleButton.Template>
                 </ToggleButton>
-                <TextBox x:Name="PART_EditableTextBox" Style="{x:Null}" Margin="{TemplateBinding Padding}" Visibility="Hidden" Background="Transparent" Foreground="{TemplateBinding Foreground}" BorderThickness="0" VerticalContentAlignment="Center" IsReadOnly="{TemplateBinding IsReadOnly}">
+                <TextBox x:Name="PART_EditableTextBox" Style="{x:Null}" Margin="{TemplateBinding Padding}" Visibility="Hidden" Background="Transparent" Foreground="{TemplateBinding Foreground}" CaretBrush="{DynamicResource Metro81.Ink}" BorderThickness="0" VerticalContentAlignment="Center" IsReadOnly="{TemplateBinding IsReadOnly}">
                   <TextBox.Template><ControlTemplate TargetType="TextBox"><ScrollViewer x:Name="PART_ContentHost" Focusable="False" /></ControlTemplate></TextBox.Template>
                 </TextBox>
               </Grid>
             </Border>
             <Popup x:Name="PART_Popup" Placement="Bottom" AllowsTransparency="True" Focusable="False" IsOpen="{TemplateBinding IsDropDownOpen}" PopupAnimation="None">
-              <Border Background="White" BorderBrush="{DynamicResource Metro81.FieldBorder}" BorderThickness="2" MinWidth="{Binding ActualWidth, RelativeSource={RelativeSource TemplatedParent}}" MaxHeight="{TemplateBinding MaxDropDownHeight}">
+              <Border Background="{DynamicResource Metro81.Surface}" BorderBrush="{DynamicResource Metro81.FieldBorder}" BorderThickness="2" MinWidth="{Binding ActualWidth, RelativeSource={RelativeSource TemplatedParent}}" MaxHeight="{TemplateBinding MaxDropDownHeight}">
                 <ScrollViewer CanContentScroll="True"><ItemsPresenter KeyboardNavigation.DirectionalNavigation="Contained" /></ScrollViewer>
               </Border>
             </Popup>
           </Grid>
           <ControlTemplate.Triggers>
             <Trigger Property="IsEditable" Value="True"><Setter TargetName="Selection" Property="Visibility" Value="Hidden" /><Setter TargetName="PART_EditableTextBox" Property="Visibility" Value="Visible" /><Setter Property="IsTabStop" Value="False" /></Trigger>
-            <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Chrome" Property="BorderBrush" Value="Black" /></Trigger>
+            <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Chrome" Property="BorderBrush" Value="{DynamicResource Metro81.Ink}" /></Trigger>
             <Trigger Property="IsKeyboardFocusWithin" Value="True"><Setter TargetName="Chrome" Property="BorderBrush" Value="{DynamicResource MenuAccent}" /></Trigger>
             <Trigger Property="IsEnabled" Value="False"><Setter TargetName="Chrome" Property="Background" Value="{DynamicResource Metro81.DisabledSurface}" /><Setter Property="Foreground" Value="{DynamicResource Metro81.DisabledInk}" /><Setter TargetName="DropDown" Property="Opacity" Value="0.4" /></Trigger>
           </ControlTemplate.Triggers>
@@ -341,12 +360,12 @@
   </Style>
   <Style x:Key="Metro81.ToolTip" TargetType="ToolTip" BasedOn="{StaticResource Metro81.Control}">
     <Style.Resources><Style TargetType="TextBlock"><Setter Property="TextWrapping" Value="Wrap" /></Style></Style.Resources>
-    <Setter Property="Background" Value="White" /><Setter Property="BorderBrush" Value="{DynamicResource Metro81.FieldBorder}" /><Setter Property="BorderThickness" Value="2" />
+    <Setter Property="Background" Value="{DynamicResource Metro81.Surface}" /><Setter Property="BorderBrush" Value="{DynamicResource Metro81.FieldBorder}" /><Setter Property="BorderThickness" Value="2" />
     <Setter Property="Padding" Value="10,6" /><Setter Property="MaxWidth" Value="400" />
     <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="ToolTip"><Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" Padding="{TemplateBinding Padding}"><ContentPresenter /></Border></ControlTemplate></Setter.Value></Setter>
   </Style>
   <Style x:Key="Metro81.MenuSeparator" TargetType="Separator">
-    <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Separator"><Border Height="1" Background="#C8C8C8" Margin="10,4" /></ControlTemplate></Setter.Value></Setter>
+    <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Separator"><Border Height="1" Background="{DynamicResource Metro81.Separator}" Margin="10,4" /></ControlTemplate></Setter.Value></Setter>
   </Style>
   <Style x:Key="Metro81.MenuItem" TargetType="MenuItem" BasedOn="{StaticResource Metro81.Control}">
     <Style.Resources><Style TargetType="Separator" BasedOn="{StaticResource Metro81.MenuSeparator}" /></Style.Resources>
@@ -355,7 +374,7 @@
     <Setter Property="Template">
       <Setter.Value>
         <ControlTemplate TargetType="MenuItem">
-          <Border x:Name="Chrome" Background="White" Padding="{TemplateBinding Padding}">
+          <Border x:Name="Chrome" Background="{DynamicResource Metro81.MenuSurface}" Padding="{TemplateBinding Padding}">
             <Grid>
               <Grid.ColumnDefinitions><ColumnDefinition Width="24" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="16" /></Grid.ColumnDefinitions>
               <ContentPresenter x:Name="Icon" ContentSource="Icon" VerticalAlignment="Center" />
@@ -364,19 +383,19 @@
               <TextBlock Grid.Column="2" Margin="24,0,8,0" Text="{TemplateBinding InputGestureText}" VerticalAlignment="Center" />
               <Path x:Name="Arrow" Grid.Column="3" Visibility="Collapsed" Data="M 0,0 L 5,5 L 0,10" Stroke="{TemplateBinding Foreground}" StrokeThickness="2" VerticalAlignment="Center" HorizontalAlignment="Right" />
               <Popup x:Name="PART_Popup" IsOpen="{Binding IsSubmenuOpen, RelativeSource={RelativeSource TemplatedParent}}" Placement="Right" Focusable="False" AllowsTransparency="True" PopupAnimation="None">
-                <Border Background="White" BorderBrush="Black" BorderThickness="2"><ScrollViewer CanContentScroll="True" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"><ItemsPresenter KeyboardNavigation.DirectionalNavigation="Cycle" /></ScrollViewer></Border>
+                <Border Background="{DynamicResource Metro81.MenuSurface}" BorderBrush="{DynamicResource Metro81.MenuBorder}" BorderThickness="2"><ScrollViewer CanContentScroll="True" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"><ItemsPresenter KeyboardNavigation.DirectionalNavigation="Cycle" /></ScrollViewer></Border>
               </Popup>
             </Grid>
           </Border>
           <ControlTemplate.Triggers>
             <Trigger Property="HasItems" Value="True"><Setter TargetName="Arrow" Property="Visibility" Value="Visible" /></Trigger>
             <Trigger Property="IsChecked" Value="True"><Setter TargetName="Tick" Property="Visibility" Value="Visible" /><Setter TargetName="Icon" Property="Visibility" Value="Collapsed" /></Trigger>
-            <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Chrome" Property="Background" Value="#DEDEDE" /></Trigger>
+            <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Chrome" Property="Background" Value="{DynamicResource Metro81.HoverSurface}" /></Trigger>
             <MultiTrigger>
               <MultiTrigger.Conditions><Condition Property="IsHighlighted" Value="True" /><Condition Property="IsMouseOver" Value="False" /></MultiTrigger.Conditions>
-              <Setter TargetName="Chrome" Property="Background" Value="Black" /><Setter Property="Foreground" Value="White" />
+              <Setter TargetName="Chrome" Property="Background" Value="{DynamicResource Metro81.HighlightSurface}" /><Setter Property="Foreground" Value="{DynamicResource Metro81.HighlightInk}" />
             </MultiTrigger>
-            <Trigger Property="IsEnabled" Value="False"><Setter Property="Foreground" Value="{DynamicResource Metro81.DisabledInk}" /><Setter TargetName="Chrome" Property="Background" Value="White" /></Trigger>
+            <Trigger Property="IsEnabled" Value="False"><Setter Property="Foreground" Value="{DynamicResource Metro81.DisabledInk}" /><Setter TargetName="Chrome" Property="Background" Value="{DynamicResource Metro81.MenuSurface}" /></Trigger>
           </ControlTemplate.Triggers>
         </ControlTemplate>
       </Setter.Value>
@@ -389,7 +408,7 @@
     </Style.Resources>
     <Setter Property="HasDropShadow" Value="False" /><Setter Property="MinWidth" Value="160" />
     <Setter Property="ItemContainerStyleSelector" Value="{StaticResource Metro81.MenuItemSelector}" />
-    <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="ContextMenu"><Border Background="White" BorderBrush="Black" BorderThickness="2"><ScrollViewer CanContentScroll="True" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"><ItemsPresenter KeyboardNavigation.DirectionalNavigation="Cycle" /></ScrollViewer></Border></ControlTemplate></Setter.Value></Setter>
+    <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="ContextMenu"><Border Background="{DynamicResource Metro81.MenuSurface}" BorderBrush="{DynamicResource Metro81.MenuBorder}" BorderThickness="2"><ScrollViewer CanContentScroll="True" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"><ItemsPresenter KeyboardNavigation.DirectionalNavigation="Cycle" /></ScrollViewer></Border></ControlTemplate></Setter.Value></Setter>
   </Style>
   <Style x:Key="Metro81.ScrollPage" TargetType="RepeatButton">
     <Setter Property="OverridesDefaultStyle" Value="True" />
@@ -489,7 +508,7 @@
       <ControlTemplate TargetType="ListBoxItem">
         <Border x:Name="Chrome" Background="Transparent" Padding="{TemplateBinding Padding}"><ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}" /></Border>
         <ControlTemplate.Triggers>
-          <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Chrome" Property="Background" Value="#DEDEDE" /></Trigger>
+          <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Chrome" Property="Background" Value="{DynamicResource Metro81.HoverSurface}" /></Trigger>
           <Trigger Property="IsSelected" Value="True"><Setter TargetName="Chrome" Property="Background" Value="{DynamicResource MenuAccent}" /><Setter Property="Foreground" Value="White" /></Trigger>
           <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.45" /></Trigger>
         </ControlTemplate.Triggers>
@@ -498,14 +517,14 @@
   </Style>
   <Style x:Key="Metro81.ListBox" TargetType="ListBox" BasedOn="{StaticResource Metro81.Control}">
     <Style.Resources><Style TargetType="ScrollBar" BasedOn="{StaticResource Metro81.ScrollBar}" /></Style.Resources>
-    <Setter Property="Background" Value="White" /><Setter Property="BorderBrush" Value="{DynamicResource Metro81.FieldBorder}" /><Setter Property="BorderThickness" Value="2" />
+    <Setter Property="Background" Value="{DynamicResource Metro81.Surface}" /><Setter Property="BorderBrush" Value="{DynamicResource Metro81.FieldBorder}" /><Setter Property="BorderThickness" Value="2" />
     <Setter Property="ItemContainerStyle" Value="{StaticResource Metro81.ListBoxItem}" />
     <Setter Property="ScrollViewer.CanContentScroll" Value="True" /><Setter Property="ScrollViewer.HorizontalScrollBarVisibility" Value="Auto" /><Setter Property="ScrollViewer.VerticalScrollBarVisibility" Value="Auto" />
     <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="ListBox"><Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}"><ScrollViewer Focusable="False" Padding="{TemplateBinding Padding}"><ItemsPresenter /></ScrollViewer></Border></ControlTemplate></Setter.Value></Setter>
   </Style>
   <!-- Retain the native header parts for resize, auto-size and floating column drag visuals. -->
   <Style x:Key="Metro81.GridViewColumnHeader" TargetType="GridViewColumnHeader" BasedOn="{StaticResource Metro81.Control}">
-    <Setter Property="Background" Value="White" /><Setter Property="BorderBrush" Value="#CCCCCC" />
+    <Setter Property="Background" Value="{DynamicResource Metro81.Surface}" /><Setter Property="BorderBrush" Value="{DynamicResource Metro81.SubtleBorder}" />
     <Setter Property="BorderThickness" Value="0,0,1,1" /><Setter Property="Padding" Value="6,5" />
     <Setter Property="MinHeight" Value="32" /><Setter Property="HorizontalContentAlignment" Value="Left" />
     <Setter Property="VerticalContentAlignment" Value="Center" />
@@ -521,8 +540,8 @@
           </Thumb>
         </Grid>
         <ControlTemplate.Triggers>
-          <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Chrome" Property="Background" Value="#DEDEDE" /></Trigger>
-          <Trigger Property="IsPressed" Value="True"><Setter TargetName="Chrome" Property="Background" Value="#CCCCCC" /></Trigger>
+          <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Chrome" Property="Background" Value="{DynamicResource Metro81.HoverSurface}" /></Trigger>
+          <Trigger Property="IsPressed" Value="True"><Setter TargetName="Chrome" Property="Background" Value="{DynamicResource Metro81.PressedSurface}" /></Trigger>
           <Trigger Property="local:MetroControlStyles81.SortDirection" Value="Ascending"><Setter TargetName="SortArrow" Property="Visibility" Value="Visible" /></Trigger>
           <Trigger Property="local:MetroControlStyles81.SortDirection" Value="Descending"><Setter TargetName="SortArrow" Property="Visibility" Value="Visible" /><Setter TargetName="SortArrow" Property="Data" Value="M 0,0 L 4,4 L 8,0 Z" /></Trigger>
           <Trigger Property="Role" Value="Padding"><Setter TargetName="PART_HeaderGripper" Property="Visibility" Value="Collapsed" /><Setter Property="IsHitTestVisible" Value="False" /></Trigger>
@@ -579,9 +598,9 @@
         </Border>
         <ControlTemplate.Triggers>
           <DataTrigger Binding="{Binding View, RelativeSource={RelativeSource AncestorType=ListView}}" Value="{x:Null}"><Setter TargetName="Cells" Property="Visibility" Value="Collapsed" /><Setter TargetName="PlainContent" Property="Visibility" Value="Visible" /></DataTrigger>
-          <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Chrome" Property="Background" Value="#DEDEDE" /></Trigger>
+          <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Chrome" Property="Background" Value="{DynamicResource Metro81.HoverSurface}" /></Trigger>
           <Trigger Property="IsSelected" Value="True"><Setter TargetName="Chrome" Property="Background" Value="{DynamicResource MenuAccent}" /><Setter Property="Foreground" Value="White" /></Trigger>
-          <Trigger Property="IsKeyboardFocusWithin" Value="True"><Setter TargetName="Chrome" Property="BorderBrush" Value="Black" /></Trigger>
+          <Trigger Property="IsKeyboardFocusWithin" Value="True"><Setter TargetName="Chrome" Property="BorderBrush" Value="{DynamicResource Metro81.Ink}" /></Trigger>
           <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.45" /></Trigger>
         </ControlTemplate.Triggers>
       </ControlTemplate>
@@ -589,7 +608,7 @@
   </Style>
   <Style x:Key="Metro81.ListView" TargetType="ListView" BasedOn="{StaticResource Metro81.Control}">
     <Style.Resources><Style TargetType="ScrollBar" BasedOn="{StaticResource Metro81.ScrollBar}" /></Style.Resources>
-    <Setter Property="Background" Value="White" /><Setter Property="BorderBrush" Value="{DynamicResource Metro81.FieldBorder}" /><Setter Property="BorderThickness" Value="2" />
+    <Setter Property="Background" Value="{DynamicResource Metro81.Surface}" /><Setter Property="BorderBrush" Value="{DynamicResource Metro81.FieldBorder}" /><Setter Property="BorderThickness" Value="2" />
     <Setter Property="ItemContainerStyle" Value="{StaticResource Metro81.ListViewItem}" />
     <Setter Property="ScrollViewer.CanContentScroll" Value="True" /><Setter Property="ScrollViewer.HorizontalScrollBarVisibility" Value="Auto" /><Setter Property="ScrollViewer.VerticalScrollBarVisibility" Value="Auto" />
     <Setter Property="VirtualizingPanel.IsVirtualizing" Value="True" /><Setter Property="VirtualizingPanel.VirtualizationMode" Value="Recycling" />
@@ -625,7 +644,7 @@
     </Style.Triggers>
   </Style>
   <Style x:Key="Metro81.ProgressBar" TargetType="ProgressBar">
-    <Setter Property="Foreground" Value="{DynamicResource MenuAccent}" /><Setter Property="Background" Value="#DEDEDE" /><Setter Property="Height" Value="8" />
+    <Setter Property="Foreground" Value="{DynamicResource MenuAccent}" /><Setter Property="Background" Value="{DynamicResource Metro81.HoverSurface}" /><Setter Property="Height" Value="8" />
     <Setter Property="local:MetroControlStyles81.AnimationsEnabled" Value="{DynamicResource {x:Static SystemParameters.ClientAreaAnimationKey}}" />
     <Setter Property="Template"><Setter.Value>
       <ControlTemplate TargetType="ProgressBar">
@@ -654,11 +673,11 @@
     <Setter Property="Width" Value="12" /><Setter Property="Height" Value="24" />
     <Setter Property="Template"><Setter.Value>
       <ControlTemplate TargetType="Thumb">
-        <Border x:Name="Chrome" Background="Black" />
+        <Border x:Name="Chrome" Background="{DynamicResource Metro81.SliderThumbFill}" />
         <ControlTemplate.Triggers>
           <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Chrome" Property="Background" Value="#404040" /></Trigger>
           <Trigger Property="IsDragging" Value="True"><Setter TargetName="Chrome" Property="Background" Value="#606060" /></Trigger>
-          <Trigger Property="IsEnabled" Value="False"><Setter TargetName="Chrome" Property="Background" Value="#A6A6A6" /></Trigger>
+          <Trigger Property="IsEnabled" Value="False"><Setter TargetName="Chrome" Property="Background" Value="{DynamicResource Metro81.Border}" /></Trigger>
         </ControlTemplate.Triggers>
       </ControlTemplate>
     </Setter.Value></Setter>
@@ -667,7 +686,7 @@
     <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="RepeatButton"><Border Background="Transparent"><Border Height="8" VerticalAlignment="Center" Background="{TemplateBinding Background}" /></Border></ControlTemplate></Setter.Value></Setter>
   </Style>
   <Style x:Key="Metro81.Slider" TargetType="Slider" BasedOn="{StaticResource Metro81.Control}">
-    <Setter Property="MinHeight" Value="40" /><Setter Property="Background" Value="#A6A6A6" /><Setter Property="Foreground" Value="{DynamicResource MenuAccent}" />
+    <Setter Property="MinHeight" Value="40" /><Setter Property="Background" Value="{DynamicResource Metro81.Border}" /><Setter Property="Foreground" Value="{DynamicResource MenuAccent}" />
     <Setter Property="Template"><Setter.Value>
       <ControlTemplate TargetType="Slider">
         <Grid Background="Transparent">
@@ -727,7 +746,7 @@
     </Setter.Value></Setter>
   </Style>
   <Style x:Key="Metro81.Flyout" TargetType="Border">
-    <Setter Property="Background" Value="White" /><Setter Property="BorderBrush" Value="{DynamicResource Metro81.FieldBorder}" /><Setter Property="BorderThickness" Value="1" /><Setter Property="Padding" Value="16" /><Setter Property="CornerRadius" Value="0" />
+    <Setter Property="Background" Value="{DynamicResource Metro81.Surface}" /><Setter Property="BorderBrush" Value="{DynamicResource Metro81.FieldBorder}" /><Setter Property="BorderThickness" Value="1" /><Setter Property="Padding" Value="16" /><Setter Property="CornerRadius" Value="0" />
   </Style>
   <Style x:Key="Metro81.AppBar" TargetType="Border">
     <Setter Property="Background" Value="#E5E5E5" /><Setter Property="Padding" Value="16,8" /><Setter Property="CornerRadius" Value="0" />

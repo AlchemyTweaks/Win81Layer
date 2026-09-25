@@ -433,6 +433,20 @@ public partial class App : System.Windows.Application
 		try { if (_hotCorners != null) { _hotCorners.Enabled = on; } } catch { }
 	}
 
+	// Turn the app-switcher mouse reveal (left edge + top-left corner) on/off live. When off, the switcher opens only
+	// via Win+Tab or the taskbar Task View button.
+	public void ApplySwitcherEdge(bool on)
+	{
+		try
+		{
+			if (_hotCorners == null) return;
+			Action reveal = delegate { _appSwitcher?.ShowSwitcher(); };
+			_hotCorners.LeftEdge = on ? reveal : null;
+			_hotCorners.TopLeft = on ? reveal : null;
+		}
+		catch { }
+	}
+
 	public void ApplyReplaceStartButton(bool on)
 	{
 		try { if (_winHook != null) { _winHook.ReplaceStartButton = on; } } catch { }
@@ -1161,6 +1175,9 @@ public partial class App : System.Windows.Application
 		//IL_2ff2: Unknown result type (might be due to invalid IL or missing references)
 		//IL_3009: Expected O, but got Unknown
 		base.OnStartup(e);
+		// Single light/dark authority: arm the OS preference hook and paint the semantic brush tokens before any
+		// window is shown, so the whole shell (menus, controls, tooltips, dialogs) opens in the correct theme.
+		try { ShellTheme.Initialize(); ShellTheme.ApplyResourceTokens(); } catch (Exception themeEx) { Logger.Log("ShellTheme init failed: " + themeEx.Message); }
 		if (e.Args.Contains("--metro-integration-test"))
 		{
 			SettingsStore.ReadOnlyDiagnostics = true;
@@ -2829,8 +2846,9 @@ public partial class App : System.Windows.Application
 			// activation (throwing the cursor toward Close, scrollbars, the clock or another monitor). Charms is now a
 			// deliberate action only: the right-edge pull gesture (see CharmsEdgeGesture) or Win+C. RightCorners left
 			// unset so the poll no longer triggers Charms.
-			TopLeft = topLeft,
-			LeftEdge = topLeft,
+			TopLeft = settings.SwitcherEdgeReveal ? topLeft : null,
+			LeftEdge = settings.SwitcherEdgeReveal ? topLeft : null,
+			LeftEdgeDwellTicks = System.Math.Max(2, settings.SwitcherEdgeDwellMs / 100),
 			Enabled = settings.HotCornersEnabled
 		};
 		TaskbarWindow.SearchRequested += delegate

@@ -999,15 +999,7 @@ public static class DesktopComposition
 
 	private static bool SystemPrefersDark()
 	{
-		try
-		{
-			using RegistryKey k = Registry.CurrentUser.OpenSubKey("Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize");
-			return k?.GetValue("AppsUseLightTheme") is int v && v == 0;
-		}
-		catch
-		{
-			return false;
-		}
+		return ShellTheme.IsDark;   // single source of truth (cached + change-signalled)
 	}
 
 	private static bool Eligible(nint h)

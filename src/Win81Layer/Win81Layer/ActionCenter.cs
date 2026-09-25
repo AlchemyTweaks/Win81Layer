@@ -605,33 +605,14 @@ public sealed partial class ActionCenter : Window
 	// Dark/Light system theme — documented HKCU keys + WM_SETTINGCHANGE broadcast so Explorer/UWP repaint live.
 	private static bool ThemeIsDark()
 	{
-		try
-		{
-			object v = Microsoft.Win32.Registry.GetValue("HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize", "AppsUseLightTheme", 1);
-			return v is int i && i == 0;
-		}
-		catch
-		{
-			return false;
-		}
+		return ShellTheme.IsDark;   // single source of truth (cached + change-signalled)
 	}
 
 	private void ToggleTheme()
 	{
-		try
-		{
-			int val = (ThemeIsDark() ? 1 : 0);   // currently dark -> go light (1); currently light -> go dark (0)
-			using (Microsoft.Win32.RegistryKey k = Microsoft.Win32.Registry.CurrentUser.CreateSubKey("Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize"))
-			{
-				k.SetValue("AppsUseLightTheme", val, Microsoft.Win32.RegistryValueKind.DWord);
-				k.SetValue("SystemUsesLightTheme", val, Microsoft.Win32.RegistryValueKind.DWord);
-			}
-			BroadcastSettingChange("ImmersiveColorSet");
-		}
-		catch
-		{
-			Launch("ms-settings:colors");
-		}
+		// Flip through the single authority: it writes the registry, broadcasts to Explorer/UWP, rebuilds the menu
+		// palette and repaints the launcher's own open surfaces live (via ApplyResourceTokens + the Changed event).
+		ShellTheme.Toggle();
 	}
 
 	private static Task RunSync(Action action)

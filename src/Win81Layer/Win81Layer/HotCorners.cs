@@ -18,7 +18,9 @@ public sealed class HotCorners : IDisposable
 
 	private const int LeftEdgeSize = 4;
 
-	private const int LeftEdgeDwell = 5;
+	// Poll-ticks (100 ms each) the cursor must dwell on the left edge before the switcher reveals. Settable so the
+	// launcher can make the reveal more deliberate (SwitcherEdgeDwellMs) or the user can disable the edge action entirely.
+	public int LeftEdgeDwellTicks { get; set; } = 5;
 
 	public Action? BottomLeft;
 
@@ -128,7 +130,7 @@ public sealed class HotCorners : IDisposable
 		// occasionally miss the second action while the first Charms dismissal was still completing.
 		Check(2, rightOuter && topOuter && p.X >= b.Right - CornerSize && p.Y <= b.Top + CornerSize, RightCorners, RightDwell);
 		Check(3, rightOuter && bottomOuter && p.X >= b.Right - CornerSize && p.Y >= b.Bottom - CornerSize, RightCorners, RightDwell);
-		Check(4, leftOuter && p.X <= b.Left + LeftEdgeSize && p.Y > b.Top + 48 && p.Y < b.Bottom - 48, LeftEdge, LeftEdgeDwell);
+		Check(4, leftOuter && p.X <= b.Left + LeftEdgeSize && p.Y > b.Top + 48 && p.Y < b.Bottom - 48, LeftEdge, LeftEdgeDwellTicks);
 	}
 
 	private void Check(int index, bool inside, Action? action, int dwellTicks)
