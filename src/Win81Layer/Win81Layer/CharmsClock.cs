@@ -30,6 +30,7 @@ public partial class CharmsClock : Window, IComponentConnector
 		_tick.Tick += delegate
 		{
 			UpdateNow();
+			UpdateBattery();
 		};
 		_networkChanged = delegate
 		{
@@ -62,10 +63,28 @@ public partial class CharmsClock : Window, IComponentConnector
 		NetImage.Source = Win81AssetResolver.NetworkImage(st, 40) ?? NetIcons81.For(st, 40, Colors.White);
 	}
 
+	// Battery shown on the charms clock pane, under the network icon (laptop-only — hidden when there is no battery).
+	// Mirrors the taskbar tray battery exactly (same PowerStatus source + MDL2 codepoint math as TrayVm.BatteryGlyph).
+	private void UpdateBattery()
+	{
+		(bool present, int percent, bool charging, bool saver) p = PowerStatus.Read();
+		if (!p.present)
+		{
+			BatteryPanel.Visibility = Visibility.Collapsed;
+			return;
+		}
+		BatteryPanel.Visibility = Visibility.Visible;
+		int level = Math.Clamp((int)Math.Round((double)p.percent / 10.0), 0, 10);
+		int baseCp = (p.charging ? 59483 : (p.saver ? 59494 : 59472));
+		BatteryImage.Source = GlyphImage81.Get("Segoe MDL2 Assets", baseCp + level, Colors.White, 0.92);
+		BatteryText.Text = p.percent + "%";
+	}
+
 	public void ShowAt(Rectangle b, double sx, double sy, double taskbarDiu)
 	{
 		UpdateNow();
 		UpdateNet();
+		UpdateBattery();
 		_tick.Start();
 		Show();
 		// Flat: opaque dark slab; Win7-Aero: translucent smoked-accent glass (plain alpha).
@@ -106,6 +125,7 @@ public partial class CharmsClock : Window, IComponentConnector
 	{
 		UpdateNow();
 		UpdateNet();
+		UpdateBattery();
 		Show();
 		UpdateLayout();
 		int w = (int)Math.Ceiling(Root.ActualWidth);

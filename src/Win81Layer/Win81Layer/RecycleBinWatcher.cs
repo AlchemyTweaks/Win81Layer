@@ -143,7 +143,8 @@ internal static class RecycleBinWatcher
 			if (transition || _lastEmpty == -1 || forceRefresh)
 			{
 				SystemIcons81.SetRecycleDefault(empty == 1);
-				RefreshNow();
+				// Desktop re-enumeration only when the empty/full glyph actually flips (or first sync), not on every delete.
+				RefreshNow(transition || _lastEmpty == -1);
 			}
 			if (transition)
 			{
@@ -157,7 +158,7 @@ internal static class RecycleBinWatcher
 	}
 
 	// Public so the shell can also force an immediate refresh right after an in-app "empty recycle bin" action.
-	internal static void RefreshNow()
+	internal static void RefreshNow(bool desktopRefresh = false)
 	{
 		try
 		{
@@ -173,6 +174,14 @@ internal static class RecycleBinWatcher
 		// Recycle Bin ITEM changed (SHCNE_UPDATEITEM on its pidl) makes every view re-query the item's icon and repaint at
 		// once, without an icon-cache wipe and without touching the other desktop icons. Probe-verified before shipping.
 		NotifyRecycleBinItemChanged();
+		// On Win11 26200 the item-level notify above re-reads the bin's association but does NOT force the live desktop
+		// to re-EXTRACT its cached empty/full glyph — it stayed stale until a manual F5, in BOTH directions. On an actual
+		// empty<->full flip, do the F5-equivalent desktop re-enumeration so the glyph swaps immediately. Gated by
+		// desktopRefresh so ordinary deletes (bin already non-empty) do NOT trigger a whole-desktop refresh every time.
+		if (desktopRefresh)
+		{
+			DesktopShell.Refresh();
+		}
 	}
 
 	private static void NotifyRecycleBinItemChanged()

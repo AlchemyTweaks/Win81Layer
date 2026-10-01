@@ -64,6 +64,12 @@ public sealed partial class ActionCenter : Window
 
 	private bool _dismissing;
 
+	// Monotonic ms of the last ShowMetroPanel. The light-dismiss hook marshals the OPENING click's mouse-DOWN through
+	// the threadpool + dispatcher; on a cold/idle threadpool (first open, or after long idle) that hop can deliver the
+	// down-event AFTER the panel is visible, so the click that OPENED the panel reads as an outside click and closes it
+	// on the first tap. Outside clicks within a short grace window after a show are ignored (native flyout behaviour).
+	private long _shownTick;
+
 	private double _finalLeft;
 
 	private readonly List<(Border tile, Func<bool> isOn)> _toggleTiles = new List<(Border, Func<bool>)>();
@@ -169,6 +175,10 @@ public sealed partial class ActionCenter : Window
 		if (ac == null || !ac.IsVisible || ac._menuOpen)
 		{
 			return;
+		}
+		if (System.Environment.TickCount64 - ac._shownTick < 350L)
+		{
+			return;   // ignore the (threadpool-delayed) mouse-DOWN that just opened the panel on a cold/idle pool
 		}
 		try
 		{

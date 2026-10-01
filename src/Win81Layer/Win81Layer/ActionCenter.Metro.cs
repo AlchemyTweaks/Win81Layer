@@ -959,6 +959,7 @@ public sealed partial class ActionCenter
 	private void ShowMetroPanel()
 	{
 		_dismissing = false;
+		_shownTick = System.Environment.TickCount64;   // grace window so the opening click can't self-dismiss (see CloseOnOutsideClick)
 		int generation = ++_animationGeneration;
 		PlaceOnEdge();
 		ApplyMetroTheme();

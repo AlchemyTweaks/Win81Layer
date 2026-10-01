@@ -259,6 +259,15 @@ public static class SettingsStore
 
 	private static void Normalize(AppSettings settings, bool rebindBundledPath)
 	{
+		// One-shot boot-to-desktop migration: older installs persisted BootToStart=true (the Metro Start screen
+		// auto-opened at every login, which the user does not want). Flip it to false exactly once; the guard flag is
+		// set in the same object so once it is persisted (by the next Save) the user's later choice is honored. Runs on
+		// the parsed object that becomes the cache, so the boot gate reads the migrated value even before it persists.
+		if (!ReadOnlyDiagnostics && !settings.BootToStartMigratedV2)
+		{
+			settings.BootToStart = false;
+			settings.BootToStartMigratedV2 = true;
+		}
 		settings.TrayOrder ??= new List<string>();
 		settings.TrayForceShown ??= new List<string>();
 		settings.TrayForceHidden ??= new List<string>();

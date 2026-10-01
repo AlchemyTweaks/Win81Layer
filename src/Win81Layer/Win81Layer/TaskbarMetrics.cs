@@ -42,7 +42,10 @@ public static class TaskbarMetrics
 			if (1 == 0)
 			{
 			}
-			int num = ((size == "Small") ? 13 : ((!(size == "Large")) ? 15 : 18));
+			// Bumped tray glyph sizes (battery/wifi/volume/notifications + search/task-view/overflow/action-center) for
+			// legibility: Small 13->15, Medium 15->18, Large 18->22. Still below the 24px app pins and crisp (VolBox/NetBox
+			// request bigger native frames), so the bar stays aligned.
+			int num = ((size == "Small") ? 15 : ((!(size == "Large")) ? 18 : 22));
 			if (1 == 0)
 			{
 			}

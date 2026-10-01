@@ -12,7 +12,11 @@ public sealed class AppSettings
 	// How long the mouse must rest at the left edge before the switcher appears (ms). Higher = fewer accidental reveals.
 	public int SwitcherEdgeDwellMs { get; set; } = 900;
 
-	public bool BootToStart { get; set; } = true;
+	// Default to booting to the DESKTOP (Start closed). The user can re-enable "Open Start at launch" in PC Settings.
+	public bool BootToStart { get; set; } = false;
+
+	// One-shot migration guard: flips an older persisted BootToStart=true to false exactly once (see SettingsStore).
+	public bool BootToStartMigratedV2 { get; set; } = false;
 
 	public bool ReplaceStartMenu { get; set; } = true;
 

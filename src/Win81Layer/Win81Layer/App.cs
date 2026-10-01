@@ -430,7 +430,7 @@ public partial class App : System.Windows.Application
 	// reach Ã¢â‚¬â€ mirroring exactly what the tray-menu handlers do, so both surfaces stay in sync.
 	public void ApplyHotCorners(bool on)
 	{
-		try { if (_hotCorners != null) { _hotCorners.Enabled = on; } } catch { }
+		try { if (_hotCorners != null) { _hotCorners.Enabled = on && SettingsStore.FastSnapshot.SwitcherEdgeReveal; } } catch { }
 	}
 
 	// Turn the app-switcher mouse reveal (left edge + top-left corner) on/off live. When off, the switcher opens only
@@ -443,6 +443,8 @@ public partial class App : System.Windows.Application
 			Action reveal = delegate { _appSwitcher?.ShowSwitcher(); };
 			_hotCorners.LeftEdge = on ? reveal : null;
 			_hotCorners.TopLeft = on ? reveal : null;
+			// Keep the poll stopped unless both gates allow a wired action (saves idle CPU).
+			_hotCorners.Enabled = on && SettingsStore.FastSnapshot.HotCornersEnabled;
 		}
 		catch { }
 	}
@@ -2849,7 +2851,9 @@ public partial class App : System.Windows.Application
 			TopLeft = settings.SwitcherEdgeReveal ? topLeft : null,
 			LeftEdge = settings.SwitcherEdgeReveal ? topLeft : null,
 			LeftEdgeDwellTicks = System.Math.Max(2, settings.SwitcherEdgeDwellMs / 100),
-			Enabled = settings.HotCornersEnabled
+			// The only wired corner actions (TopLeft/LeftEdge) are SwitcherEdgeReveal-gated above, so when reveal is off
+			// the 10Hz poll has nothing to do — stop it entirely to cut idle CPU.
+			Enabled = settings.HotCornersEnabled && settings.SwitcherEdgeReveal
 		};
 		TaskbarWindow.SearchRequested += delegate
 		{
@@ -3255,7 +3259,7 @@ public partial class App : System.Windows.Application
 		// click (this is why the first open used to lag the already-warm taskbar). Background priority; never shown.
 		DispatcherTimer startWarm = new DispatcherTimer((DispatcherPriority)4)
 		{
-			Interval = TimeSpan.FromSeconds(3.5)
+			Interval = TimeSpan.FromSeconds(2.0)   // warm the Start board sooner so an early first open is already fast
 		};
 		startWarm.Tick += delegate
 		{
@@ -3434,11 +3438,13 @@ public partial class App : System.Windows.Application
 		};
 		cornersItem.CheckedChanged += delegate
 		{
-			_hotCorners.Enabled = cornersItem.Checked;
 			SettingsStore.Update(delegate(AppSettings appSettings)
 			{
 				appSettings.HotCornersEnabled = cornersItem.Checked;
 			});
+			// Route through the gated hook (stays in sync with PC Settings; keeps the SwitcherEdgeReveal gate so the
+			// 10Hz poll never restarts with nothing to do; adds the null-guard the direct assignment lacked).
+			ApplyHotCorners(cornersItem.Checked);
 		};
 		menu.Items.Add(cornersItem);
 		ToolStripMenuItem replaceStartItem = new ToolStripMenuItem("Replace Start button")

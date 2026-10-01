@@ -42,22 +42,34 @@ public sealed class HotCorners : IDisposable
 
 	private bool _boundsValid;
 
-	public bool Enabled { get; set; }
+	// volatile: written on the SystemEvents thread (OnSessionSwitch), read on the UI thread (Poll).
+	private volatile bool _locked;
+
+	private bool _enabled = true;
+
+	// Setting Enabled now actually stops/starts the timer (not just short-circuits Poll), so turning hot corners off
+	// truly ends the idle wakeups.
+	public bool Enabled
+	{
+		get => _enabled;
+		set { _enabled = value; if (value) { _timer?.Start(); } else { _timer?.Stop(); } }
+	}
+
+	[System.Runtime.InteropServices.DllImport("user32.dll")]
+	private static extern bool GetCursorPos(out Point lpPoint);
 
 	public HotCorners()
 	{
-		//IL_0058: Unknown result type (might be due to invalid IL or missing references)
-		//IL_005d: Unknown result type (might be due to invalid IL or missing references)
-		//IL_0071: Expected O, but got Unknown
-		Enabled = true;
 		_hits = new int[5];
 		_armed = new bool[5] { true, true, true, true, true };
 		_screens = Array.Empty<Rectangle>();
 		RefreshBounds();
 		SystemEvents.DisplaySettingsChanged += OnDisplaySettingsChanged;
-		// Input priority prevents taskbar hover/layout work from starving the bottom-right corner, which physically
-		// sits inside the custom taskbar. The 100 ms poll remains negligible but guarantees a sub-300 ms two-hit dwell.
-		_timer = new DispatcherTimer(DispatcherPriority.Input)
+		// Gate the poll while the session is locked: when locked, GetCursorPos fails and WinForms' Cursor.Position
+		// silently returns (0,0) == the top-left hot corner, which auto-fired the overlay by itself at idle on laptops.
+		SystemEvents.SessionSwitch += OnSessionSwitch;
+		// Background priority: the poll is just a cursor read, so it never preempts input/animation frames (smoother).
+		_timer = new DispatcherTimer(DispatcherPriority.Background)
 		{
 			Interval = TimeSpan.FromMilliseconds(100L)
 		};
@@ -73,7 +85,21 @@ public sealed class HotCorners : IDisposable
 				Logger.Log("HotCorners poll failed: " + ex.Message);
 			}
 		};
-		_timer.Start();
+		if (_enabled) { _timer.Start(); }
+	}
+
+	private void OnSessionSwitch(object? sender, SessionSwitchEventArgs e)
+	{
+		if (e.Reason == SessionSwitchReason.SessionLock || e.Reason == SessionSwitchReason.SessionLogoff
+			|| e.Reason == SessionSwitchReason.ConsoleDisconnect || e.Reason == SessionSwitchReason.RemoteDisconnect)
+		{
+			_locked = true;
+		}
+		else if (e.Reason == SessionSwitchReason.SessionUnlock || e.Reason == SessionSwitchReason.SessionLogon
+			|| e.Reason == SessionSwitchReason.ConsoleConnect || e.Reason == SessionSwitchReason.RemoteConnect)
+		{
+			_locked = false;
+		}
 	}
 
 	private void OnDisplaySettingsChanged(object? sender, EventArgs e)
@@ -96,7 +122,7 @@ public sealed class HotCorners : IDisposable
 
 	private void Poll()
 	{
-		if (!Enabled)
+		if (!_enabled || _locked)
 		{
 			return;
 		}
@@ -108,7 +134,13 @@ public sealed class HotCorners : IDisposable
 				return;
 			}
 		}
-		Point p = Cursor.Position;
+		// Use GetCursorPos directly and HONOUR its failure: on the lock/secure desktop it returns false and WinForms'
+		// Cursor.Position would instead silently yield (0,0) == top-left hot corner, auto-firing the overlay at idle.
+		if (!GetCursorPos(out Point p))
+		{
+			for (int i = 0; i < _hits.Length; i++) { _hits[i] = 0; _armed[i] = true; }
+			return;
+		}
 		Rectangle b = _screens[0];
 		Rectangle[] screens = _screens;
 		for (int i = 0; i < screens.Length; i++)
@@ -158,6 +190,7 @@ public sealed class HotCorners : IDisposable
 	public void Dispose()
 	{
 		SystemEvents.DisplaySettingsChanged -= OnDisplaySettingsChanged;
+		SystemEvents.SessionSwitch -= OnSessionSwitch;
 		_timer.Stop();
 	}
 }

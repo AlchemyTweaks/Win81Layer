@@ -185,6 +185,9 @@ internal sealed class ShellProfileState
 	public string LastResult { get; set; } = "not-applied";
 	public string LastError { get; set; } = string.Empty;
 	public DateTime UpdatedUtc { get; set; }
+	// One-shot: once-true, every stored slot (and any pending transaction) has had BootToStart neutralized to false so a
+	// profile Apply / interrupted-transaction recovery can never resurrect the old "auto-open Start at login" behaviour.
+	public bool BootToStartSlotsMigrated { get; set; }
 }
 
 internal sealed class ShellProfileApplyResult
@@ -703,7 +706,7 @@ internal static class ShellProfileManager
 		{
 			case ShellProfileIds.Windows81:
 				value.HotCornersEnabled = true;
-				value.BootToStart = true;
+				value.BootToStart = false;   // boot to desktop by default even under the Windows 8.1 profile
 				value.ReplaceStartMenu = true;
 				value.Win7StartMenuEnabled = false;
 				value.Win81LightCaption = true;
@@ -908,6 +911,23 @@ internal static class ShellProfileManager
 			}
 		}
 		state.Slots = slots;
+		// One-shot boot-to-desktop slot migration: older stored slots (and any pending transaction) captured
+		// BootToStart=true; neutralize them once so a profile Apply or interrupted-transaction recovery cannot
+		// re-introduce auto-open-Start-at-login. The hardcoded profile cases already all set BootToStart=false, so after
+		// this the whole profile system is boot-to-desktop. Honors the user's later choice (lives in settings.json).
+		if (!state.BootToStartSlotsMigrated)
+		{
+			foreach (ShellProfileSlot s in state.Slots.Values)
+			{
+				if (s?.Settings != null) { s.Settings.BootToStart = false; }
+			}
+			if (state.Pending != null)
+			{
+				if (state.Pending.Before != null) { state.Pending.Before.BootToStart = false; }
+				if (state.Pending.After != null) { state.Pending.After.BootToStart = false; }
+			}
+			state.BootToStartSlotsMigrated = true;
+		}
 		state.LastTransactionId ??= string.Empty;
 		state.LastResult ??= string.Empty;
 		state.LastError ??= string.Empty;
