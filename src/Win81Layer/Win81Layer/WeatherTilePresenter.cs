@@ -276,20 +276,26 @@ public sealed class MetroTilePresenter : Grid
 		StopBackgroundAnimations(_back);
 		TranslateTransform pan = PanOf(_front);
 		double distance = Math.Max(2.5, Math.Min(6.0, ActualWidth * 0.018));
-		pan.BeginAnimation(TranslateTransform.XProperty, new DoubleAnimation(-distance, distance, TimeSpan.FromSeconds(28))
+		DoubleAnimation panAnim = new DoubleAnimation(-distance, distance, TimeSpan.FromSeconds(28))
 		{
 			AutoReverse = true,
 			RepeatBehavior = RepeatBehavior.Forever
-		});
+		};
+		// The pan moves well under 1 px/s; capping it stops this endless clock from holding Start at 60 fps.
+		// WPF ticks at the highest active clock rate, so hover/flip/scroll still run at full rate.
+		Timeline.SetDesiredFrameRate(panAnim, 10);
+		pan.BeginAnimation(TranslateTransform.XProperty, panAnim);
 
 		MetroTileVisual? visual = Visual as MetroTileVisual;
 		if (_particles.Visibility == Visibility.Visible && visual != null)
 		{
-			double seconds = visual.Category == WeatherTileArt.Category.Snow ? 4.6 : 1.15;
-			_particleShift.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(0, 48, TimeSpan.FromSeconds(seconds))
+			bool snow = visual.Category == WeatherTileArt.Category.Snow;
+			DoubleAnimation dropAnim = new DoubleAnimation(0, 48, TimeSpan.FromSeconds(snow ? 4.6 : 1.15))
 			{
 				RepeatBehavior = RepeatBehavior.Forever
-			});
+			};
+			Timeline.SetDesiredFrameRate(dropAnim, snow ? 20 : 30);
+			_particleShift.BeginAnimation(TranslateTransform.YProperty, dropAnim);
 		}
 	}
 

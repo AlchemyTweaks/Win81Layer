@@ -89,6 +89,7 @@ public static class SoundScheme
 				return;
 			}
 			int swapped = 0;
+			bool snapshotChanged = false;
 			string[] subKeyNames = apps.GetSubKeyNames();
 			foreach (string appName in subKeyNames)
 			{
@@ -113,16 +114,34 @@ public static class SoundScheme
 						if (!snapshot.ContainsKey(key) && !alreadyWin81)
 						{
 							snapshot[key] = val;
+							snapshotChanged = true;
 						}
-						cur.SetValue("", win81);
+						// Write only what differs: unchanged SetValue calls still fire registry change notifications.
+						bool wrote = false;
+						if (!alreadyWin81)
+						{
+							cur.SetValue("", win81);
+							wrote = true;
+						}
 						using RegistryKey sch = appKey.CreateSubKey(evt + "\\" + scheme);
-						sch?.SetValue("", win81);
-						swapped++;
+						if (sch != null && !string.Equals(sch.GetValue("") as string, win81, StringComparison.OrdinalIgnoreCase))
+						{
+							sch.SetValue("", win81);
+							wrote = true;
+						}
+						if (wrote)
+						{
+							swapped++;
+						}
 					}
 				}
 			}
-			Directory.CreateDirectory(Path.GetDirectoryName(SnapshotPath));
-			File.WriteAllText(SnapshotPath, JsonSerializer.Serialize(snapshot));
+			// The file's existence is the IsApplied flag, so it is always created on first apply.
+			if (snapshotChanged || !File.Exists(SnapshotPath))
+			{
+				Directory.CreateDirectory(Path.GetDirectoryName(SnapshotPath));
+				File.WriteAllText(SnapshotPath, JsonSerializer.Serialize(snapshot));
+			}
 			Logger.Log($"Win8.1 sounds applied (scheme={scheme}, {swapped} events written, {snapshot.Count} snapshotted)");
 		}
 		catch (Exception ex)

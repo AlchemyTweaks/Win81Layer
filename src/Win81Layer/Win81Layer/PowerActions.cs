@@ -111,17 +111,20 @@ public static class PowerActions
 
 	private static void Shell(string target)
 	{
-		try
+		ShellLaunch.Run(delegate
 		{
-			Process.Start(new ProcessStartInfo(target)
+			try
 			{
-				UseShellExecute = true
-			});
-		}
-		catch (Exception ex)
-		{
-			Logger.Log("Shell '" + target + "' failed: " + ex.Message);
-		}
+				Process.Start(new ProcessStartInfo(target)
+				{
+					UseShellExecute = true
+				})?.Dispose();
+			}
+			catch (Exception ex)
+			{
+				Logger.Log("Shell '" + target + "' failed: " + ex.Message);
+			}
+		});
 	}
 
 	private static void Run(string args)

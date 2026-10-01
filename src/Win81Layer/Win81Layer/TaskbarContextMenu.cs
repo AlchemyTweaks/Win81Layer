@@ -604,7 +604,11 @@ public static class TaskbarContextMenu
 	{
 		WarmCaches();
 		DesktopContextMenu.Warm();
-		FileContextMenu.Warm();
+		// File menus are only used by the custom 8.1 Explorer (FileBrowserBody); otherwise they build lazily.
+		if (SettingsStore.Current.Win81CustomExplorer)
+		{
+			FileContextMenu.Warm();
+		}
 	}
 
 	private static Image MenuImage(ImageSource src)
@@ -1176,7 +1180,7 @@ public static class TaskbarContextMenu
 		{
 			try
 			{
-				Process.Start(new ProcessStartInfo(exe) { UseShellExecute = true });
+				Process.Start(new ProcessStartInfo(exe) { UseShellExecute = true })?.Dispose();
 			}
 			catch (Exception ex)
 			{
@@ -1191,7 +1195,7 @@ public static class TaskbarContextMenu
 		{
 			try
 			{
-				Process.Start(new ProcessStartInfo(uri) { UseShellExecute = true });
+				Process.Start(new ProcessStartInfo(uri) { UseShellExecute = true })?.Dispose();
 			}
 			catch (Exception ex)
 			{

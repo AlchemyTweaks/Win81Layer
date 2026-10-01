@@ -119,7 +119,9 @@ public sealed partial class ActionCenter : Window
 		base.ResizeMode = ResizeMode.NoResize;
 		base.ShowInTaskbar = false;
 		base.Topmost = true;
-		base.AllowsTransparency = true;   // enables the Win7-Aero acrylic glass backdrop (ShellSkin) to show through
+		// The Metro surface is always opaque (ApplyMetroPalette), so a plain HWND: a layered one cost a GPU->CPU readback of
+		// the whole panel on every animation/scroll frame.
+		base.AllowsTransparency = false;
 		base.WindowStartupLocation = WindowStartupLocation.Manual;
 		base.Background = SettingsPane.PaneBg();
 		base.Title = "Action Center";
@@ -138,6 +140,10 @@ public sealed partial class ActionCenter : Window
 			{
 				Dismiss();
 			}
+		};
+		base.SourceInitialized += delegate
+		{
+			ConfigureNativeSurface();
 		};
 		BuildMetroSurface();
 	}
@@ -163,6 +169,87 @@ public sealed partial class ActionCenter : Window
 		public int Right;
 		public int Bottom;
 	}
+
+	private const int DWMWA_TRANSITIONS_FORCEDISABLED = 3;
+
+	private const int DWMWA_WINDOW_CORNER_PREFERENCE = 33;
+
+	private const int DWMWA_BORDER_COLOR = 34;
+
+	private const int DWMWCP_DONOTROUND = 1;
+
+	private const int DWM_COLOR_NONE = -2;
+
+	private const int GWL_STYLE = -16;
+
+	private const int NATIVE_FRAME_STYLES = 0x00C40000;   // WS_CAPTION | WS_THICKFRAME
+
+	private const uint SWP_FRAME_REFRESH = 0x0037u;
+
+	// Same treatment as AppSwitcher.ConfigureNativeSurface: as a non-layered HWND the panel would otherwise pick up the
+	// Win11 DWM border, rounded corners and show/hide fade. Affects only this launcher-owned HWND.
+	private void ConfigureNativeSurface()
+	{
+		nint hwnd = new System.Windows.Interop.WindowInteropHelper(this).Handle;
+		if (hwnd == IntPtr.Zero)
+		{
+			return;
+		}
+		try
+		{
+			int style = GetWindowLong(hwnd, GWL_STYLE);
+			int framelessStyle = style & ~NATIVE_FRAME_STYLES;
+			if (style != framelessStyle)
+			{
+				SetWindowLong(hwnd, GWL_STYLE, framelessStyle);
+				SetWindowPos(hwnd, IntPtr.Zero, 0, 0, 0, 0, SWP_FRAME_REFRESH);
+			}
+			int transitionsDisabled = 1;
+			DwmSetWindowAttribute(hwnd, DWMWA_TRANSITIONS_FORCEDISABLED, ref transitionsDisabled, sizeof(int));
+			int cornerPreference = DWMWCP_DONOTROUND;
+			DwmSetWindowAttribute(hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, ref cornerPreference, sizeof(int));
+			int borderColor = DWM_COLOR_NONE;
+			DwmSetWindowAttribute(hwnd, DWMWA_BORDER_COLOR, ref borderColor, sizeof(int));
+		}
+		catch
+		{
+			// Older Windows 10 builds can reject the Win11-only color/corner attributes.
+		}
+		SyncNativeClearColor();
+	}
+
+	// The render target clears to the panel's top colour, so a frame shown before WPF's first render is never black.
+	private void SyncNativeClearColor()
+	{
+		try
+		{
+			nint hwnd = new System.Windows.Interop.WindowInteropHelper(this).Handle;
+			if (hwnd == IntPtr.Zero || _themeBackground == null || _themeBackground.GradientStops.Count == 0)
+			{
+				return;
+			}
+			if (System.Windows.Interop.HwndSource.FromHwnd(hwnd)?.CompositionTarget is System.Windows.Interop.HwndTarget target)
+			{
+				System.Windows.Media.Color top = _themeBackground.GradientStops[0].Color;
+				target.BackgroundColor = System.Windows.Media.Color.FromRgb(top.R, top.G, top.B);
+			}
+		}
+		catch
+		{
+		}
+	}
+
+	[DllImport("user32.dll", EntryPoint = "GetWindowLongW")]
+	private static extern int GetWindowLong(nint hwnd, int index);
+
+	[DllImport("user32.dll", EntryPoint = "SetWindowLongW")]
+	private static extern int SetWindowLong(nint hwnd, int index, int value);
+
+	[DllImport("user32.dll", SetLastError = true)]
+	private static extern bool SetWindowPos(nint hwnd, nint insertAfter, int x, int y, int width, int height, uint flags);
+
+	[DllImport("dwmapi.dll")]
+	private static extern int DwmSetWindowAttribute(nint hwnd, int attribute, ref int value, int valueSize);
 
 	// Light dismiss: any click OUTSIDE the open panel closes it (x,y are physical pixels from the global mouse hook).
 	// This is the reliable path — Deactivated alone doesn't fire consistently for clicks on the shell desktop. Runs on the
@@ -664,20 +751,23 @@ public sealed partial class ActionCenter : Window
 
 	private async Task OpenExternal(string label, string primary, string? fallback = null)
 	{
-		bool opened = TryStart(primary);
-		if (!opened && !string.IsNullOrWhiteSpace(fallback))
+		// Settings activation can block for over a second, so launch on a ShellLaunch worker and let the close
+		// animation run meanwhile. A failure toast is marshalled back to this window's dispatcher.
+		ShellLaunch.AllowForeground();
+		Dismiss();
+		Dispatcher dispatcher = ((DispatcherObject)this).Dispatcher;
+		ShellLaunch.Run(delegate
 		{
-			opened = TryStart(fallback);
-		}
-		Logger.Log("Action Center '" + label + "': " + (opened ? "opened" : "failed") + " (" + primary + ")");
-		if (opened)
-		{
-			Dismiss();
-		}
-		else
-		{
-			ToastService.Show(null, "Action center", label, "Windows could not open the corresponding system control.");
-		}
+			bool opened = TryStart(primary) || (!string.IsNullOrWhiteSpace(fallback) && TryStart(fallback));
+			Logger.Log("Action Center '" + label + "': " + (opened ? "opened" : "failed") + " (" + primary + ")");
+			if (!opened)
+			{
+				dispatcher.BeginInvoke((Action)delegate
+				{
+					ToastService.Show(null, "Action center", label, "Windows could not open the corresponding system control.");
+				});
+			}
+		});
 		await Task.CompletedTask;
 	}
 
@@ -686,7 +776,7 @@ public sealed partial class ActionCenter : Window
 		try
 		{
 			ShellLaunch.AllowForeground();
-			Process.Start(CreateExternalStartInfo(target));
+			Process.Start(CreateExternalStartInfo(target))?.Dispose();
 			return true;
 		}
 		catch (Exception ex)

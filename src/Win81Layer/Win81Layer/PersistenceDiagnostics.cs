@@ -79,6 +79,8 @@ public static class PersistenceDiagnostics
 
 	public static readonly string ExpectationPath = Path.Combine(QaRoot, "reboot-expectation.json");
 
+	public static readonly string ConsumedExpectationPath = Path.Combine(QaRoot, "reboot-expectation.consumed.json");
+
 	public static readonly string PostBootPath = Path.Combine(QaRoot, "postboot-latest.json");
 
 	public static readonly string AppLaunchTestPath = Path.Combine(QaRoot, "packaged-app-launch-latest.json");
@@ -219,7 +221,8 @@ public static class PersistenceDiagnostics
 
 	public static string WriteVerification(string mode = "manual")
 	{
-		PersistenceVerificationReport? expectation = ReadExpectation();
+		// The post-boot pass renames the expectation once consumed; manual verifies still compare against it.
+		PersistenceVerificationReport? expectation = ReadExpectation(ExpectationPath) ?? ReadExpectation(ConsumedExpectationPath);
 		PersistenceVerificationReport report = BuildReport(mode, expectation);
 		string path = mode.Equals("postboot", StringComparison.OrdinalIgnoreCase)
 			? PostBootPath
@@ -237,8 +240,9 @@ public static class PersistenceDiagnostics
 		}
 		try
 		{
-			PersistenceVerificationReport? expectation = ReadExpectation();
-			if (expectation == null)
+			PersistenceVerificationReport? expectation = ReadExpectation(ExpectationPath);
+			// A stale expectation (QA run long abandoned) must not cost schtasks spawns + hashing on every launch.
+			if (expectation == null || DateTime.UtcNow - expectation.GeneratedUtc > TimeSpan.FromDays(1))
 			{
 				return;
 			}
@@ -250,6 +254,15 @@ public static class PersistenceDiagnostics
 			PersistenceVerificationReport report = BuildReport("postboot", expectation);
 			AtomicWrite(PostBootPath, JsonSerializer.Serialize(report, JsonOptions));
 			Logger.Log($"POSTBOOT persistence verification: matches={report.MatchesExpectation}; mismatches={string.Join(",", report.Mismatches)}; {PostBootPath}");
+			// One expectation yields exactly one post-boot report.
+			try
+			{
+				File.Move(ExpectationPath, ConsumedExpectationPath, overwrite: true);
+			}
+			catch (Exception ex)
+			{
+				Logger.Log("Postboot expectation could not be marked consumed: " + ex.Message);
+			}
 		}
 		catch (Exception ex)
 		{
@@ -449,12 +462,12 @@ public static class PersistenceDiagnostics
 		}
 	}
 
-	private static PersistenceVerificationReport? ReadExpectation()
+	private static PersistenceVerificationReport? ReadExpectation(string path)
 	{
 		try
 		{
-			return File.Exists(ExpectationPath)
-				? JsonSerializer.Deserialize<PersistenceVerificationReport>(ReadShared(ExpectationPath), JsonOptions)
+			return File.Exists(path)
+				? JsonSerializer.Deserialize<PersistenceVerificationReport>(ReadShared(path), JsonOptions)
 				: null;
 		}
 		catch

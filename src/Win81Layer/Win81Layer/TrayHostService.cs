@@ -225,8 +225,8 @@ public static class TrayHostService
 
 			SetWindowPos(_hwndTray, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
 			RegisterShellHookWindow(_hwndTray);
-			// Re-assert topmost every second so we keep winning FindWindow as explorer re-asserts its own taskbar and as
-			// apps register icons later; this is what makes the takeover durable rather than a one-shot at startup.
+			// Re-assert topmost every second so we keep winning FindWindow
+			// as explorer re-asserts its own taskbar and as apps register icons later; this makes the takeover durable.
 			SetTimer(_hwndTray, REASSERT_TIMER, 1000u, IntPtr.Zero);
 
 			_wmTaskbarCreated = RegisterWindowMessageW("TaskbarCreated");
@@ -329,8 +329,9 @@ public static class TrayHostService
 					Logger.Log($"TrayHost: broadcasting TaskbarCreated (round {_broadcastRound}) to reclaim tray icons");
 					SendNotifyMessageW(HWND_BROADCAST, _wmTaskbarCreated, IntPtr.Zero, IntPtr.Zero);
 				}
-				else
+				else if (FindWindowW("Shell_TrayWnd", null) != _hwndTray)
 				{
+					// Only re-raise when explorer's bar has overtaken ours in FindWindow order.
 					SetWindowPos(_hwndTray, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
 				}
 				return IntPtr.Zero;

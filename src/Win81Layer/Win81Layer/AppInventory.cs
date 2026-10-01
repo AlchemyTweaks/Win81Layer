@@ -277,11 +277,16 @@ public static class AppInventory
 			{
 			}
 		}
+		Logger.Log($"Cold-boot inventory gate: first pass {items.Count} apps (target {target})");
 		int last = items.Count;
 		int stable = 0;
+		bool polled = false;
 		long deadline = Environment.TickCount64 + 240000;
-		while (Environment.TickCount64 < deadline && ColdBoot() && (target <= 0 || items.Count < target * 85 / 100 || stable < 2))
+		// >=95% of target: done now; 85-95%: wait for 2 stable polls; <85%: keep polling.
+		// No baseline yet: 2 stable polls, but never settle on an empty inventory.
+		while (Environment.TickCount64 < deadline && ColdBoot() && (target <= 0 ? (items.Count == 0 || stable < 2) : (items.Count < target * 95 / 100 && (items.Count < target * 85 / 100 || stable < 2))))
 		{
+			polled = true;
 			Thread.Sleep(4000);
 			try
 			{
@@ -303,21 +308,24 @@ public static class AppInventory
 			{
 			}
 		}
-		try
+		if (polled)
 		{
-			List<(AppEntry, IShellItem)> final = EnumerateAppsFolder();
-			if (final.Count > items.Count)
+			try
 			{
-				ReleaseAppsFolderItems(items);
-				items = final;
+				List<(AppEntry, IShellItem)> final = EnumerateAppsFolder();
+				if (final.Count > items.Count)
+				{
+					ReleaseAppsFolderItems(items);
+					items = final;
+				}
+				else
+				{
+					ReleaseAppsFolderItems(final);
+				}
 			}
-			else
+			catch
 			{
-				ReleaseAppsFolderItems(final);
 			}
-		}
-		catch
-		{
 		}
 		Logger.Log($"Cold-boot inventory gate: settled at {items.Count} apps (target {target})");
 		return items;

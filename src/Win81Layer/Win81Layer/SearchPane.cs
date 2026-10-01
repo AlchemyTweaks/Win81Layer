@@ -2049,9 +2049,19 @@ public sealed class SearchPane : Window
 				WebOpen.Url(cmd);   // web search / web result -> preferred browser (MetroBrowser)
 				return;
 			}
-			Process.Start(new ProcessStartInfo(cmd)
+			ShellLaunch.Run(delegate
 			{
-				UseShellExecute = true
+				try
+				{
+					Process.Start(new ProcessStartInfo(cmd)
+					{
+						UseShellExecute = true
+					})?.Dispose();
+				}
+				catch (Exception ex)
+				{
+					Logger.Log("Search open '" + cmd + "': " + ex.Message);
+				}
 			});
 		}
 		catch (Exception ex)

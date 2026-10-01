@@ -1424,7 +1424,10 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 						_liveTiles.Start();
 					}
 					Logger.Log($"Profile loaded: {_groups.Count} groups, {_groups.Sum((GroupVm g) => g.Tiles.Count)} tiles");
-					PersistenceDiagnostics.TryWritePostBootVerification();
+					// The board only exists from here; App's 2 s prewarm timer only covers warm restarts.
+					((DispatcherObject)this).Dispatcher.BeginInvoke(new Action(Prewarm), DispatcherPriority.ApplicationIdle);
+					// File reads + schtasks + hashing only (no WPF objects): keep it off the UI thread.
+					Task.Run(PersistenceDiagnostics.TryWritePostBootVerification);
 					// Profile.Load has now run — re-check for a degraded/partial cold-boot layout (dropped tiles, which
 					// the early OnStartup self-heal check could not see) and arm the self-heal restart if needed.
 					try { (System.Windows.Application.Current as App)?.MaybeSelfHealAfterLayout(); } catch { }
@@ -1985,6 +1988,11 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 	public void Prewarm()
 	{
 		if (_prewarmed)
+		{
+			return;
+		}
+		// Cold boot binds the board ~10 s in; warming an empty grid (or a visible window) must not burn the one-shot.
+		if (_groups == null || _groups.Count == 0 || base.IsVisible)
 		{
 			return;
 		}
@@ -2949,6 +2957,7 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 	// close animation, and is debounced so rapid open/close can't thrash it.
 	private void ScheduleIdleTrim()
 	{
+		StopFrameHooks();
 		if (_trimScheduled)
 		{
 			return;
@@ -2966,6 +2975,46 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 			{
 			}
 		});
+	}
+
+	// Per-frame work must not outlive the Start surface: a scroll, drag or view transition still hooked after Start
+	// hides keeps the UI and render threads waking every frame for nothing. Also the taskbar idle tripwire's stop.
+	internal void StopFrameHooks()
+	{
+		SmoothScroll.Stop(StartScroller);
+		SmoothScroll.Stop(AppsScroller);
+		if (_dragging)
+		{
+			// Same commit as HideStart, so a packed-mode live reorder still reaches the profile.
+			System.Windows.Point pos = _lastDragPoint;
+			EndTileDrag();
+			CommitDrop(pos);
+		}
+		UnhookDragFrame();
+		StopDragScroll();
+		StopViewFrameTransition();
+	}
+
+	internal string LiveFrameHooks()
+	{
+		List<string> live = new List<string>();
+		if (_viewFrameHooked)
+		{
+			live.Add("view-transition");
+		}
+		if (_dragging)
+		{
+			live.Add("tile-drag");
+		}
+		if (_dragFrameHooked)
+		{
+			live.Add("drag-frame");
+		}
+		if (_dragScrollTimer != null && _dragScrollTimer.IsEnabled)
+		{
+			live.Add("drag-scroll-timer");
+		}
+		return string.Join(",", live);
 	}
 
 	private void EnsureDesktopTile()
@@ -3763,10 +3812,13 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 				// Off the UI thread so the Start dismiss animation never hitches on ShellExecuteEx.
 				ShellLaunch.Run(delegate
 				{
-					Process.Start(new ProcessStartInfo("explorer.exe")
+					if (!FileShell.TryOpenExplorerWindow())
 					{
-						UseShellExecute = true
-					});
+						Process.Start(new ProcessStartInfo("explorer.exe")
+						{
+							UseShellExecute = true
+						});
+					}
 				});
 			}
 			HideStart();
@@ -3781,11 +3833,10 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 	{
 		try
 		{
-			Process.Start(new ProcessStartInfo("ms-settings:")
-			{
-				UseShellExecute = true
-			});
+			// Same order as Launch(): grant foreground while Start is still foreground, then hide, then launch on a worker.
+			ShellLaunch.AllowForeground();
 			HideStart();
+			TaskbarContextMenu.OpenUri("ms-settings:");
 		}
 		catch (Exception ex)
 		{
@@ -5093,10 +5144,7 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 				// Off the UI thread: revealing in Explorer via ShellExecuteEx must not block the shell.
 				ShellLaunch.Run(delegate
 				{
-					Process.Start(new ProcessStartInfo("explorer.exe", "/select,\"" + sel + "\"")
-					{
-						UseShellExecute = true
-					});
+					FileShell.RevealInExplorer(sel);
 				});
 			}
 		}
@@ -5485,17 +5533,20 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 
 	private static void LaunchUri(string uri)
 	{
-		try
+		ShellLaunch.Run(delegate
 		{
-			Process.Start(new ProcessStartInfo(uri)
+			try
 			{
-				UseShellExecute = true
-			});
-		}
-		catch (Exception ex)
-		{
-			Logger.Log("Launch '" + uri + "' failed: " + ex.Message);
-		}
+				Process.Start(new ProcessStartInfo(uri)
+				{
+					UseShellExecute = true
+				})?.Dispose();
+			}
+			catch (Exception ex)
+			{
+				Logger.Log("Launch '" + uri + "' failed: " + ex.Message);
+			}
+		});
 	}
 
 	private void OnTilePress(object sender, MouseButtonEventArgs e)

@@ -254,6 +254,7 @@ internal static class AppIconOverrides
 					bi.BeginInit();
 					bi.UriSource = new Uri(file);
 					bi.CacheOption = BitmapCacheOption.OnLoad;
+					CapDecodeWidth(bi, file, small);
 					bi.EndInit();
 					((Freezable)bi).Freeze();
 					img = bi;
@@ -266,6 +267,56 @@ internal static class AppIconOverrides
 			_cache[cacheKey] = img;
 			return img;
 		}
+	}
+
+	// Override/live art ships at up to 783 px but is never drawn above 178 DIU (OverrideFaceSize, Large tile), or 34 DIU
+	// for the taskbar (_tb) art (Action Center notification), so decode no wider than that at the highest monitor scale:
+	// a 512 px PNG drops from 1 MB to 0.25 MB. Art already under the cap keeps its native size (never upscaled), and any
+	// failure leaves the decode uncapped. Call between BeginInit and EndInit.
+	internal static void CapDecodeWidth(BitmapImage bi, string file, bool small)
+	{
+		try
+		{
+			int nat = PngPixelWidth(file);
+			double dpi = MaxMonitorScale();
+			int cap = small
+				? Math.Max(96, (int)Math.Ceiling(34.0 * dpi / 32.0) * 32)
+				: Math.Max(256, (int)Math.Ceiling(178.0 * Math.Max(1.0, TileMetrics.Scale) * dpi / 64.0) * 64);
+			if (nat > cap)
+			{
+				bi.DecodePixelWidth = cap;
+			}
+		}
+		catch
+		{
+		}
+	}
+
+	// Width from the PNG IHDR header (0 if not a PNG). A WIC decoder for this would keep the file open until finalized.
+	private static int PngPixelWidth(string file)
+	{
+		byte[] h = new byte[24];
+		using (FileStream fs = File.OpenRead(file))
+		{
+			if (fs.ReadAtLeast(h, h.Length, throwOnEndOfStream: false) < h.Length)
+			{
+				return 0;
+			}
+		}
+		bool png = h[0] == 0x89 && h[1] == (byte)'P' && h[2] == (byte)'N' && h[3] == (byte)'G'
+			&& h[12] == (byte)'I' && h[13] == (byte)'H' && h[14] == (byte)'D' && h[15] == (byte)'R';
+		return png ? System.Buffers.Binary.BinaryPrimitives.ReadInt32BigEndian(h.AsSpan(16, 4)) : 0;
+	}
+
+	// Largest monitor scale (1.0 == 96 dpi), so a mixed-DPI setup decodes for its sharpest screen.
+	private static double MaxMonitorScale()
+	{
+		double max = 1.0;
+		foreach (System.Windows.Forms.Screen s in System.Windows.Forms.Screen.AllScreens)
+		{
+			max = Math.Max(max, MonitorDpi.ScaleFor(s.Bounds));
+		}
+		return max;
 	}
 
 	internal static void RefreshAllSurfaces()

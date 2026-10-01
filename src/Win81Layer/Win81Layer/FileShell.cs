@@ -35,7 +35,7 @@ internal static class FileShell
 	}
 
 	[StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
-	private struct SHELLEXECUTEINFO
+	internal struct SHELLEXECUTEINFO
 	{
 		public int cbSize;
 
@@ -87,6 +87,12 @@ internal static class FileShell
 
 	private const int SW_SHOW = 5;
 
+	private const uint SEE_MASK_NOASYNC = 256u;
+
+	private const uint SEE_MASK_FLAG_NO_UI = 1024u;
+
+	private const int SW_SHOWNORMAL = 1;
+
 	internal static void Open(string path)
 	{
 		Start(path);
@@ -119,7 +125,7 @@ internal static class FileShell
 			{
 				ShellLaunch.Run(delegate
 				{
-					Process.Start(new ProcessStartInfo("explorer.exe", "/select,\"" + path + "\"") { UseShellExecute = true });
+					RevealInExplorer(path);
 				});
 			}
 		}
@@ -127,6 +133,97 @@ internal static class FileShell
 		{
 			Logger.Log("reveal " + path + ": " + ex.Message);
 		}
+	}
+
+	// Run on a ShellLaunch (STA) worker. The running Explorer opens the parent folder and selects the item, so no
+	// explorer.exe process is created; "explorer.exe /select," stays as the fallback.
+	internal static void RevealInExplorer(string path)
+	{
+		if (System.Threading.Thread.CurrentThread.GetApartmentState() == System.Threading.ApartmentState.STA)
+		{
+			nint pidl = IntPtr.Zero;
+			try
+			{
+				int hr = SHParseDisplayName(path, IntPtr.Zero, out pidl, 0u, out _);
+				if (hr >= 0)
+				{
+					hr = SHOpenFolderAndSelectItems(pidl, 0u, IntPtr.Zero, 0u);
+					if (hr >= 0)
+					{
+						return;
+					}
+				}
+				Logger.Log($"reveal {path}: HRESULT 0x{hr:X8}; spawning explorer.exe /select");
+			}
+			catch (Exception ex)
+			{
+				Logger.Log("reveal " + path + ": " + ex.Message + "; spawning explorer.exe /select");
+			}
+			finally
+			{
+				if (pidl != IntPtr.Zero)
+				{
+					Marshal.FreeCoTaskMem(pidl);
+				}
+			}
+		}
+		Process.Start(new ProcessStartInfo("explorer.exe", "/select,\"" + path + "\"") { UseShellExecute = true })?.Dispose();
+	}
+
+	// Run on a ShellLaunch (STA) worker. Opens a new File Explorer window through the running Explorer instead of
+	// spawning explorer.exe. Only the fixed-folder "Open File Explorer to" choices are mirrored (LaunchTo 1 = This PC,
+	// 3 = Downloads); for Home or an unset value it returns false and the caller keeps its explorer.exe spawn.
+	internal static bool TryOpenExplorerWindow()
+	{
+		if (System.Threading.Thread.CurrentThread.GetApartmentState() != System.Threading.ApartmentState.STA)
+		{
+			return false;
+		}
+		int launchTo = 0;
+		try
+		{
+			// Read per call (microseconds, off the UI thread) so a Folder Options change applies without a restart.
+			using Microsoft.Win32.RegistryKey? key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey("Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced");
+			if (key?.GetValue("LaunchTo") is int value)
+			{
+				launchTo = value;
+			}
+		}
+		catch
+		{
+		}
+		string? folder = launchTo switch
+		{
+			1 => "shell:MyComputerFolder",
+			3 => "shell:Downloads",
+			_ => null
+		};
+		if (folder == null)
+		{
+			Logger.Log($"File Explorer: LaunchTo={launchTo} has no fixed folder; spawning explorer.exe");
+			return false;
+		}
+		try
+		{
+			SHELLEXECUTEINFO info = new SHELLEXECUTEINFO
+			{
+				cbSize = Marshal.SizeOf<SHELLEXECUTEINFO>(),
+				fMask = SEE_MASK_NOASYNC | SEE_MASK_FLAG_NO_UI,
+				lpVerb = "opennewwindow",   // like spawning explorer.exe: always a new window, never just activate one
+				lpFile = folder,
+				nShow = SW_SHOWNORMAL
+			};
+			if (ShellExecuteEx(ref info))
+			{
+				return true;
+			}
+			Logger.Log($"File Explorer: ShellExecuteEx {folder} failed (Win32 {Marshal.GetLastWin32Error()}); spawning explorer.exe");
+		}
+		catch (Exception ex)
+		{
+			Logger.Log("File Explorer: " + ex.Message + "; spawning explorer.exe");
+		}
+		return false;
 	}
 
 	internal static void OpenWith(string path)
@@ -603,5 +700,11 @@ internal static class FileShell
 
 	[DllImport("shell32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
 	[return: MarshalAs(UnmanagedType.Bool)]
-	private static extern bool ShellExecuteEx(ref SHELLEXECUTEINFO lpExecInfo);
+	internal static extern bool ShellExecuteEx(ref SHELLEXECUTEINFO lpExecInfo);
+
+	[DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+	private static extern int SHParseDisplayName(string pszName, nint pbc, out nint ppidl, uint sfgaoIn, out uint psfgaoOut);
+
+	[DllImport("shell32.dll")]
+	private static extern int SHOpenFolderAndSelectItems(nint pidlFolder, uint cidl, nint apidl, uint dwFlags);
 }

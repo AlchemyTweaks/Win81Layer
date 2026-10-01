@@ -97,6 +97,9 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 
 	private bool _isPrimary;
 
+	// Set in StartOn for secondary bars (SecondaryMonitorSoftwareRender): the bar and its own popups render in software.
+	private bool _softwareRender;
+
 	private int _tick;
 
 	private int _refreshCount;
@@ -244,6 +247,10 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 
 	// Classic taskbar "Toolbars" — each enabled folder shows as a shortcuts button next to the tray.
 	private readonly System.Collections.ObjectModel.ObservableCollection<ToolbarVm> _toolbars = new System.Collections.ObjectModel.ObservableCollection<ToolbarVm>();
+
+	// Built toolbar flyouts per folder, reused while the folder's last-write time (bumped by NTFS on child
+	// create/delete/rename) is unchanged.
+	private readonly Dictionary<string, (DateTime Stamp, System.Windows.Controls.ContextMenu Menu)> _toolbarMenus = new Dictionary<string, (DateTime Stamp, System.Windows.Controls.ContextMenu Menu)>(StringComparer.OrdinalIgnoreCase);
 
 	public static event Action? ToolbarsChanged;
 
@@ -621,14 +628,8 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 			QueueReflow();
 		};
 		_autoHide = SettingsStore.Load().TaskbarAutoHide;
+		// Shared menu caches are warmed once by App (TaskbarContextMenu.Warm); only this bar's own menu is primed here.
 		Dispatcher.BeginInvoke((Action)PrimeTaskbarContextMenu, DispatcherPriority.ApplicationIdle);
-		Dispatcher.BeginInvoke((Action)TaskbarContextMenu.WarmCaches, DispatcherPriority.ApplicationIdle);
-		Dispatcher.BeginInvoke((Action)DesktopContextMenu.Warm, DispatcherPriority.ApplicationIdle);
-		for (int menuKind = 0; menuKind < 3; menuKind++)
-		{
-			int warmKind = menuKind;
-			Dispatcher.BeginInvoke((Action)delegate { FileContextMenu.WarmKind(warmKind); }, DispatcherPriority.ApplicationIdle);
-		}
 	}
 
 	private void PrimeTaskbarContextMenu()
@@ -1644,12 +1645,18 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		//IL_01f8: Expected O, but got Unknown
 		_screen = screen;
 		_isPrimary = screen.Primary;
+		_softwareRender = !_isPrimary && SettingsStore.Current.SecondaryMonitorSoftwareRender;
 		TrayPanel.Visibility = ((!_isPrimary) ? Visibility.Collapsed : Visibility.Visible);
 		if (_isPrimary)
 		{
 			_tray.PerfVisible = SettingsStore.Load().PerfMonEnabled;
 		}
 		ApplyTaskbarColor();
+		if (_softwareRender)
+		{
+			// Before the first frame: a hardware bar here would create monitor 2's own Direct3D device for the session.
+			UseSoftwareRender(HwndSource.FromHwnd(new WindowInteropHelper(this).EnsureHandle()));
+		}
 		Show();
 		PlaceOnScreen();
 		((DispatcherObject)this).Dispatcher.BeginInvoke((Delegate)new Action(ReapplyAll), (DispatcherPriority)6, Array.Empty<object>());
@@ -1710,6 +1717,31 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 					Logger.Log($"Taskbar applied: align={s.TaskbarAlignment} size={s.TaskbarSize} color={s.TaskbarColorMode} transp={s.TaskbarTransparent} autohide={s.TaskbarAutoHide} combine={s.TaskbarCombine}");
 				}
 			}
+		}
+	}
+
+	private static void UseSoftwareRender(HwndSource? src)
+	{
+		try
+		{
+			HwndTarget? target = src?.CompositionTarget;
+			if (target != null && target.RenderMode != System.Windows.Interop.RenderMode.SoftwareOnly)
+			{
+				target.RenderMode = System.Windows.Interop.RenderMode.SoftwareOnly;
+			}
+		}
+		catch (Exception ex)
+		{
+			Logger.Log("Taskbar software render: " + ex.Message);
+		}
+	}
+
+	// Bar-owned popups get a fresh HwndSource on every open (before its first frame), so this runs per open.
+	private void OnBarPopupOpened(object sender, EventArgs e)
+	{
+		if (_softwareRender && sender is Popup { Child: not null } popup)
+		{
+			UseSoftwareRender(PresentationSource.FromVisual(popup.Child) as HwndSource);
 		}
 	}
 
@@ -1803,7 +1835,55 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 
 	private bool _hiddenForFullscreen;
 
-	private long _lastWorkingSetTrimMs;
+	// Seeded at construction so the first trim waits a full interval instead of landing mid-boot.
+	private long _lastWorkingSetTrimMs = Environment.TickCount64;
+
+	private static int _strayFrameHookReports;
+
+	// Idle tripwire: with Start and the Action Center both hidden nothing should tick per frame, so a hook still live
+	// here is a stray ~60 Hz wake-up source. Name it in the log (capped) and stop it.
+	private static void StopStrayFrameHooks()
+	{
+		try
+		{
+			StartScreen? start = StartScreen.Current;
+			if (start != null && start.IsVisible)
+			{
+				return;
+			}
+			foreach (Window w in System.Windows.Application.Current.Windows)
+			{
+				if (w is ActionCenter && w.IsVisible)
+				{
+					return;
+				}
+			}
+			string startHooks = start?.LiveFrameHooks() ?? string.Empty;
+			// A real smooth scroll settles in well under a second; one still hooked after 2s never converged.
+			bool scrollStuck = SmoothScroll.HookedForMs >= 2000L;
+			if (startHooks.Length == 0 && !scrollStuck)
+			{
+				return;
+			}
+			if (_strayFrameHookReports < 20)
+			{
+				_strayFrameHookReports++;
+				Logger.Log("[idle-tripwire] frame hooks live with Start+AC hidden: start=[" + startHooks + "] scroll=[" + (scrollStuck ? SmoothScroll.ActiveNames() : string.Empty) + "] -> stopped");
+			}
+			if (startHooks.Length != 0)
+			{
+				start!.StopFrameHooks();
+			}
+			if (scrollStuck)
+			{
+				SmoothScroll.StopAll();
+			}
+		}
+		catch (Exception ex)
+		{
+			Logger.Log("[idle-tripwire] " + ex.Message);
+		}
+	}
 
 	// While the bar is hidden under a TRUE-fullscreen app, poll fast so exiting fullscreen WITHIN the same window
 	// (F11/Esc, a video player leaving fullscreen, exclusive-fullscreen exit — none of which emit an HSHELL activation)
@@ -3248,6 +3328,11 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 					Height = 1.0,
 					Topmost = true
 				};
+				if (_softwareRender)
+				{
+					// Even this invisible 1x1 anchor would otherwise create monitor 2's Direct3D device.
+					UseSoftwareRender(HwndSource.FromHwnd(new WindowInteropHelper(_menuHost).EnsureHandle()));
+				}
 			}
 			_menuHost.Left = (double)sx / dx;
 			_menuHost.Top = (double)sy / dy;
@@ -3345,6 +3430,7 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 			if (trimNow - _lastWorkingSetTrimMs >= 45000L)
 			{
 				_lastWorkingSetTrimMs = trimNow;
+				StopStrayFrameHooks();
 				NativeShell.TrimSelf();
 				// Keep native hosts dormant: if Windows respawned StartMenuExperienceHost/SearchHost in the background,
 				// re-suspend + trim the fresh instance back to WS ~0 (churn-free; no kill/respawn cycle). No-op when
@@ -3472,11 +3558,11 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 
 	private void ApplyLive(List<LiveWin> live, nint fg, bool aumidsGathered)
 	{
+		// Flags are assigned once, after the absorb passes: resetting them here pulsed false->true on every running pin
+		// each Refresh, forcing a full layered-window re-render at idle.
 		foreach (PinnedTile t in _allTiles)
 		{
 			t.RunningHwnds.Clear();
-			t.IsRunning = false;
-			t.IsForeground = false;
 		}
 		HashSet<nint> absorbed = new HashSet<nint>();
 		// Always fold a running window into its pinned button (so the pin lights up / shows its window count) — even in
@@ -3491,11 +3577,6 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 				if (w.Exe != null && _pinsByExe.TryGetValue(w.Exe, out PinnedTile tile))
 				{
 					tile.RunningHwnds.Add(w.Hwnd);
-					tile.IsRunning = true;
-					if (w.Hwnd == fg)
-					{
-						tile.IsForeground = true;
-					}
 					absorbed.Add(w.Hwnd);
 				}
 			}
@@ -3525,11 +3606,6 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 				if (_pinsByExeName.TryGetValue(System.IO.Path.GetFileName(wnExe), out PinnedTile tileN) && tileN != null)
 				{
 					tileN.RunningHwnds.Add(wn.Hwnd);
-					tileN.IsRunning = true;
-					if (wn.Hwnd == fg)
-					{
-						tileN.IsForeground = true;
-					}
 					absorbed.Add(wn.Hwnd);
 				}
 			}
@@ -3541,17 +3617,14 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 				if (!absorbed.Contains(w2.Hwnd) && w2.Aumid != null && _pinsByAumid.TryGetValue(w2.Aumid, out PinnedTile tile2))
 				{
 					tile2.RunningHwnds.Add(w2.Hwnd);
-					tile2.IsRunning = true;
-					if (w2.Hwnd == fg)
-					{
-						tile2.IsForeground = true;
-					}
 					absorbed.Add(w2.Hwnd);
 				}
 			}
 		}
 		foreach (PinnedTile t2 in _allTiles)
 		{
+			t2.IsRunning = t2.RunningHwnds.Count > 0;
+			t2.IsForeground = t2.RunningHwnds.Contains(fg);
 			t2.MultiInstance = t2.RunningHwnds.Count >= 2;
 		}
 		foreach (GroupTile g in _groups)
@@ -3905,6 +3978,11 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 	// re-pull the icon table into this taskbar.
 	private void OnTrayHostChanged()
 	{
+		// Subscribed in the ctor before StartOn sets _isPrimary, so gate here: secondary bars never show a tray.
+		if (!_isPrimary)
+		{
+			return;
+		}
 		try
 		{
 			((DispatcherObject)this).Dispatcher.BeginInvoke((Delegate)(Action)ScanTrayAsync, Array.Empty<object>());
@@ -3929,6 +4007,7 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		{
 			AppSettings s = SettingsStore.Current;
 			_toolbars.Clear();
+			_toolbarMenus.Clear();
 			foreach (string path in (s.TaskbarToolbars ?? new System.Collections.Generic.List<string>()))
 			{
 				if (string.IsNullOrWhiteSpace(path))
@@ -3955,15 +4034,48 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 	{
 		if ((sender as FrameworkElement)?.Tag is string path)
 		{
-			System.Windows.Controls.ContextMenu menu = new System.Windows.Controls.ContextMenu
+			// Stamp is read before listing, so a change racing the build just forces one more rebuild.
+			DateTime stamp = ToolbarDirStamp(path);
+			System.Windows.Controls.ContextMenu menu;
+			if (stamp != DateTime.MinValue && _toolbarMenus.TryGetValue(path, out (DateTime Stamp, System.Windows.Controls.ContextMenu Menu) cached) && cached.Stamp == stamp && !cached.Menu.IsOpen)
 			{
-				Style = (Style)System.Windows.Application.Current.Resources["Win81ContextMenu"]
-			};
-			TaskbarContextMenu.ApplyTheme(menu);
-			PopulateFolderItems(menu.Items, path, 0);
+				menu = cached.Menu;
+				TaskbarContextMenu.ApplyTheme(menu);
+			}
+			else
+			{
+				menu = new System.Windows.Controls.ContextMenu
+				{
+					Style = (Style)System.Windows.Application.Current.Resources["Win81ContextMenu"]
+				};
+				TaskbarContextMenu.ApplyTheme(menu);
+				PopulateFolderItems(menu.Items, path, 0);
+				TaskbarContextMenu.PrepareForInstantOpen(menu);
+				if (stamp != DateTime.MinValue)
+				{
+					_toolbarMenus[path] = (stamp, menu);
+				}
+				else
+				{
+					_toolbarMenus.Remove(path);
+				}
+			}
 			menu.PlacementTarget = (UIElement)sender;
 			menu.Placement = FlyoutMode();
 			OpenTrackedMenu(menu);
+		}
+	}
+
+	// Folder last-write time (UTC) used to invalidate cached toolbar flyouts; MinValue = unreadable, never reuse.
+	private static DateTime ToolbarDirStamp(string path)
+	{
+		try
+		{
+			return System.IO.Directory.GetLastWriteTimeUtc(path);
+		}
+		catch
+		{
+			return DateTime.MinValue;
 		}
 	}
 
@@ -4027,11 +4139,20 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 				{
 					sub.Items.Add(new System.Windows.Controls.MenuItem { Header = "…", IsEnabled = false });   // placeholder so the submenu arrow shows
 					bool populated = false;
-					sub.SubmenuOpened += delegate
+					DateTime populatedStamp = DateTime.MinValue;
+					sub.SubmenuOpened += delegate(object s, RoutedEventArgs a)
 					{
-						if (!populated)
+						// SubmenuOpened bubbles from nested submenus. The root flyout is cached, so also re-list this
+						// subfolder when its own stamp moved since the last listing.
+						if (a.OriginalSource != sub)
+						{
+							return;
+						}
+						DateTime subStamp = ToolbarDirStamp(dpath);
+						if (!populated || subStamp == DateTime.MinValue || subStamp != populatedStamp)
 						{
 							populated = true;
+							populatedStamp = subStamp;
 							sub.Items.Clear();
 							PopulateFolderItems(sub.Items, dpath, depth + 1);
 						}
@@ -4064,14 +4185,17 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 
 	private static void LaunchToolbarPath(string path)
 	{
-		try
+		ShellLaunch.Run(delegate
 		{
-			Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
-		}
-		catch (Exception ex)
-		{
-			Logger.Log("toolbar launch failed (" + path + "): " + ex.Message);
-		}
+			try
+			{
+				Process.Start(new ProcessStartInfo(path) { UseShellExecute = true })?.Dispose();
+			}
+			catch (Exception ex)
+			{
+				Logger.Log("toolbar launch failed (" + path + "): " + ex.Message);
+			}
+		});
 	}
 
 	private void QueueTrayScan()
@@ -4099,6 +4223,10 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 
 	private void ScanTrayAsync()
 	{
+		if (!_isPrimary)
+		{
+			return;
+		}
 		if (_trayScanBusy)
 		{
 			_trayScanDirty = true;   // a tray Changed arrived while a scan was in flight — coalesce one more pass
@@ -4867,7 +4995,17 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 			}
 			if (File.Exists(exe))
 			{
-				Process.Start(new ProcessStartInfo(exe) { UseShellExecute = true });
+				ShellLaunch.Run(delegate
+				{
+					try
+					{
+						Process.Start(new ProcessStartInfo(exe) { UseShellExecute = true })?.Dispose();
+					}
+					catch (Exception ex)
+					{
+						Logger.Log("TrayActivate failed: " + ex.Message);
+					}
+				});
 			}
 		}
 		catch (Exception ex)
@@ -6210,6 +6348,7 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 
 	private void OnClockPopupOpened(object sender, EventArgs e)
 	{
+		OnBarPopupOpened(sender, e);
 		_clockClosing = false;
 		StartClockTick();
 		Dispatcher.BeginInvoke((Action)AnimateClockFlyoutIn, DispatcherPriority.Render);
@@ -6659,17 +6798,7 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 
 	private static void OpenUri(string uri)
 	{
-		try
-		{
-			Process.Start(new ProcessStartInfo(uri)
-			{
-				UseShellExecute = true
-			});
-		}
-		catch (Exception ex)
-		{
-			Logger.Log("OpenUri " + uri + " failed: " + ex.Message);
-		}
+		TaskbarContextMenu.OpenUri(uri);
 	}
 
 	public void QaRenderTray(string outPath)
@@ -7490,6 +7619,11 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		if (_preview == null)
 		{
 			_preview = new ThumbnailPreview();
+			if (_softwareRender)
+			{
+				// Only the WPF chrome goes to software; the DWM live thumbnails are composed by DWM either way.
+				UseSoftwareRender(HwndSource.FromHwnd(new WindowInteropHelper(_preview).EnsureHandle()));
+			}
 			_preview.RequestHide += delegate
 			{
 				DispatcherTimer? hoverHide = _hoverHide;
@@ -7740,10 +7874,7 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 			{
 				if (File.Exists(exe))
 				{
-					Process.Start(new ProcessStartInfo("explorer.exe", "/select,\"" + exe + "\"")
-					{
-						UseShellExecute = true
-					});
+					FileShell.RevealInExplorer(exe);
 				}
 			}
 			catch (Exception ex)
@@ -8142,6 +8273,7 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		{
 			popup.IsOpen = false;
 		});
+		popup.Opened += OnBarPopupOpened;
 		popup.IsOpen = true;
 	}
 

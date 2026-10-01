@@ -153,6 +153,9 @@ public static class LiveTiles
 				bi.BeginInit();
 				bi.UriSource = new Uri(file);
 				bi.CacheOption = BitmapCacheOption.OnLoad;
+				// Tile-art cap, not a small-tile one: this image is also the all-apps Desktop entry's override icon, which
+				// "Pin to Start" can show as a Large OverrideFace (178 DIU).
+				AppIconOverrides.CapDecodeWidth(bi, file, small: false);
 				bi.EndInit();
 				((Freezable)bi).Freeze();
 				_deskSmallIcon = bi;

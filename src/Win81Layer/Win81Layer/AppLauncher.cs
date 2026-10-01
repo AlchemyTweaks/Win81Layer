@@ -20,6 +20,14 @@ public static class AppLauncher
 
 	private const uint CreateDefaultErrorMode = 0x04000000;
 
+	private const uint SeeMaskNoAsync = 0x00000100;
+
+	private const uint SeeMaskFlagNoUi = 0x00000400;
+
+	private const int SwShowNormal = 1;
+
+	private const int ErrorCancelled = 1223;
+
 	[StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
 	private struct STARTUPINFO
 	{
@@ -70,6 +78,82 @@ public static class AppLauncher
 	[return: MarshalAs(UnmanagedType.Bool)]
 	private static extern bool CloseHandle(nint handle);
 
+	[DllImport("advapi32.dll", SetLastError = true)]
+	[return: MarshalAs(UnmanagedType.Bool)]
+	private static extern bool OpenProcessToken(nint processHandle, uint desiredAccess, out nint tokenHandle);
+
+	[DllImport("kernel32.dll")]
+	private static extern nint GetCurrentProcess();
+
+	[DllImport("userenv.dll", SetLastError = true)]
+	[return: MarshalAs(UnmanagedType.Bool)]
+	private static extern bool CreateEnvironmentBlock(out nint environment, nint token, [MarshalAs(UnmanagedType.Bool)] bool inherit);
+
+	[DllImport("userenv.dll", SetLastError = true)]
+	[return: MarshalAs(UnmanagedType.Bool)]
+	private static extern bool DestroyEnvironmentBlock(nint environment);
+
+	private static long s_lastEnvRefresh;
+
+	// Launches run in-process (no throwaway explorer.exe), so children inherit OUR environment block, which was built
+	// once at logon. Re-read the user's current environment (what Explorer does on an "Environment" broadcast) before a
+	// launch, so e.g. a PATH added by a newly installed tool is visible. Adds/updates only; at most every 2 s; a few ms.
+	internal static void RefreshEnvironment()
+	{
+		long now = Environment.TickCount64;
+		if (now - System.Threading.Interlocked.Read(ref s_lastEnvRefresh) < 2000)
+		{
+			return;
+		}
+		System.Threading.Interlocked.Exchange(ref s_lastEnvRefresh, now);
+		nint token = 0;
+		nint block = 0;
+		try
+		{
+			// TOKEN_QUERY | TOKEN_DUPLICATE | TOKEN_IMPERSONATE
+			if (!OpenProcessToken(GetCurrentProcess(), 0x0008u | 0x0002u | 0x0004u, out token) || !CreateEnvironmentBlock(out block, token, false))
+			{
+				return;
+			}
+			int offset = 0;
+			while (true)
+			{
+				string? entry = Marshal.PtrToStringUni(block + offset);
+				if (string.IsNullOrEmpty(entry))
+				{
+					break;
+				}
+				offset += (entry.Length + 1) * 2;
+				int eq = entry.IndexOf('=');
+				if (eq <= 0)
+				{
+					continue;   // also skips the "=C:=C:\..." per-drive entries, which start with '='
+				}
+				string name = entry.Substring(0, eq);
+				string value = entry.Substring(eq + 1);
+				if (!string.Equals(Environment.GetEnvironmentVariable(name), value, StringComparison.Ordinal))
+				{
+					Environment.SetEnvironmentVariable(name, value);
+				}
+			}
+		}
+		catch (Exception ex)
+		{
+			Logger.Log("AppLauncher: environment refresh failed: " + ex.Message);
+		}
+		finally
+		{
+			if (block != 0)
+			{
+				DestroyEnvironmentBlock(block);
+			}
+			if (token != 0)
+			{
+				CloseHandle(token);
+			}
+		}
+	}
+
 	private const string AppsFolderPrefix = "shell:AppsFolder\\";
 
 	private static readonly object IdentityGate = new object();
@@ -105,6 +189,7 @@ public static class AppLauncher
 				error = "Launch path is empty.";
 				return false;
 			}
+			RefreshEnvironment();
 			// Web links / tiles / place-search cards all funnel through here; route http(s) to the preferred
 			// browser (MetroBrowser by default) instead of the system default browser. See WebOpen.
 			if (WebOpen.IsWeb(launchPath))
@@ -122,15 +207,35 @@ public static class AppLauncher
 			string? aumid = ResolveAumid(null, launchPath, explicitAumid);
 			if (!string.IsNullOrWhiteSpace(aumid) && !asAdmin)
 			{
-				if (TryActivateApplication(aumid!, args, out error))
+				// File Explorer tile: ask the running Explorer for a window instead of spawning a process (falls through
+				// unchanged when LaunchTo has no fixed folder or we are off an STA thread).
+				if (string.Equals(aumid, "Microsoft.Windows.Explorer", StringComparison.OrdinalIgnoreCase)
+					&& string.IsNullOrWhiteSpace(args)
+					&& FileShell.TryOpenExplorerWindow())
 				{
 					return true;
 				}
-				if (TryLaunchViaExplorer(AppsFolderPrefix + aumid, out string? explorerError))
+				// Only packaged AUMIDs (PackageFamily!AppId) can be activated; for desktop-app AUMIDs the call always fails.
+				string? activateError = null;
+				if (aumid!.IndexOf('!') > 0 && TryActivateApplication(aumid, args, out activateError))
 				{
 					return true;
 				}
-				error = $"AUMID activation failed ({error}); Explorer fallback failed ({explorerError}).";
+				// Invoke the AppsFolder item in-process (what the throwaway explorer.exe did). No args: the item's own
+				// shortcut carries them, and the explorer path never forwarded them either.
+				string appsFolderItem = AppsFolderPrefix + aumid;
+				if (TryShellExecute(appsFolderItem, null, null, out string? shellError))
+				{
+					return true;
+				}
+				Logger.Log($"AppLauncher: ShellExecuteEx failed for '{appsFolderItem}' ({shellError}); Explorer fallback");
+				if (TryLaunchViaExplorer(appsFolderItem, out string? explorerError))
+				{
+					return true;
+				}
+				error = activateError != null
+					? $"AUMID activation failed ({activateError}); ShellExecuteEx failed ({shellError}); Explorer fallback failed ({explorerError})."
+					: $"ShellExecuteEx failed ({shellError}); Explorer fallback failed ({explorerError}).";
 				return false;
 			}
 
@@ -142,9 +247,27 @@ public static class AppLauncher
 
 			if (launchPath.StartsWith(AppsFolderPrefix, StringComparison.OrdinalIgnoreCase))
 			{
-				return TryLaunchViaExplorer(launchPath, out error);
+				// explorer.exe cannot elevate, so "runas" must go through ShellExecuteEx or the app starts un-elevated.
+				if (TryShellExecute(launchPath, null, asAdmin ? "runas" : null, out string? shellError))
+				{
+					return true;
+				}
+				Logger.Log($"AppLauncher: ShellExecuteEx failed for '{launchPath}' ({shellError}); Explorer fallback");
+				if (TryLaunchViaExplorer(launchPath, out string? explorerError))
+				{
+					return true;
+				}
+				error = $"ShellExecuteEx failed ({shellError}); Explorer fallback failed ({explorerError}).";
+				return false;
 			}
 
+			// File Explorer pin (explorer.exe, no args): ask the running Explorer for a window instead of spawning a process.
+			if (!asAdmin && string.IsNullOrWhiteSpace(args)
+				&& string.Equals(Path.GetFileName(launchPath.Trim().Trim('"')), "explorer.exe", StringComparison.OrdinalIgnoreCase)
+				&& FileShell.TryOpenExplorerWindow())
+			{
+				return true;
+			}
 			bool directExecutable = !asAdmin && IsDirectExecutable(launchPath);
 			string? workingDirectory = null;
 			if (LooksLikeFilePath(launchPath))
@@ -405,6 +528,58 @@ public static class AppLauncher
 		}
 		t_activationManager = null;
 		t_activationManagerObject = null;
+	}
+
+	private static bool TryShellExecute(string file, string? args, string? verb, out string? error)
+	{
+		// Shell extensions may need an STA. ShellLaunch workers already are; other callers get a short-lived one
+		// (the same hop Process.Start makes for UseShellExecute).
+		if (System.Threading.Thread.CurrentThread.GetApartmentState() != System.Threading.ApartmentState.STA)
+		{
+			bool ok = false;
+			string? staError = null;
+			System.Threading.Thread sta = new System.Threading.Thread(() => ok = TryShellExecute(file, args, verb, out staError))
+			{
+				IsBackground = true,
+				Name = "ShellExecuteSta"
+			};
+			sta.SetApartmentState(System.Threading.ApartmentState.STA);
+			sta.Start();
+			sta.Join();
+			error = staError;
+			return ok;
+		}
+		error = null;
+		try
+		{
+			FileShell.SHELLEXECUTEINFO info = new FileShell.SHELLEXECUTEINFO
+			{
+				cbSize = Marshal.SizeOf<FileShell.SHELLEXECUTEINFO>(),
+				fMask = SeeMaskNoAsync | SeeMaskFlagNoUi,
+				lpVerb = verb,
+				lpFile = file,
+				lpParameters = string.IsNullOrWhiteSpace(args) ? null : args,
+				nShow = SwShowNormal
+			};
+			if (FileShell.ShellExecuteEx(ref info))
+			{
+				return true;
+			}
+			int code = Marshal.GetLastWin32Error();
+			if (code == ErrorCancelled)
+			{
+				// UAC prompt dismissed: the user's choice, not a failure to fall back from or report.
+				Logger.Log($"AppLauncher: elevation cancelled for '{file}'");
+				return true;
+			}
+			error = new Win32Exception(code).Message + $" (Win32 {code})";
+			return false;
+		}
+		catch (Exception ex)
+		{
+			error = ex.Message;
+			return false;
+		}
 	}
 
 	private static bool TryLaunchViaExplorer(string shellPath, out string? error)

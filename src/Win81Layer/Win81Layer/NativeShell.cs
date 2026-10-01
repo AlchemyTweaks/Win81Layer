@@ -62,6 +62,19 @@ public static class NativeShell
 	{
 		try
 		{
+			// HeapOptimizeResources (Win 8.1+): decommit free pages in every process heap, lowering Private Bytes.
+			HeapOptimizeResourcesInformation info = new HeapOptimizeResourcesInformation
+			{
+				Version = 1u,
+				Flags = 0u
+			};
+			HeapSetInformation(IntPtr.Zero, HeapOptimizeResources, ref info, (nuint)Marshal.SizeOf<HeapOptimizeResourcesInformation>());
+		}
+		catch
+		{
+		}
+		try
+		{
 			EmptyWorkingSet(GetCurrentProcess());
 		}
 		catch
@@ -305,6 +318,19 @@ public static class NativeShell
 		}
 		return (total, suspended);
 	}
+
+	private const int HeapOptimizeResources = 3;
+
+	[StructLayout(LayoutKind.Sequential)]
+	private struct HeapOptimizeResourcesInformation
+	{
+		public uint Version;
+
+		public uint Flags;
+	}
+
+	[DllImport("kernel32.dll")]
+	private static extern bool HeapSetInformation(nint heapHandle, int heapInformationClass, ref HeapOptimizeResourcesInformation heapInformation, nuint heapInformationLength);
 
 	[DllImport("psapi.dll")]
 	private static extern bool EmptyWorkingSet(nint hProcess);

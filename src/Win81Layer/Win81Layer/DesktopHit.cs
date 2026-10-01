@@ -1,8 +1,6 @@
 using System;
 using System.Runtime.InteropServices;
 using System.Text;
-using System.Windows;
-using System.Windows.Automation;
 
 namespace Win81Layer;
 
@@ -25,6 +23,12 @@ internal static class DesktopHit
 
 	[DllImport("user32.dll", CharSet = CharSet.Unicode)]
 	private static extern int GetClassName(nint h, StringBuilder buf, int max);
+
+	// MSAA, not the managed UIA client: UIA keeps a QueueProcessor thread and WinEvent hooks on explorer alive forever.
+	[DllImport("oleacc.dll")]
+	private static extern int AccessibleObjectFromPoint(POINT pt, [MarshalAs(UnmanagedType.Interface)] out Accessibility.IAccessible acc, out object child);
+
+	private const int ROLE_SYSTEM_LISTITEM = 34;
 
 	internal static bool IsDesktop(int sx, int sy)
 	{
@@ -50,35 +54,32 @@ internal static class DesktopHit
 
 	internal static bool IsEmptyBackground(int sx, int sy)
 	{
-		//IL_0019: Unknown result type (might be due to invalid IL or missing references)
 		if (!IsDesktop(sx, sy))
 		{
 			return false;
 		}
 		try
 		{
-			AutomationElement el = AutomationElement.FromPoint(new Point((double)sx, (double)sy));
-			if ((object)el == null)
+			if (AccessibleObjectFromPoint(new POINT
+			{
+				X = sx,
+				Y = sy
+			}, out var acc, out object child) != 0 || acc == null)
 			{
 				return false;
 			}
-			return el.Current.ControlType != ControlType.ListItem;
+			try
+			{
+				return !(acc.get_accRole(child) is int role && role == ROLE_SYSTEM_LISTITEM);
+			}
+			finally
+			{
+				Marshal.ReleaseComObject(acc);
+			}
 		}
 		catch
 		{
 			return false;
-		}
-	}
-
-	internal static void Warm()
-	{
-		//IL_0014: Unknown result type (might be due to invalid IL or missing references)
-		try
-		{
-			_ = AutomationElement.FromPoint(new Point(0.0, 0.0))?.Current.ControlType;
-		}
-		catch
-		{
 		}
 	}
 }

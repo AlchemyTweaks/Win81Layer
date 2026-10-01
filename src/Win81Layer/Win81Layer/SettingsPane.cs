@@ -2060,7 +2060,17 @@ public sealed class SettingsPane : Window
 		{
 			UseShellExecute = true
 		});
-		Process.Start(psi);
+		ShellLaunch.Run(delegate
+		{
+			try
+			{
+				Process.Start(psi)?.Dispose();
+			}
+			catch (Exception ex)
+			{
+				Logger.Log("Settings launch '" + cmd + "' failed: " + ex.Message);
+			}
+		});
 	}
 
 	private static ControlTemplate HoverButtonTemplate()

@@ -88,7 +88,8 @@ internal static class DesktopContextMenu
 			DesktopView.SortBy(DesktopView.PkDateModified, ascending: false);
 		});
 		ctx.Items.Add(TaskbarContextMenu.Sub("Sort by", 59595, _name, _size, _type, _modified));
-		ctx.Items.Add(TaskbarContextMenu.Leaf("Refresh", 57673, DesktopShell.Refresh));
+		// Refresh now flushes (blocks ~15 ms), so keep it off the UI thread.
+		ctx.Items.Add(TaskbarContextMenu.Leaf("Refresh", 57673, () => ShellLaunch.Run(DesktopShell.Refresh)));
 		ctx.Items.Add(TaskbarContextMenu.Sep());
 		_paste = TaskbarContextMenu.Leaf("Paste", DesktopShell.Paste, enabled: false);
 		_paste.Icon = TaskbarContextMenu.MenuGlyph(59263);

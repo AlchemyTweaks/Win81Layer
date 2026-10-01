@@ -536,7 +536,7 @@
         </ItemsControl.ItemsPanel>
       </ItemsControl>
       <Button Name="TaskOverflowButton" Grid.Column="1" Width="40" Style="{StaticResource TrayGlyph}" Content="&#xE70D;" ToolTip="More open apps" Visibility="Collapsed" Click="OnTaskOverflow" />
-      <Popup Name="TaskOverflowPopup" StaysOpen="True" AllowsTransparency="True" Placement="Top" PopupAnimation="Fade" PlacementTarget="{Binding ElementName=TaskOverflowButton}">
+      <Popup Name="TaskOverflowPopup" StaysOpen="True" AllowsTransparency="True" Placement="Top" PopupAnimation="Fade" PlacementTarget="{Binding ElementName=TaskOverflowButton}" Opened="OnBarPopupOpened">
         <Border Background="{DynamicResource TB.FlyoutBg}" BorderBrush="#40FFFFFF" BorderThickness="1" CornerRadius="0" Padding="8" MinWidth="210" MaxWidth="300">
           <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" MaxHeight="520">
             <StackPanel>
@@ -597,7 +597,7 @@
           <TextBlock Foreground="#AAFFFFFF" FontFamily="Segoe UI" FontSize="11" VerticalAlignment="Center" Text="{Binding NetText}" />
         </StackPanel>
         <Button Name="OverflowChevron" Style="{StaticResource TrayGlyph}" Content="" ToolTip="Show hidden icons (drop an icon here to hide it)" Visibility="Collapsed" AllowDrop="True" Click="OnOverflowChevron" DragOver="OnTrayDragOver" Drop="OnTrayHideDrop" />
-        <Popup Name="OverflowPopup" StaysOpen="True" AllowsTransparency="True" Placement="Top" PopupAnimation="Fade" PlacementTarget="{Binding ElementName=OverflowChevron}">
+        <Popup Name="OverflowPopup" StaysOpen="True" AllowsTransparency="True" Placement="Top" PopupAnimation="Fade" PlacementTarget="{Binding ElementName=OverflowChevron}" Opened="OnBarPopupOpened">
           <Border Background="{DynamicResource TB.FlyoutBg}" BorderBrush="#40FFFFFF" BorderThickness="1" CornerRadius="0" Padding="6,4">
             <ItemsControl Name="OverflowHost" ItemTemplate="{StaticResource TrayIconTemplate}">
               <ItemsControl.ItemsPanel>

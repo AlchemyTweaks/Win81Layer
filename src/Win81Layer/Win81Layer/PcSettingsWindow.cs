@@ -1734,6 +1734,10 @@ public sealed class PcSettingsWindow : Window
 			SettingsStore.Update(delegate(AppSettings x) { x.SwitcherEdgeReveal = on; });
 			HostApp?.ApplySwitcherEdge(on);
 		}));
+		panel.Children.Add(ToggleRow("Light rendering on other monitors", "Draw the taskbar and its menus on secondary monitors without the graphics card, saving about 50-100 MB of memory. Turn off if anything on a second monitor looks wrong. Applies after the launcher restarts.", s.SecondaryMonitorSoftwareRender, delegate(bool on)
+		{
+			SettingsStore.Update(delegate(AppSettings x) { x.SecondaryMonitorSoftwareRender = on; });
+		}));
 
 		// ===== Taskbar =====
 		panel.Children.Add(SubHeader("Taskbar"));

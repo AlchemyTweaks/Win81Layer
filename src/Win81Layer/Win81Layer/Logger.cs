@@ -109,7 +109,8 @@ public static class Logger
 		{
 			try
 			{
-				Signal.WaitOne(1000);   // flush on signal, or at least once a second as a safety net
+				// Log() always Sets the latching event, so idle = no timed wake; the 1s tick only retries a failed write.
+				Signal.WaitOne(PendingNonEmpty() ? 1000 : Timeout.Infinite);
 				FlushOnce();
 			}
 			catch
@@ -119,6 +120,14 @@ public static class Logger
 			{
 				try { FlushOnce(); } catch { }
 			}
+		}
+	}
+
+	private static bool PendingNonEmpty()
+	{
+		lock (Gate)
+		{
+			return Pending.Length != 0;
 		}
 	}
 

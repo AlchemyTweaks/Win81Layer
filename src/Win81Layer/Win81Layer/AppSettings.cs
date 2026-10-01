@@ -180,6 +180,10 @@ public sealed class AppSettings
 
 	public bool TaskbarSameOnAllDisplays { get; set; } = true;
 
+	// Taskbar surfaces (bar, preview, tooltips, menus) on non-primary monitors render in software, so the shell never
+	// creates a second Direct3D device (~48 MB private, ~20 MB pinned RAM, ~24 MB VRAM). False = hardware everywhere.
+	public bool SecondaryMonitorSoftwareRender { get; set; } = true;
+
 	public List<string> TrayOrder { get; set; } = new List<string>();
 
 	public List<string> TrayForceShown { get; set; } = new List<string>();

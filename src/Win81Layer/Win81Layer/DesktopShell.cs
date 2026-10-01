@@ -34,9 +34,16 @@ internal static class DesktopShell
 		public string lpszProgressTitle;
 	}
 
+	private const uint SHCNE_CREATE = 2u;
+
+	private const uint SHCNE_MKDIR = 8u;
+
 	private const uint SHCNE_UPDATEDIR = 4096u;
 
 	private const uint SHCNF_PATHW = 5u;
+
+	// Blocks until the shell has processed the event (~15 ms); only ever sent through NotifyFlushedAsync, so no caller waits.
+	private const uint SHCNF_FLUSH = 4096u;
 
 	private const uint FO_MOVE = 1u;
 
@@ -55,11 +62,28 @@ internal static class DesktopShell
 	[return: MarshalAs(UnmanagedType.Bool)]
 	private static extern bool IsClipboardFormatAvailable(uint format);
 
+	// Flushed notify (the shell applies it at once) handed to the thread pool, so a hung Explorer can never stall the
+	// caller (a ShellLaunch worker, or RecycleBinWatcher while it holds its evaluation lock).
+	private static void NotifyFlushedAsync(uint eventId, string path)
+	{
+		System.Threading.ThreadPool.UnsafeQueueUserWorkItem(delegate
+		{
+			try
+			{
+				SHChangeNotify(eventId, SHCNF_PATHW | SHCNF_FLUSH, path, IntPtr.Zero);
+			}
+			catch (Exception ex)
+			{
+				Logger.Log("Shell notify failed: " + ex.Message);
+			}
+		}, null);
+	}
+
 	internal static void Refresh()
 	{
 		try
 		{
-			SHChangeNotify(4096u, 5u, DesktopDir, IntPtr.Zero);
+			NotifyFlushedAsync(SHCNE_UPDATEDIR, DesktopDir);
 		}
 		catch (Exception ex)
 		{
@@ -142,6 +166,8 @@ internal static class DesktopShell
 					i++;
 				}
 				Directory.CreateDirectory(path);
+				// Without an explicit flushed notify the desktop waits on its own file-system poll (0.3-1.3 s).
+				NotifyFlushedAsync(SHCNE_MKDIR, path);
 			}
 			catch (Exception ex)
 			{
@@ -184,7 +210,8 @@ internal static class DesktopShell
 					}
 					break;
 				}
-				Refresh();
+				// Announce just the new item; a whole-desktop UPDATEDIR re-enumerates every icon and flickers.
+				NotifyFlushedAsync(SHCNE_CREATE, path);
 			}
 			catch (Exception ex)
 			{

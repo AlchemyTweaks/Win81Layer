@@ -328,6 +328,8 @@ public sealed partial class ActionCenter
 			UseLayoutRounding = true,
 			SnapsToDevicePixels = true
 		};
+		// The panel used to be a layered window, which always renders text grayscale; keep that look on the plain HWND.
+		TextOptions.SetTextRenderingMode(_metroRoot, TextRenderingMode.Grayscale);
 		StyleMetroScrollBars();
 		_metroRoot.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 		_metroRoot.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
@@ -1455,6 +1457,7 @@ public sealed partial class ActionCenter
 		_themeBackground.Freeze();
 		base.Background = _themeBackground;
 		_metroRoot.Background = _themeBackground;
+		SyncNativeClearColor();
 		_secondaryTextBrush = FreezeMetroBrush(System.Windows.Media.Color.FromArgb(205, 255, 255, 255));
 		_linkBrush = FreezeMetroBrush(Mix(accent, System.Windows.Media.Colors.White, 0.56));
 		_clearAllButton.Foreground = _linkBrush;

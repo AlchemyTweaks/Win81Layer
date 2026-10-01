@@ -669,7 +669,7 @@ public partial class App : System.Windows.Application
 			if (!ownsSupervisor)
 			{
 				Logger.Log("Supervisor duplicate suppressed by Local\\Win81Layer.Supervisor.v2");
-				Shutdown();
+				Dispatcher.BeginInvoke(new Action(() => Shutdown()));   // off the UI thread now: Shutdown needs dispatcher access
 				return;
 			}
 		}
@@ -677,9 +677,10 @@ public partial class App : System.Windows.Application
 		{
 			Logger.Log("Supervisor mutex failed: " + ex.Message);
 			supervisorMutex.Dispose();
-			Shutdown(1);
+			Dispatcher.BeginInvoke(new Action(() => Shutdown(1)));
 			return;
 		}
+		GCHandle.Alloc(supervisorMutex);   // root for the process lifetime: the loop never returns, so a dead local could be finalized and drop the name
 		System.DateTime supStart = System.DateTime.UtcNow;
 		bool gaveUp = false;   // hard cap hit THIS session: stay stood-down (native shell up) until the machine reboots (a new supervisor process resets this)
 		try { Logger.Log($"=== Supervisor started (pid {Environment.ProcessId}) ==="); } catch { }
@@ -1154,6 +1155,68 @@ public partial class App : System.Windows.Application
 		}
 	}
 
+	private static bool _secondaryPopupRenderHooked;
+
+	[StructLayout(LayoutKind.Sequential)]
+	private struct MONITORINFO
+	{
+		public int cbSize;
+
+		public int MonitorLeft, MonitorTop, MonitorRight, MonitorBottom;
+
+		public int WorkLeft, WorkTop, WorkRight, WorkBottom;
+
+		public uint dwFlags;
+	}
+
+	[DllImport("user32.dll")]
+	private static extern nint MonitorFromWindow(nint hwnd, uint flags);
+
+	[DllImport("user32.dll")]
+	private static extern bool GetMonitorInfo(nint hMonitor, ref MONITORINFO mi);
+
+	// Tooltips and context menus are their own HwndSources: one drawn in hardware on a secondary monitor would create
+	// that monitor's Direct3D device for the rest of the session, so they render in software there (as the bars do).
+	private static void HookSecondaryMonitorPopupRendering()
+	{
+		if (_secondaryPopupRenderHooked)
+		{
+			return;
+		}
+		_secondaryPopupRenderHooked = true;
+		RoutedEventHandler handler = OnPopupControlOpened;
+		EventManager.RegisterClassHandler(typeof(System.Windows.Controls.ToolTip), System.Windows.Controls.ToolTip.OpenedEvent, handler);
+		EventManager.RegisterClassHandler(typeof(System.Windows.Controls.ContextMenu), System.Windows.Controls.ContextMenu.OpenedEvent, handler);
+	}
+
+	// Opened fires right after the popup window is built (at its target's monitor) and before its first frame.
+	private static void OnPopupControlOpened(object sender, RoutedEventArgs e)
+	{
+		try
+		{
+			if (sender is Visual visual && PresentationSource.FromVisual(visual) is System.Windows.Interop.HwndSource hs && !hs.IsDisposed)
+			{
+				System.Windows.Interop.HwndTarget target = hs.CompositionTarget;
+				if (target != null && target.RenderMode != System.Windows.Interop.RenderMode.SoftwareOnly
+					&& IsOnSecondaryMonitor(hs.Handle) && SettingsStore.FastSnapshot.SecondaryMonitorSoftwareRender)
+				{
+					target.RenderMode = System.Windows.Interop.RenderMode.SoftwareOnly;
+				}
+			}
+		}
+		catch (Exception ex)
+		{
+			Logger.Log("Popup software render: " + ex.Message);
+		}
+	}
+
+	private static bool IsOnSecondaryMonitor(nint hwnd)
+	{
+		nint monitor = MonitorFromWindow(hwnd, 2u);   // MONITOR_DEFAULTTONEAREST
+		MONITORINFO mi = new MONITORINFO { cbSize = Marshal.SizeOf<MONITORINFO>() };
+		return monitor != 0 && GetMonitorInfo(monitor, ref mi) && (mi.dwFlags & 1u) == 0;   // not MONITORINFOF_PRIMARY
+	}
+
 	protected override void OnStartup(StartupEventArgs e)
 	{
 		//IL_1adb: Unknown result type (might be due to invalid IL or missing references)
@@ -1177,6 +1240,17 @@ public partial class App : System.Windows.Application
 		//IL_2ff2: Unknown result type (might be due to invalid IL or missing references)
 		//IL_3009: Expected O, but got Unknown
 		base.OnStartup(e);
+		// The logon Task launches "--supervisor": a tiny, UI-less, COM-less process that keeps a HEALTHY shell running
+		// (launch via Process.Start Ã¢â€ â€™ verify a fresh heartbeat Ã¢â€ â€™ retry until healthy Ã¢â€ â€™ monitor). This is the definitive
+		// cure for the boot-wedge: a shell that fails to come up is simply relaunched until one does.
+		// Checked before ShellTheme (no SystemEvents window) and run on its own thread so this dispatcher keeps pumping:
+		// a blocked UI thread left the process's hidden windows hung, stalling every non-SMTO_ABORTIFHUNG broadcast.
+		if (e.Args.Contains("--supervisor"))
+		{
+			ShutdownMode = ShutdownMode.OnExplicitShutdown;
+			new Thread(RunSupervisor) { IsBackground = false, Name = "Supervisor" }.Start();
+			return;
+		}
 		// Single light/dark authority: arm the OS preference hook and paint the semantic brush tokens before any
 		// window is shown, so the whole shell (menus, controls, tooltips, dialogs) opens in the correct theme.
 		try { ShellTheme.Initialize(); ShellTheme.ApplyResourceTokens(); } catch (Exception themeEx) { Logger.Log("ShellTheme init failed: " + themeEx.Message); }
@@ -1244,14 +1318,6 @@ public partial class App : System.Windows.Application
 		if (e.Args.Contains("--switcher-edge-test"))
 		{
 			SwitcherEdgeDiagnostics.Begin(this);
-			return;
-		}
-		// The logon Task launches "--supervisor": a tiny, UI-less, COM-less process that keeps a HEALTHY shell running
-		// (launch via Process.Start Ã¢â€ â€™ verify a fresh heartbeat Ã¢â€ â€™ retry until healthy Ã¢â€ â€™ monitor). This is the definitive
-		// cure for the boot-wedge: a shell that fails to come up is simply relaunched until one does.
-		if (e.Args.Contains("--supervisor"))
-		{
-			RunSupervisor();
 			return;
 		}
 		// A shell started BY the supervisor is "managed" Ã¢â‚¬â€ it must NOT spawn its own watchdog (the supervisor is the
@@ -2883,6 +2949,7 @@ public partial class App : System.Windows.Application
 				}
 			}, Array.Empty<object>());
 		};
+		HookSecondaryMonitorPopupRendering();
 		_taskbar = new TaskbarManager();
 		_taskbar.StartRequested += delegate
 		{
@@ -3076,7 +3143,10 @@ public partial class App : System.Windows.Application
 						// Off the UI thread: synchronous ShellExecuteEx can freeze the whole shell on a cold/loaded system.
 						ShellLaunch.Run(delegate
 						{
-							Process.Start(new ProcessStartInfo("explorer.exe") { UseShellExecute = true });
+							if (!FileShell.TryOpenExplorerWindow())
+							{
+								Process.Start(new ProcessStartInfo("explorer.exe") { UseShellExecute = true });
+							}
 						});
 					}
 					catch (Exception ex)
@@ -3245,7 +3315,8 @@ public partial class App : System.Windows.Application
 			bootTrim.Stop();
 			try
 			{
-				GC.Collect(2, GCCollectionMode.Optimized, blocking: false);
+				// Aggressive (blocking + compacting) so the GC also decommits its free regions, not just the working set.
+				GC.Collect(2, GCCollectionMode.Aggressive, blocking: true, compacting: true);
 				NativeShell.TrimSelf();
 			}
 			catch
@@ -3301,10 +3372,6 @@ public partial class App : System.Windows.Application
 		// (not a hybrid shutdown that behaves like sleep on this box). Succeeds only when elevated (logon task runs
 		// HighestAvailable); a manual non-elevated launch no-ops. Background, guarded, only writes if not already 0.
 		Task.Run((Action)PowerActions.EnsureFastStartupDisabled);
-		if (settings.ReplaceDesktopMenu)
-		{
-			Task.Run((Action)DesktopHit.Warm);
-		}
 		// Defer SnapAssist (a full WPF Window + WinEvent hook + a registry write) off the first-paint path; it's only
 		// needed when the user snaps a window. Background priority runs it right after paint; only assigned here and
 		// disposed on exit, so nothing dereferences it in between.

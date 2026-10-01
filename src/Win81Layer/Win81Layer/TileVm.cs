@@ -172,6 +172,7 @@ public sealed class TileVm : INotifyPropertyChanged
 						bi.BeginInit();
 						bi.UriSource = new System.Uri(file);
 						bi.CacheOption = System.Windows.Media.Imaging.BitmapCacheOption.OnLoad;
+						AppIconOverrides.CapDecodeWidth(bi, file, small: false);
 						bi.EndInit();
 						((System.Windows.Freezable)bi).Freeze();
 						img = bi;

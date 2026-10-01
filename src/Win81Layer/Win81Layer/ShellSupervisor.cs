@@ -2,6 +2,7 @@ using System;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Threading;
 
 namespace Win81Layer;
@@ -116,10 +117,24 @@ internal static class ShellSupervisor
 		}
 	}
 
+	// Runs every second on the UI thread: a live shell window (Progman) owned by another process is a ~1 µs check,
+	// whereas the process snapshot costs ~2 ms + ~10 KB garbage. No shell window (explorer dead/restarting) falls
+	// back to the original snapshot, so recovery semantics are unchanged.
 	private static bool IsExplorerRunning()
 	{
+		GetWindowThreadProcessId(GetShellWindow(), out uint pid);
+		if (pid != 0 && pid != (uint)Environment.ProcessId)
+		{
+			return true;
+		}
 		return Process.GetProcessesByName("explorer").Length != 0;
 	}
+
+	[DllImport("user32.dll")]
+	private static extern nint GetShellWindow();
+
+	[DllImport("user32.dll")]
+	private static extern uint GetWindowThreadProcessId(nint hWnd, out uint pid);
 
 	private static void ForceRebootGuarded(string reason)
 	{

@@ -17,6 +17,15 @@ public static class SmoothScroll
 		public double VerticalTarget;
 
 		public bool VerticalActive;
+
+		// Offset seen on the previous frame and how many frames in a row it has not moved.
+		public double LastOffset = double.NaN;
+
+		public int StalledFrames;
+
+		public double LastVerticalOffset = double.NaN;
+
+		public int VerticalStalledFrames;
 	}
 
 	private static readonly ConditionalWeakTable<ScrollViewer, State> States = new ConditionalWeakTable<ScrollViewer, State>();
@@ -26,6 +35,8 @@ public static class SmoothScroll
 	private static readonly List<(ScrollViewer Sv, State St)> VerticalActive = new List<(ScrollViewer, State)>();
 
 	private static bool _hooked;
+
+	private static long _hookedAtMs;
 
 	private const double Rate = 15.0;
 
@@ -37,7 +48,13 @@ public static class SmoothScroll
 
 	private const double SnapEpsilon = 0.5;
 
+	// An offset that ignores ScrollTo for this many frames gets no layout pass; snap instead of ticking forever.
+	private const int StallFrameLimit = 3;
+
 	private static TimeSpan _lastRender = TimeSpan.Zero;
+
+	// Lets the taskbar's idle tripwire tell a frame loop that never settled from a scroll in flight (0 = not hooked).
+	internal static long HookedForMs => _hooked ? Environment.TickCount64 - _hookedAtMs : 0L;
 
 	public static void By(ScrollViewer sv, double delta)
 	{
@@ -45,6 +62,8 @@ public static class SmoothScroll
 		if (!st.Active)
 		{
 			st.Target = sv.HorizontalOffset;
+			st.LastOffset = double.NaN;
+			st.StalledFrames = 0;
 		}
 		st.Target = Math.Clamp(st.Target + delta, 0.0, sv.ScrollableWidth);
 		if (!st.Active)
@@ -74,6 +93,8 @@ public static class SmoothScroll
 		if (!st.VerticalActive)
 		{
 			st.VerticalTarget = current;
+			st.LastVerticalOffset = double.NaN;
+			st.VerticalStalledFrames = 0;
 		}
 		else
 		{
@@ -146,6 +167,46 @@ public static class SmoothScroll
 		RemoveRenderingHookIfIdle();
 	}
 
+	// Snaps every running scroll to its target and drops the frame hook (idle tripwire only).
+	internal static void StopAll()
+	{
+		for (int i = Active.Count - 1; i >= 0; i--)
+		{
+			(ScrollViewer Sv, State St) entry = Active[i];
+			Active.RemoveAt(i);
+			entry.St.Active = false;
+			entry.Sv.ScrollToHorizontalOffset(Math.Clamp(entry.St.Target, 0.0, entry.Sv.ScrollableWidth));
+		}
+		for (int i = VerticalActive.Count - 1; i >= 0; i--)
+		{
+			(ScrollViewer Sv, State St) entry = VerticalActive[i];
+			VerticalActive.RemoveAt(i);
+			entry.St.VerticalActive = false;
+			entry.Sv.ScrollToVerticalOffset(Math.Clamp(entry.St.VerticalTarget, 0.0, entry.Sv.ScrollableHeight));
+		}
+		RemoveRenderingHookIfIdle();
+	}
+
+	internal static string ActiveNames()
+	{
+		List<string> names = new List<string>();
+		foreach ((ScrollViewer Sv, State St) entry in Active)
+		{
+			names.Add(NameOf(entry.Sv) + ":h");
+		}
+		foreach ((ScrollViewer Sv, State St) entry in VerticalActive)
+		{
+			names.Add(NameOf(entry.Sv) + ":v");
+		}
+		return string.Join(",", names);
+	}
+
+	private static string NameOf(ScrollViewer sv)
+	{
+		string name = string.IsNullOrEmpty(sv.Name) ? sv.GetType().Name : sv.Name;
+		return sv.IsVisible ? name : name + "(hidden)";
+	}
+
 	private static double EffectiveOffset(ScrollViewer sv)
 	{
 		State st;
@@ -165,6 +226,7 @@ public static class SmoothScroll
 			_lastRender = TimeSpan.Zero;
 			CompositionTarget.Rendering += OnRendering;
 			_hooked = true;
+			_hookedAtMs = Environment.TickCount64;
 		}
 	}
 
@@ -181,6 +243,8 @@ public static class SmoothScroll
 	private static void OnRendering(object? sender, EventArgs e)
 	{
 		TimeSpan now = (e as RenderingEventArgs)?.RenderingTime ?? _lastRender;
+		// Rendering can be raised twice for one frame; only a new frame may count toward a stall.
+		bool newFrame = now != _lastRender;
 		double dt = (now - _lastRender).TotalSeconds;
 		_lastRender = now;
 		if (dt <= 0.0 || dt > 0.1)
@@ -196,6 +260,20 @@ public static class SmoothScroll
 			State st = tuple.St;
 			double current = sv.HorizontalOffset;
 			double target = Math.Clamp(st.Target, 0.0, sv.ScrollableWidth);
+			if (newFrame)
+			{
+				st.StalledFrames = (current == st.LastOffset) ? (st.StalledFrames + 1) : 0;
+				st.LastOffset = current;
+			}
+			// A hidden ScrollViewer gets no layout pass, so its offset never converges and this hook would keep the
+			// UI + render threads waking every frame while the shell sits idle.
+			if (!sv.IsVisible || st.StalledFrames >= StallFrameLimit)
+			{
+				sv.ScrollToHorizontalOffset(target);
+				st.Active = false;
+				Active.RemoveAt(i);
+				continue;
+			}
 			double next = target + (current - target) * factor;
 			if (Math.Abs(target - next) <= 0.5)
 			{
@@ -215,6 +293,18 @@ public static class SmoothScroll
 			State st = tuple.St;
 			double current = sv.VerticalOffset;
 			double target = Math.Clamp(st.VerticalTarget, 0.0, sv.ScrollableHeight);
+			if (newFrame)
+			{
+				st.VerticalStalledFrames = (current == st.LastVerticalOffset) ? (st.VerticalStalledFrames + 1) : 0;
+				st.LastVerticalOffset = current;
+			}
+			if (!sv.IsVisible || st.VerticalStalledFrames >= StallFrameLimit)
+			{
+				sv.ScrollToVerticalOffset(target);
+				st.VerticalActive = false;
+				VerticalActive.RemoveAt(i);
+				continue;
+			}
 			double next = target + (current - target) * verticalFactor;
 			if (Math.Abs(target - next) <= SnapEpsilon)
 			{
