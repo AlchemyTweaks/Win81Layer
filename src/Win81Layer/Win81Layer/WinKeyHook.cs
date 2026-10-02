@@ -229,6 +229,10 @@ public sealed class WinKeyHook : IDisposable
 
 	private readonly List<RECT> _startRects = new List<RECT>();
 
+	// Immutable copy of _startRects, published by the hook thread after each recompute, so the UI thread can hit-test
+	// the native Start button without touching the list the hook thread clears and refills.
+	private volatile RECT[] _startRectsSnap = Array.Empty<RECT>();
+
 	private int _sbStamp = int.MinValue;
 
 	public bool DominantMode { get; set; }
@@ -709,6 +713,9 @@ public sealed class WinKeyHook : IDisposable
 					}
 					return CallNextHookEx(_mouseHook, nCode, wParam, lParam);
 				}
+				// The Start-button hit is decided before the press is broadcast: the hit test also publishes the rect
+				// snapshot the UI thread's light dismiss reads, so even the first press never meets an empty snapshot.
+				bool startHit = wm == 513 && ReplaceStartButton && !StartOpen && HitsStartButton(x, y);
 				Action<int, int, int> ev = ((wm == 513) ? GlobalLeftDown : GlobalRightDown);
 				if (ev != null)
 				{
@@ -718,7 +725,7 @@ public sealed class WinKeyHook : IDisposable
 						ev(x, y, downTime);
 					});
 				}
-				if (wm == 513 && ReplaceStartButton && !StartOpen && HitsStartButton(x, y))
+				if (startHit)
 				{
 					Raise(StartButtonClicked);
 					return 1;
@@ -813,6 +820,21 @@ public sealed class WinKeyHook : IDisposable
 		{
 			AddStartRect(sec);
 		}
+		_startRectsSnap = _startRects.ToArray();
+	}
+
+	// Native Start button hit test for the UI thread (Windows 7 Start light dismiss). Reads only the published
+	// snapshot and never recomputes.
+	internal bool HitsNativeStartButtonSnapshot(int x, int y)
+	{
+		foreach (RECT r in _startRectsSnap)
+		{
+			if (x >= r.L && x < r.R && y >= r.T && y < r.B)
+			{
+				return true;
+			}
+		}
+		return false;
 	}
 
 	private void AddStartRect(nint tray)

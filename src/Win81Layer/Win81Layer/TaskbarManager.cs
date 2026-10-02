@@ -248,6 +248,33 @@ public sealed class TaskbarManager
 		return false;
 	}
 
+	// Light-dismiss exclusion for the Windows 7 Start menu: a press on any bar's Start button belongs to the toggle.
+	public bool HitsStartButton(int x, int y)
+	{
+		foreach (TaskbarWindow b in _bars)
+		{
+			if (b.HitsStartButton(x, y))
+			{
+				return true;
+			}
+		}
+		return false;
+	}
+
+	// The Start button rect (physical px) of the bar on the given monitor, for the Windows 7 Start menu placement.
+	public bool TryGetStartButtonRect(Screen screen, out System.Drawing.Rectangle px)
+	{
+		foreach (TaskbarWindow b in _bars)
+		{
+			if (screen != null && string.Equals(b.ScreenDeviceName, screen.DeviceName, StringComparison.OrdinalIgnoreCase) && b.TryGetStartButtonRect(out px))
+			{
+				return true;
+			}
+		}
+		px = System.Drawing.Rectangle.Empty;
+		return false;
+	}
+
 	public bool TryRouteGlobalFlyoutMouseWheel(int x, int y, int delta)
 	{
 		foreach (TaskbarWindow bar in Volatile.Read(ref _wheelRouteBars))

@@ -273,6 +273,10 @@ public partial class App : System.Windows.Application
 
 	private Win7StartMenu? _win7Start;   // lazily built; only used when AppSettings.Win7StartMenuEnabled
 
+	private int _lastWin7Press;   // press time (GetTickCount clock) of the last accepted Win7 Start toggle
+
+	private bool _hasWin7Press;
+
 	private CharmsBar? _charmsBar;
 
 	private SettingsPane? _settingsPane;
@@ -541,7 +545,7 @@ public partial class App : System.Windows.Application
 		{
 			if (_win7Start != null && _win7Start.IsVisible)
 			{
-				_win7Start.Dismiss();
+				_win7Start.Dismiss("profile", instant: true);
 			}
 			if (_winHook != null)
 			{
@@ -572,6 +576,7 @@ public partial class App : System.Windows.Application
 			Win81Window.RefreshAllAccents();
 			Win81Window.RefreshAllShadows();
 			Logger.Log($"Live shell profile refreshed: win7Start={settings.Win7StartMenuEnabled}, taskbar={settings.TaskbarEnabled}, dominant={settings.DominantMode}");
+			ApplyWin7StartMenu(settings.Win7StartMenuEnabled);
 		}
 		catch (Exception ex)
 		{
@@ -1311,7 +1316,7 @@ public partial class App : System.Windows.Application
 			probe.Activate();
 			return;
 		}
-		if (e.Args.Contains("--explorer81test") || e.Args.Contains("--contextmenutest") || e.Args.Contains("--starttransitiontest") || e.Args.Contains("--taskbar-runtime-test") || e.Args.Contains("--taskbar-lifecycle-test") || e.Args.Contains("--uxpaneltest") || e.Args.Contains("--compositionqueuetest") || e.Args.Contains("--launchperformancetest") || e.Args.Contains("--switcher-edge-test") || e.Args.Contains("--clock-calendar-test") || e.Args.Contains("--sound-flyout-test") || e.Args.Contains("--network-flyout-test") || e.Args.Contains("--action-center-test") || e.Args.Contains("--directional-arrow-test") || e.Args.Contains("--weathertiletest") || e.Args.Contains("--metrotiletest") || e.Args.Contains("--flagtest"))
+		if (e.Args.Contains("--explorer81test") || e.Args.Contains("--contextmenutest") || e.Args.Contains("--starttransitiontest") || e.Args.Contains("--taskbar-runtime-test") || e.Args.Contains("--taskbar-lifecycle-test") || e.Args.Contains("--uxpaneltest") || e.Args.Contains("--compositionqueuetest") || e.Args.Contains("--launchperformancetest") || e.Args.Contains("--switcher-edge-test") || e.Args.Contains("--clock-calendar-test") || e.Args.Contains("--sound-flyout-test") || e.Args.Contains("--network-flyout-test") || e.Args.Contains("--action-center-test") || e.Args.Contains("--directional-arrow-test") || e.Args.Contains("--weathertiletest") || e.Args.Contains("--metrotiletest") || e.Args.Contains("--flagtest") || e.Args.Contains("--win7starttest"))
 		{
 			SettingsStore.ReadOnlyDiagnostics = true;
 		}
@@ -1388,7 +1393,7 @@ public partial class App : System.Windows.Application
 		// Safety net: unconditionally resume any native host a PRIOR unclean exit may have left suspended (no-op if none).
 		// Skip for mutex-free diagnostic CLIs: they must not resume hosts intentionally suspended by the live shell.
 		// The isolated taskbar runtime test replaces the live shell, so it must recover stale suspension first.
-		if (!e.Args.Contains("--dwmdiag") && !e.Args.Contains("--dwmperf") && !e.Args.Contains("--flagtest") && !experimentAudit && !persistenceCli && !pcSettingsTest && !iconTest && !trayDump && !uxPanelTest && !compositionQueueTest && !dwmBlurGlassPolicyTest && !dwmBlurGlassDetach && !explorer81Test && !contextMenuTest && !startTransitionTest && !launchPerformanceTest && !clockCalendarTest && !soundFlyoutTest && !networkFlyoutTest && !actionCenterTest && !directionalArrowTest && !trayIconTest && !weatherTileTest && !pinDropTest)
+		if (!e.Args.Contains("--dwmdiag") && !e.Args.Contains("--dwmperf") && !e.Args.Contains("--flagtest") && !e.Args.Contains("--win7starttest") && !experimentAudit && !persistenceCli && !pcSettingsTest && !iconTest && !trayDump && !uxPanelTest && !compositionQueueTest && !dwmBlurGlassPolicyTest && !dwmBlurGlassDetach && !explorer81Test && !contextMenuTest && !startTransitionTest && !launchPerformanceTest && !clockCalendarTest && !soundFlyoutTest && !networkFlyoutTest && !actionCenterTest && !directionalArrowTest && !trayIconTest && !weatherTileTest && !pinDropTest)
 		{
 			try { NativeShell.ResumeAll(); } catch { }
 		}
@@ -2020,6 +2025,57 @@ public partial class App : System.Windows.Application
 				catch (Exception value2)
 				{
 					Logger.Log($"PCSETTINGSTEST: {value2}");
+				}
+				finally
+				{
+					Shutdown();
+				}
+			});
+			return;
+		}
+		if (e.Args.Contains("--win7starttest"))
+		{
+			// Offscreen QA of the Win7 Start menu: PNG renders of its states plus PASS/FAIL checks, a trace and the recorded
+			// actions per tag. Read-only and invisible: settings writes throw, launches and shell actions are only recorded,
+			// the window stays at (-4000,-4000) without activation. Forces the theme for this process only (no registry
+			// change). Args: --win7starttest <outDir> [light|dark] [lnk|live]; default = both themes and both inventories.
+			SettingsStore.ReadOnlyDiagnostics = true;
+			int wi = Array.IndexOf(e.Args, "--win7starttest");
+			string[] keywords = new string[4] { "light", "dark", "lnk", "live" };
+			string outDir = (wi + 1 < e.Args.Length && !e.Args[wi + 1].StartsWith("--", StringComparison.Ordinal) && !keywords.Contains(e.Args[wi + 1]))
+				? e.Args[wi + 1]
+				: Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Win81Layer", "win7starttest");
+			string[] themes = e.Args.Contains("dark") ? new string[1] { "dark" } : (e.Args.Contains("light") ? new string[1] { "light" } : new string[2] { "light", "dark" });
+			bool wantLnk = e.Args.Contains("lnk") || !e.Args.Contains("live");
+			bool wantLive = e.Args.Contains("live") || !e.Args.Contains("lnk");
+			((DispatcherObject)this).Dispatcher.BeginInvoke((DispatcherPriority)6, (Delegate)(Action)delegate
+			{
+				try
+				{
+					Directory.CreateDirectory(outDir);
+					if (wantLnk)
+					{
+						// The shortcut list, enriched with folders and install dates like the Start screen's own fallback list.
+						List<AppEntry> lnk = AppInventory.LoadFromStartMenuLinks();
+						EnrichFromStartMenuIndex(lnk);
+						RunWin7StartQa(outDir, lnk, themes, string.Empty);
+					}
+					if (wantLive)
+					{
+						List<AppEntry> live = LoadWin7QaLiveInventory();
+						if (live != null && live.Count > 0)
+						{
+							RunWin7StartQa(outDir, live, themes, "-live");
+						}
+						else
+						{
+							File.WriteAllText(Path.Combine(outDir, "win7start-live-skipped.txt"), "INFO live AppsFolder inventory unavailable; live renders skipped" + Environment.NewLine);
+						}
+					}
+				}
+				catch (Exception value2)
+				{
+					try { File.AppendAllText(Path.Combine(outDir, "win7start-error.txt"), value2 + Environment.NewLine); } catch { }
 				}
 				finally
 				{
@@ -2953,7 +3009,12 @@ public partial class App : System.Windows.Application
 		_taskbar = new TaskbarManager();
 		_taskbar.StartRequested += delegate
 		{
-			((DispatcherObject)this).Dispatcher.BeginInvoke((Delegate)new Action(ToggleStart), Array.Empty<object>());
+			// Runs inside the bar's synchronous Click, so this is the mouse-up's own message time.
+			int pressTime = WindowUtil.MessageTime();
+			((DispatcherObject)this).Dispatcher.BeginInvoke((Delegate)(Action)delegate
+			{
+				ToggleStartAt(pressTime, "taskbar");
+			}, Array.Empty<object>());
 		};
 		_taskbar.StartPeekRequested += delegate
 		{
@@ -2976,7 +3037,7 @@ public partial class App : System.Windows.Application
 					// No Metro peek was shown; a committed hold-release (StartRequested is suppressed on holds) opens the Win7 menu.
 					if (commit)
 					{
-						ToggleStart();
+						ToggleStartAt(Environment.TickCount, "taskbar-hold");
 					}
 					return;
 				}
@@ -3111,7 +3172,11 @@ public partial class App : System.Windows.Application
 		};
 		_winHook.WinTapped += delegate
 		{
-			((DispatcherObject)this).Dispatcher.BeginInvoke((Delegate)new Action(ToggleStart), Array.Empty<object>());
+			int pressTime = Environment.TickCount;
+			((DispatcherObject)this).Dispatcher.BeginInvoke((Delegate)(Action)delegate
+			{
+				ToggleStartAt(pressTime, "win");
+			}, Array.Empty<object>());
 		};
 		_winHook.WinCTapped += delegate
 		{
@@ -3254,6 +3319,8 @@ public partial class App : System.Windows.Application
 		});
 		// Presses on any bar's Action Center button belong to ActionCenter.Toggle, never to its light-dismiss.
 		ActionCenter.IsToggleButtonAt = (int x, int y) => _taskbar?.HitsActionCenterButton(x, y) == true;
+		// Presses on a Start button (the launcher's or the native one) belong to the Win7 Start toggle, never to its light dismiss.
+		Win7StartMenu.IsStartButtonAt = (int x, int y) => _taskbar?.HitsStartButton(x, y) == true || _winHook?.HitsNativeStartButtonSnapshot(x, y) == true;
 		_winHook.GlobalLeftDown += delegate(int x, int y, int downTime)
 		{
 			((DispatcherObject)this).Dispatcher.BeginInvoke((Delegate)(Action)delegate
@@ -3261,6 +3328,7 @@ public partial class App : System.Windows.Application
 				_taskbar?.CloseFlyoutsOutside(x, y);
 				TaskbarWindow.CloseContextMenuOnOutsideClick(x, y);
 				ActionCenter.CloseOnOutsideClick(x, y, downTime, leftButton: true);
+				_win7Start?.CloseOnOutsideClick(x, y, downTime, leftButton: true);
 			}, Array.Empty<object>());
 		};
 		_winHook.GlobalRightDown += delegate(int x, int y, int downTime)
@@ -3270,6 +3338,7 @@ public partial class App : System.Windows.Application
 				_taskbar?.CloseFlyoutsOutside(x, y);
 				TaskbarWindow.CloseContextMenuOnOutsideClick(x, y);
 				ActionCenter.CloseOnOutsideClick(x, y, downTime, leftButton: false);
+				_win7Start?.CloseOnOutsideClick(x, y, downTime, leftButton: false);
 			}, Array.Empty<object>());
 		};
 		_winHook.GlobalMouseWheel += delegate(int x, int y, int delta)
@@ -4192,7 +4261,7 @@ public partial class App : System.Windows.Application
 			try
 			{
 			StartScreen? startScreen = _startScreen;
-			if (startScreen == null || !startScreen.IsVisible)
+			if ((startScreen == null || !startScreen.IsVisible) && _win7Start?.IsVisible != true)
 			{
 				CharmsBar? charmsBar = _charmsBar;
 				if (charmsBar == null || !charmsBar.IsVisible)
@@ -4217,7 +4286,7 @@ public partial class App : System.Windows.Application
 		};
 		_startScreen.IsVisibleChanged += (DependencyPropertyChangedEventHandler)delegate
 		{
-			TaskbarWindow.RaiseStartOpen(_startScreen.IsVisible);
+			TaskbarWindow.RaiseStartOpen(_startScreen.IsVisible || _win7Start?.IsOpen == true);
 			// Gate the global Start-button click hook while Metro Start is open so the Apps down-arrow (and tiles)
 			// in the bottom-left are never swallowed as a Start toggle back to Desktop.
 			if (_winHook != null)
@@ -4290,6 +4359,11 @@ public partial class App : System.Windows.Application
 			ScheduleIdleTrim();
 		}
 		Dispatcher.BeginInvoke(new Action(ActionCenter.Prewarm), DispatcherPriority.ApplicationIdle);
+		if (SettingsStore.FastSnapshot.Win7StartMenuEnabled)
+		{
+			// The opt-in Win7 menu is built at idle and kept hidden, so its first open is as fast as a warm one.
+			Dispatcher.BeginInvoke(new Action(PrewarmWin7Start), DispatcherPriority.ApplicationIdle);
+		}
 		ToolStripMenuItem AutoLockItem(string text, int minutes)
 		{
 			ToolStripMenuItem it2 = new ToolStripMenuItem(text)
@@ -4409,7 +4483,8 @@ public partial class App : System.Windows.Application
 		}
 		_idleTrimTimer.Stop();
 		StartScreen? startScreen = _startScreen;
-		if (startScreen == null || !startScreen.IsVisible)
+		// IsOpen (not IsVisible): the Win7 menu reports closed before its last transparent frame hides the window.
+		if ((startScreen == null || !startScreen.IsVisible) && _win7Start?.IsOpen != true)
 		{
 			CharmsBar? charmsBar = _charmsBar;
 			if (charmsBar == null || !charmsBar.IsVisible)
@@ -4491,34 +4566,26 @@ public partial class App : System.Windows.Application
 
 	private void ToggleStart()
 	{
+		ToggleStartAt(Environment.TickCount, "other");
+	}
+
+	// Every Start route (taskbar button, Win key, charms, hot corner, tray) funnels here. The opt-in Win7 orb menu is
+	// decided first, with its own press-time debounce; otherwise this is the original Metro toggle (Metro stays default).
+	private void ToggleStartAt(int pressTime, string route)
+	{
 		if (_startScreen == null)
 		{
+			return;
+		}
+		if (SettingsStore.FastSnapshot.Win7StartMenuEnabled)
+		{
+			ToggleWin7(pressTime, route);
 			return;
 		}
 		int now = Environment.TickCount;
 		if (now - _lastToggleTick >= 250)
 		{
 			_lastToggleTick = now;
-			// Opt-in: route Start to the classic Win7 orb menu instead of Metro. The SINGLE choke-point — every
-			// Start route (taskbar button, Win key, charms, hot-corner) funnels here, so this one branch covers all.
-			// When the flag is OFF this method is byte-for-byte the original Metro behaviour (Metro stays default).
-			if (SettingsStore.Current.Win7StartMenuEnabled)
-			{
-				if (_startScreen.IsVisible)
-				{
-					_startScreen.HideStart(animate: false);
-				}
-				_win7Start ??= new Win7StartMenu(() => _startScreen.AllApps.ToList(), a => _startScreen.LaunchApp(a));
-				if (_win7Start.IsVisible)
-				{
-					_win7Start.Dismiss();
-				}
-				else
-				{
-					_win7Start.ShowMenu();
-				}
-				return;
-			}
 			if (_win7Start != null && _win7Start.IsVisible)
 			{
 				_win7Start.Dismiss();   // flag was turned off while the Win7 menu was open
@@ -4532,6 +4599,217 @@ public partial class App : System.Windows.Application
 				_startScreen.ShowStart();
 			}
 		}
+	}
+
+	// Win7 toggle. Duplicate presses (switch chatter can produce a second click 30-60 ms later) are dropped by comparing
+	// the presses' own times, so a UI-thread stall can neither fake nor hide the gap. A menu that is mid-close counts as
+	// closed.
+	private void ToggleWin7(int pressTime, string route)
+	{
+		int since = unchecked(pressTime - _lastWin7Press);
+		if (_hasWin7Press && since >= 0 && since < 120)
+		{
+			Logger.Log($"Win7 Start: toggle ignored (duplicate press {since}ms after the previous one, via {route})");
+			return;
+		}
+		_hasWin7Press = true;
+		_lastWin7Press = pressTime;
+		if (_startScreen.IsVisible)
+		{
+			_startScreen.HideStart(animate: false);
+		}
+		Win7StartMenu menu = EnsureWin7Start();
+		if (menu.IsOpen)
+		{
+			menu.Dismiss("toggle");
+		}
+		else
+		{
+			menu.ShowMenu(route);
+		}
+	}
+
+	// The Win7 menu is built once and reused. A menu that was really closed (it should never be; Alt+F4 only dismisses)
+	// is rebuilt on the next use.
+	private Win7StartMenu EnsureWin7Start()
+	{
+		Win7StartMenu existing = _win7Start;
+		if (existing != null)
+		{
+			return existing;
+		}
+		Win7StartMenu menu = new Win7StartMenu(() => _startScreen?.AllApps, delegate(AppEntry a, bool asAdmin)
+		{
+			_startScreen?.LaunchHeadless(a, asAdmin);
+		}, OpenPcSettings);
+		menu.StartButtonRectFor = delegate(Screen screen)
+		{
+			TaskbarManager taskbar = _taskbar;
+			if (taskbar != null && taskbar.IsActive && taskbar.TryGetStartButtonRect(screen, out System.Drawing.Rectangle rect))
+			{
+				return rect;
+			}
+			return null;
+		};
+		menu.OpenChanged += delegate(bool open)
+		{
+			TaskbarWindow.RaiseStartOpen(open || _startScreen?.IsVisible == true);
+			TaskbarWindow.RaiseClassicStartOpen(open ? menu.OpenDevice : null);
+			if (!open)
+			{
+				ScheduleIdleTrim();
+			}
+		};
+		menu.Closed += delegate
+		{
+			if (_win7Start == menu)
+			{
+				_win7Start = null;
+			}
+			TaskbarWindow.RaiseClassicStartOpen(null);
+		};
+		_win7Start = menu;
+		return menu;
+	}
+
+	// Live switch for the Win7 Start option (PC Settings toggle and shell-profile changes). On prewarms the menu at idle
+	// (or marks an existing one's palette for a re-check); off disposes it.
+	public void ApplyWin7StartMenu(bool on)
+	{
+		try
+		{
+			if (on)
+			{
+				if (_win7Start == null)
+				{
+					Dispatcher.BeginInvoke(new Action(PrewarmWin7Start), DispatcherPriority.ApplicationIdle);
+				}
+				else
+				{
+					_win7Start.MarkPaletteDirty();
+				}
+				return;
+			}
+			Win7StartMenu menu = _win7Start;
+			_win7Start = null;
+			menu?.DisposeMenu();
+			W7Icons.Clear();
+		}
+		catch (Exception ex)
+		{
+			Logger.Log("ApplyWin7StartMenu failed: " + ex.Message);
+		}
+	}
+
+	// Idle prewarm of the Win7 menu: built (or reused) hidden, never shown. Skipped when the option was turned off in the
+	// meantime or the menu is already open.
+	private void PrewarmWin7Start()
+	{
+		try
+		{
+			if (!SettingsStore.FastSnapshot.Win7StartMenuEnabled || _startScreen == null)
+			{
+				return;
+			}
+			Win7StartMenu menu = EnsureWin7Start();
+			if (!menu.IsVisible)
+			{
+				menu.Prewarm();
+			}
+		}
+		catch (Exception ex)
+		{
+			Logger.Log("Win7 Start prewarm failed: " + ex.Message);
+		}
+	}
+
+	// Category (Start menu folder) and install date by display name, as StartScreen enriches its inventory.
+	private static void EnrichFromStartMenuIndex(List<AppEntry> apps)
+	{
+		try
+		{
+			IReadOnlyDictionary<string, StartMenuIndex.Info> index = StartMenuIndex.Get();
+			foreach (AppEntry entry in apps)
+			{
+				if (index.TryGetValue(entry.Name, out StartMenuIndex.Info info))
+				{
+					entry.Category = info.Category;
+					if (info.Installed != DateTime.MinValue)
+					{
+						entry.InstallDate = info.Installed;
+					}
+				}
+			}
+		}
+		catch
+		{
+		}
+	}
+
+	// Runs the Win7 Start QA for one inventory: every theme renders on one harness menu, which is then disposed.
+	private static void RunWin7StartQa(string outDir, List<AppEntry> apps, string[] themes, string suffix)
+	{
+		Win7StartMenu menu = null;
+		menu = new Win7StartMenu(() => apps, delegate(AppEntry a, bool asAdmin)
+		{
+			menu?.QaRecordLaunch(a, asAdmin);
+		});
+		menu.QaInit();
+		string last = null;
+		foreach (string theme in themes)
+		{
+			ShellTheme.ForceForTest(theme == "dark");
+			last = theme + suffix;
+			menu.QaRender(outDir, last);
+		}
+		if (last != null)
+		{
+			menu.QaDispose(outDir, last);
+		}
+	}
+
+	// The AppsFolder inventory the live shell uses, enriched like StartScreen does (Category, install date), plus the
+	// synthetic PC settings entry. Each shell item is released here. Returns null when enumeration fails.
+	private static List<AppEntry> LoadWin7QaLiveInventory()
+	{
+		List<(AppEntry Entry, AppInventory.IShellItem Item)> raw;
+		try
+		{
+			raw = AppInventory.EnumerateAppsFolderStable();
+		}
+		catch
+		{
+			return null;
+		}
+		List<AppEntry> apps = new List<AppEntry>(raw.Count + 1);
+		foreach ((AppEntry entry, AppInventory.IShellItem item) in raw)
+		{
+			if (entry != null)
+			{
+				apps.Add(entry);
+			}
+			try
+			{
+				if (item != null && System.Runtime.InteropServices.Marshal.IsComObject(item))
+				{
+					System.Runtime.InteropServices.Marshal.FinalReleaseComObject(item);
+				}
+			}
+			catch
+			{
+			}
+		}
+		EnrichFromStartMenuIndex(apps);
+		System.Windows.Media.SolidColorBrush tile = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0x3A, 0x6E, 0xA5));
+		tile.Freeze();
+		apps.Add(new AppEntry
+		{
+			Name = "PC settings",
+			LaunchPath = "win81:pcsettings",
+			TileBrush = tile,
+			Icon = PcSettingsWindow.BuildGearGlyph(24)
+		});
+		return apps;
 	}
 
 	// Diagnostics accessor: the shell's own composed top-level HWND (materialised without showing Start) for the

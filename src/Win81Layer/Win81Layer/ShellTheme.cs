@@ -94,6 +94,15 @@ public static class ShellTheme
 		RaiseChanged();
 	}
 
+	// Render harnesses only (e.g. --win7starttest): pin light/dark for THIS process without touching the registry.
+	internal static void ForceForTest(bool dark)
+	{
+		lock (Gate) { _isDark = dark; _brushes = null; }
+		try { TaskbarContextMenu.InvalidateTheme(); } catch { }
+		ApplyResourceTokens();
+		RaiseChanged();
+	}
+
 	private static void RaiseChanged()
 	{
 		try { Changed?.Invoke(null, EventArgs.Empty); } catch (Exception ex) { Logger.Log("ShellTheme.Changed handler failed: " + ex.Message); }

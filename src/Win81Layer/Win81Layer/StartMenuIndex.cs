@@ -6,7 +6,12 @@ namespace Win81Layer;
 
 public static class StartMenuIndex
 {
-	public sealed record Info(string Category, DateTime Installed);
+	// LnkPath is the shortcut the entry was read from. When the same name exists at the root and in a folder, it always
+	// sits in the folder that Category names.
+	public sealed record Info(string Category, DateTime Installed)
+	{
+		public string? LnkPath { get; init; }
+	}
 
 	private static Dictionary<string, Info>? _cache;
 
@@ -40,7 +45,7 @@ public static class StartMenuIndex
 		return map;
 	}
 
-	private static void Scan(string dir, string programsRoot, Dictionary<string, Info> map)
+	internal static void Scan(string dir, string programsRoot, Dictionary<string, Info> map)
 	{
 		try
 		{
@@ -61,12 +66,20 @@ public static class StartMenuIndex
 				}
 				if (!map.TryGetValue(name, out Info cur))
 				{
-					map[name] = new Info(category, installed);
+					map[name] = new Info(category, installed)
+					{
+						LnkPath = lnk
+					};
 					continue;
 				}
 				string cat = (string.IsNullOrEmpty(cur.Category) ? category : cur.Category);
 				DateTime dt = ((installed != DateTime.MinValue && installed < cur.Installed) ? installed : cur.Installed);
-				map[name] = new Info(cat, dt);
+				// The shortcut follows the category: a root entry merged with a folder entry points into that folder.
+				bool switchCat = string.IsNullOrEmpty(cur.Category) && !string.IsNullOrEmpty(category);
+				map[name] = new Info(cat, dt)
+				{
+					LnkPath = (switchCat ? lnk : (cur.LnkPath ?? lnk))
+				};
 			}
 			foreach (string sub in Directory.EnumerateDirectories(dir))
 			{

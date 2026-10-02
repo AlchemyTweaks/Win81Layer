@@ -104,6 +104,68 @@ public static class PowerActions
 		}
 	}
 
+	// Switch user: disconnects the console session, which shows the sign-in screen with the other accounts. When the
+	// call fails (it can vary by edition) the error is logged and the workstation is locked instead.
+	public static void SwitchUser()
+	{
+		try
+		{
+			if (WTSDisconnectSession(IntPtr.Zero, -1, bWait: false))
+			{
+				return;
+			}
+			Logger.Log("SwitchUser: WTSDisconnectSession failed (error " + Marshal.GetLastWin32Error() + "); locking instead.");
+		}
+		catch (Exception ex)
+		{
+			Logger.Log("SwitchUser failed: " + ex.Message + "; locking instead.");
+		}
+		Lock();
+	}
+
+	public static void Hibernate()
+	{
+		try
+		{
+			SetSuspendState(hibernate: true, forceCritical: false, disableWakeEvent: false);
+		}
+		catch (Exception ex)
+		{
+			Logger.Log("Hibernate failed: " + ex.Message);
+		}
+	}
+
+	private static readonly Lazy<(bool Ok, bool Sleep, bool Hibernate, string Raw)> _capabilities = new Lazy<(bool Ok, bool Sleep, bool Hibernate, string Raw)>(ReadCapabilities);
+
+	// Which power states the machine reports, read once through GetPwrCapabilities. Sleep is hidden only when the call
+	// succeeded and reported none of S1, S2, S3 or Modern Standby; Hibernate needs S4 and a hibernation file. Raw holds
+	// the bits that were read, for the logs.
+	internal static (bool Ok, bool Sleep, bool Hibernate, string Raw) Capabilities => _capabilities.Value;
+
+	private static (bool Ok, bool Sleep, bool Hibernate, string Raw) ReadCapabilities()
+	{
+		// SYSTEM_POWER_CAPABILITIES byte offsets: SystemS1..S4 = 3..6, HiberFilePresent = 8, AoAc = 20.
+		byte[] buf = new byte[256];
+		bool ok;
+		try
+		{
+			ok = GetPwrCapabilities(buf);
+		}
+		catch
+		{
+			ok = false;
+		}
+		bool s1 = ok && buf[3] != 0;
+		bool s2 = ok && buf[4] != 0;
+		bool s3 = ok && buf[5] != 0;
+		bool s4 = ok && buf[6] != 0;
+		bool hfp = ok && buf[8] != 0;
+		bool aoac = ok && buf[20] != 0;
+		static int D(bool b) => b ? 1 : 0;
+		string raw = $"ok={D(ok)} S1={D(s1)} S2={D(s2)} S3={D(s3)} S4={D(s4)} HFP={D(hfp)} AoAc={D(aoac)}";
+		return (ok, !ok || s1 || s2 || s3 || aoac, ok && s4 && hfp, raw);
+	}
+
 	public static void AccountSettings()
 	{
 		Shell("ms-settings:accounts");
@@ -148,4 +210,11 @@ public static class PowerActions
 
 	[DllImport("user32.dll", SetLastError = true)]
 	private static extern bool LockWorkStation();
+
+	[DllImport("wtsapi32.dll", SetLastError = true)]
+	private static extern bool WTSDisconnectSession(IntPtr hServer, int sessionId, bool bWait);
+
+	[DllImport("powrprof.dll", SetLastError = true)]
+	[return: MarshalAs(UnmanagedType.U1)]
+	private static extern bool GetPwrCapabilities([Out] byte[] lpspc);
 }

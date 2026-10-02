@@ -221,6 +221,8 @@ public sealed class AppSettings
 		c.CharmQuickOrder = new List<string>(CharmQuickOrder);
 		c.CharmQuickHidden = new List<string>(CharmQuickHidden);
 		c.TaskbarToolbars = new List<string>(TaskbarToolbars);
+		c.Win7StartMenuPins = new List<string>(Win7StartMenuPins ?? new List<string>());
+		c.Win7StartMenuMruHidden = new List<string>(Win7StartMenuMruHidden ?? new List<string>());
 		return c;
 	}
 }

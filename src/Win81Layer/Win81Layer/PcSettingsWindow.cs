@@ -1700,6 +1700,7 @@ public sealed class PcSettingsWindow : Window
 		panel.Children.Add(ToggleRow("Use the Windows 7 Start menu", "Show the classic Win7 orb Start menu instead of the full-screen Metro Start. Off = Metro 8.1 Start (the default). Independent of the desktop-composition mode.", s.Win7StartMenuEnabled, delegate(bool on)
 		{
 			SettingsStore.Update(delegate(AppSettings x) { x.Win7StartMenuEnabled = on; });
+			HostApp?.ApplyWin7StartMenu(on);
 		}));
 
 		// ===== Shell takeover =====

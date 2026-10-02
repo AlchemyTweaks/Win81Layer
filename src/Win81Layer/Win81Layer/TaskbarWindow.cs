@@ -498,6 +498,15 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		StartOpenChanged?.Invoke();
 	}
 
+	// Device name of the monitor the Windows 7 Start menu is open on (null when closed): an auto-hidden bar on that
+	// monitor stays revealed while the menu sits on it.
+	private static string _classicStartDevice;
+
+	public static void RaiseClassicStartOpen(string deviceName)
+	{
+		_classicStartDevice = deviceName;
+	}
+
 	public static void RaiseCharmsOpen(bool open)
 	{
 		_charmsOpen = open;
@@ -1904,6 +1913,10 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 				{
 					return;
 				}
+				if (w is Win7StartMenu && w.IsVisible)
+				{
+					return;
+				}
 			}
 			string startHooks = start?.LiveFrameHooks() ?? string.Empty;
 			// A real smooth scroll settles in well under a second; one still hooked after 2s never converged.
@@ -2603,6 +2616,11 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 				|| (NetPopup != null && NetPopup.IsOpen)
 				|| (VolumePopup != null && VolumePopup.IsOpen)
 				|| (ClockPopup != null && ClockPopup.IsOpen))
+			{
+				return true;
+			}
+			string classicStart = _classicStartDevice;
+			if (classicStart != null && _screen != null && string.Equals(classicStart, _screen.DeviceName, StringComparison.OrdinalIgnoreCase))
 			{
 				return true;
 			}
@@ -5360,6 +5378,37 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 	{
 		return InScreenRect(ActionCenterBtn, sx, sy);
 	}
+
+	// Light-dismiss exclusion for the Windows 7 Start menu: a press on this bar's Start button belongs to the toggle.
+	internal bool HitsStartButton(int sx, int sy)
+	{
+		return InScreenRect(StartButton, sx, sy);
+	}
+
+	// This bar's Start button in physical screen pixels (for the Windows 7 Start menu placement).
+	internal bool TryGetStartButtonRect(out System.Drawing.Rectangle px)
+	{
+		px = System.Drawing.Rectangle.Empty;
+		try
+		{
+			FrameworkElement fe = StartButton;
+			if (fe == null || !fe.IsVisible || fe.ActualWidth <= 0.0 || fe.ActualHeight <= 0.0)
+			{
+				return false;
+			}
+			System.Windows.Point tl = fe.PointToScreen(new System.Windows.Point(0.0, 0.0));
+			System.Windows.Point br = fe.PointToScreen(new System.Windows.Point(fe.ActualWidth, fe.ActualHeight));
+			px = System.Drawing.Rectangle.FromLTRB((int)Math.Round(Math.Min(tl.X, br.X)), (int)Math.Round(Math.Min(tl.Y, br.Y)), (int)Math.Round(Math.Max(tl.X, br.X)), (int)Math.Round(Math.Max(tl.Y, br.Y)));
+			return px.Width > 0 && px.Height > 0;
+		}
+		catch
+		{
+			px = System.Drawing.Rectangle.Empty;
+			return false;
+		}
+	}
+
+	internal string ScreenDeviceName => _screen?.DeviceName ?? string.Empty;
 
 	private static void FlyoutOutside(Popup popup, FrameworkElement icon, int sx, int sy)
 	{

@@ -48,6 +48,39 @@ internal static class WindowUtil
 		window.Activate();
 	}
 
+	// The message time of the input currently being dispatched (GetTickCount clock). Read inside a synchronous input
+	// handler, it is when the press happened, not when a later dispatcher hop runs.
+	internal static int MessageTime()
+	{
+		return GetMessageTime();
+	}
+
+	// "WindowClass/process" of the current foreground window, for show/hide log lines.
+	internal static string ForegroundDescription()
+	{
+		try
+		{
+			nint fg = GetForegroundWindow();
+			if (fg == IntPtr.Zero)
+			{
+				return "none";
+			}
+			System.Text.StringBuilder cls = new System.Text.StringBuilder(64);
+			GetClassName(fg, cls, cls.Capacity);
+			GetWindowThreadProcessId(fg, out uint pid);
+			if (pid == (uint)Environment.ProcessId)
+			{
+				return cls + "/self";
+			}
+			using Process proc = Process.GetProcessById((int)pid);
+			return cls + "/" + proc.ProcessName;
+		}
+		catch
+		{
+			return "?";
+		}
+	}
+
 	public static void OpenTaskView()
 	{
 		keybd_event(91, 0, 0u, UIntPtr.Zero);
@@ -99,4 +132,10 @@ internal static class WindowUtil
 
 	[DllImport("psapi.dll")]
 	private static extern bool EmptyWorkingSet(nint hProcess);
+
+	[DllImport("user32.dll")]
+	private static extern int GetMessageTime();
+
+	[DllImport("user32.dll", CharSet = CharSet.Unicode)]
+	private static extern int GetClassName(nint hWnd, System.Text.StringBuilder className, int maxCount);
 }

@@ -93,6 +93,32 @@ public static class TaskbarTheme
 		}
 	}
 
+	// SourceAccent when it needs no wallpaper decode (Start colour mode, or the wallpaper average is already cached).
+	// False when SourceAccent would decode the wallpaper first; the caller can then read it later, off the open path.
+	public static bool TryCachedSourceAccent(out System.Windows.Media.Color color)
+	{
+		try
+		{
+			if (SettingsStore.Load().TaskbarColorMode == "Start")
+			{
+				color = StartAccent.Color();
+				return true;
+			}
+			if (_avg.HasValue)
+			{
+				color = WallpaperAccent();
+				return true;
+			}
+		}
+		catch
+		{
+			color = System.Windows.Media.Color.FromRgb(58, 110, 165);
+			return true;
+		}
+		color = default(System.Windows.Media.Color);
+		return false;
+	}
+
 	public static System.Windows.Media.Color SelectionColor()
 	{
 		System.Windows.Media.Color c = SourceAccent();

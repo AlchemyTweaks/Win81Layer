@@ -1226,4 +1226,244 @@ public static class AppInventory
 
 	[DllImport("gdi32.dll")]
 	private static extern bool DeleteObject(nint hObject);
+
+#nullable enable annotations
+	// ---- Exact-size icons (Windows 7 Start menu) ---------------------------------------------------------------------
+	// New, separate path: the result is untrimmed (each icon keeps its designed padding) and always exactly px x px, so
+	// a 32 px row shows a real 32 px frame instead of a jumbo canvas shrunk to a dot. The loaders above are not used.
+	private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, WeakReference<ImageSource>> _exactIconCache
+		= new System.Collections.Concurrent.ConcurrentDictionary<string, WeakReference<ImageSource>>();
+
+	public static ImageSource? LoadIconExact(string path, int px)
+	{
+		if (string.IsNullOrWhiteSpace(path))
+		{
+			return null;
+		}
+		px = Math.Clamp(px, 16, PreferredIconPixels);
+		string cacheKey = path + "|" + px + "|exact";
+		if (_exactIconCache.TryGetValue(cacheKey, out WeakReference<ImageSource>? wref) && wref.TryGetTarget(out ImageSource? cached) && cached != null)
+		{
+			return cached;
+		}
+		try
+		{
+			string iconLocation = Environment.ExpandEnvironmentVariables(path.Trim());
+			string sourcePath = SplitIconLocation(iconLocation, out int iconIndex);
+			string? filePath = ResolveFileBackedPath(sourcePath);
+			BitmapSource? result = null;
+			if (!string.IsNullOrEmpty(filePath))
+			{
+				string extension = Path.GetExtension(filePath);
+				if (extension.Equals(".ico", StringComparison.OrdinalIgnoreCase))
+				{
+					result = ExactIconFile(filePath, px);
+				}
+				else if (iconIndex == 0)
+				{
+					string sidecar = Path.ChangeExtension(filePath, ".ico");
+					if (!sidecar.Equals(filePath, StringComparison.OrdinalIgnoreCase) && File.Exists(sidecar))
+					{
+						result = ExactIconFile(sidecar, px);
+					}
+				}
+				if (result == null && (extension.Equals(".exe", StringComparison.OrdinalIgnoreCase) ||
+					extension.Equals(".dll", StringComparison.OrdinalIgnoreCase) ||
+					extension.Equals(".cpl", StringComparison.OrdinalIgnoreCase) ||
+					extension.Equals(".scr", StringComparison.OrdinalIgnoreCase)))
+				{
+					result = ExactExtractIcon(filePath, iconIndex, px);
+				}
+				if (result == null)
+				{
+					result = ExactShellIcon(filePath, px);
+				}
+			}
+			if (result == null)
+			{
+				result = ExactShellIcon(iconLocation, px);
+			}
+			if (result == null)
+			{
+				return null;
+			}
+			BitmapSource exact = FitExact(result, px);
+			if (IsBlankExact(exact))
+			{
+				return null;
+			}
+			_exactIconCache[cacheKey] = new WeakReference<ImageSource>(exact);
+			return exact;
+		}
+		catch (Exception ex)
+		{
+			Logger.Log("[icon] LoadIconExact('" + path + "', " + px + ") failed: " + ex.Message);
+			return null;
+		}
+	}
+
+	// The smallest frame at least px (or the largest one), untrimmed.
+	private static BitmapSource? ExactIconFile(string path, int px)
+	{
+		try
+		{
+			using FileStream stream = File.Open(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+			IconBitmapDecoder decoder = new IconBitmapDecoder(stream, BitmapCreateOptions.PreservePixelFormat, BitmapCacheOption.OnLoad);
+			BitmapFrame? best = decoder.Frames
+				.Where((BitmapFrame frame) => Math.Max(frame.PixelWidth, frame.PixelHeight) >= px)
+				.OrderBy((BitmapFrame frame) => frame.PixelWidth * frame.PixelHeight)
+				.ThenByDescending((BitmapFrame frame) => frame.Format.BitsPerPixel)
+				.FirstOrDefault()
+				?? decoder.Frames
+					.OrderByDescending((BitmapFrame frame) => frame.PixelWidth * frame.PixelHeight)
+					.ThenByDescending((BitmapFrame frame) => frame.Format.BitsPerPixel)
+					.FirstOrDefault();
+			return best;
+		}
+		catch
+		{
+			return null;
+		}
+	}
+
+	// An exact-size HICON straight from the resource.
+	private static BitmapSource? ExactExtractIcon(string path, int iconIndex, int px)
+	{
+		nint[] icons = new nint[1];
+		try
+		{
+			if (PrivateExtractIcons(path, iconIndex, px, px, icons, IntPtr.Zero, 1u, 0u) == 0 || icons[0] == IntPtr.Zero)
+			{
+				return null;
+			}
+			BitmapSource source = Imaging.CreateBitmapSourceFromHIcon(icons[0], Int32Rect.Empty, BitmapSizeOptions.FromEmptyOptions());
+			((Freezable)source).Freeze();
+			return source;
+		}
+		catch
+		{
+			return null;
+		}
+		finally
+		{
+			if (icons[0] != IntPtr.Zero)
+			{
+				DestroyIcon(icons[0]);
+			}
+		}
+	}
+
+	// The shell's own icon at the requested size: no BIGGERSIZEOK, so a missing 256 frame is never padded onto a jumbo
+	// canvas. SCALEUP is the fallback when the shell has nothing at that size.
+	private static BitmapSource? ExactShellIcon(string pathOrIconLocation, int px)
+	{
+		nint hBitmap = IntPtr.Zero;
+		IShellItemImageFactory? factory = null;
+		try
+		{
+			Guid iid = typeof(IShellItemImageFactory).GUID;
+			SHCreateItemFromParsingName(pathOrIconLocation, IntPtr.Zero, ref iid, out factory);
+			try
+			{
+				factory.GetImage(new SIZE { cx = px, cy = px }, SIIGBF_ICONONLY, out hBitmap);
+			}
+			catch
+			{
+				hBitmap = IntPtr.Zero;
+			}
+			if (hBitmap == IntPtr.Zero)
+			{
+				factory.GetImage(new SIZE { cx = px, cy = px }, SIIGBF_ICONONLY | SIIGBF_SCALEUP, out hBitmap);
+			}
+			return hBitmap == IntPtr.Zero ? null : FromHBitmap(hBitmap);
+		}
+		catch
+		{
+			return null;
+		}
+		finally
+		{
+			if (hBitmap != IntPtr.Zero)
+			{
+				DeleteObject(hBitmap);
+			}
+			ReleaseCom(factory);
+		}
+	}
+
+	// A miss for the exact path: almost nothing opaque (under 0.5%), or one flat colour filling at least 90% of the square
+	// (a solid block with no drawn shape). A single-colour logo that leaves part of the square empty is a real icon: the
+	// white logo a packaged app such as Photos hands back covers about 70% of a 16 px square, which IconResolver.IsBlank
+	// (shared with the other loaders and left as it is) counts as a solid block.
+	private static bool IsBlankExact(BitmapSource src)
+	{
+		try
+		{
+			BitmapSource bmp = src.Format == PixelFormats.Bgra32 ? src : new FormatConvertedBitmap(src, PixelFormats.Bgra32, null, 0.0);
+			int w = bmp.PixelWidth;
+			int h = bmp.PixelHeight;
+			if (w <= 0 || h <= 0)
+			{
+				return true;
+			}
+			int stride = w * 4;
+			byte[] px = new byte[h * stride];
+			bmp.CopyPixels(px, stride, 0);
+			long visible = 0L;
+			int rMin = 255, rMax = 0, gMin = 255, gMax = 0, bMin = 255, bMax = 0;
+			for (int o = 0; o < px.Length; o += 4)
+			{
+				if (px[o + 3] < 24)
+				{
+					continue;
+				}
+				visible++;
+				rMin = Math.Min(rMin, px[o + 2]);
+				rMax = Math.Max(rMax, px[o + 2]);
+				gMin = Math.Min(gMin, px[o + 1]);
+				gMax = Math.Max(gMax, px[o + 1]);
+				bMin = Math.Min(bMin, px[o]);
+				bMax = Math.Max(bMax, px[o]);
+			}
+			long total = (long)w * h;
+			if (visible * 200 < total)
+			{
+				return true;
+			}
+			return visible * 10 >= total * 9 && rMax - rMin <= 10 && gMax - gMin <= 10 && bMax - bMin <= 10;
+		}
+		catch
+		{
+			return false;
+		}
+	}
+
+	// Unchanged when already px x px; otherwise drawn HighQuality, uniform and centred into a px x px bitmap. Frozen.
+	private static BitmapSource FitExact(BitmapSource src, int px)
+	{
+		if (src.PixelWidth == px && src.PixelHeight == px)
+		{
+			if (src.CanFreeze && !src.IsFrozen)
+			{
+				src.Freeze();
+			}
+			return src;
+		}
+		double sw = Math.Max(1, src.PixelWidth);
+		double sh = Math.Max(1, src.PixelHeight);
+		double k = Math.Min(px / sw, px / sh);
+		double dw = sw * k;
+		double dh = sh * k;
+		DrawingVisual dv = new DrawingVisual();
+		RenderOptions.SetBitmapScalingMode(dv, BitmapScalingMode.HighQuality);
+		using (DrawingContext dc = dv.RenderOpen())
+		{
+			dc.DrawImage(src, new Rect((px - dw) / 2.0, (px - dh) / 2.0, dw, dh));
+		}
+		RenderTargetBitmap rtb = new RenderTargetBitmap(px, px, 96.0, 96.0, PixelFormats.Pbgra32);
+		rtb.Render(dv);
+		rtb.Freeze();
+		return rtb;
+	}
+#nullable restore
 }

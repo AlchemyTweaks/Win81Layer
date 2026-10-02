@@ -1381,6 +1381,7 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 						apps.Add(MakePcSettingsAppEntry());
 					}
 					_apps = apps;
+					RaiseAppsReloaded();
 					_appsView = CollectionViewSource.GetDefaultView(_apps);
 					ApplyAppsSort(_appsSort, rebuild: false);
 					_groups = new ObservableCollection<GroupVm>(Profile.Load(_apps, preProfileJson));
@@ -1774,6 +1775,31 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 
 	// The loaded app inventory (used by the Windows 7 Start menu to populate its program list).
 	public System.Collections.Generic.IReadOnlyList<AppEntry> AllApps => _apps;
+
+	// Raised on the UI thread when the inventory AllApps returns was replaced or grew. The Windows 7 Start menu refreshes
+	// an open view in place, or marks its All Programs tree stale while hidden.
+	internal static event Action? AppsReloaded;
+
+	// Every handler runs, and a failing one never breaks the inventory load.
+	internal static void RaiseAppsReloaded()
+	{
+		Action? handlers = AppsReloaded;
+		if (handlers == null)
+		{
+			return;
+		}
+		foreach (Delegate d in handlers.GetInvocationList())
+		{
+			try
+			{
+				((Action)d)();
+			}
+			catch (Exception ex)
+			{
+				Logger.Log("AppsReloaded handler failed: " + ex.Message);
+			}
+		}
+	}
 
 	internal bool ReleaseIdleResources()
 	{
@@ -4192,6 +4218,52 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 		});
 	}
 
+	// Launch for surfaces other than the Metro Start screen (the Windows 7 Start menu): the launch body of Launch, but it
+	// never hides or trims the Start screen. The caller has already closed its own surface.
+	internal void LaunchHeadless(AppEntry entry, bool asAdmin = false)
+	{
+		if (entry == null)
+		{
+			return;
+		}
+		string launchPath = entry.LaunchPath;
+		if (launchPath == "win81:pcsettings")
+		{
+			PcSettingsRequested?.Invoke();
+			return;
+		}
+		if (launchPath == "win81:news")
+		{
+			(System.Windows.Application.Current as App)?.OpenNews();
+			return;
+		}
+		if (launchPath == "win81:desktop")
+		{
+			return;
+		}
+		if (launchPath != null && launchPath.StartsWith(ActionRouter.Scheme, StringComparison.OrdinalIgnoreCase))
+		{
+			ActionRouter.Invoke(launchPath);
+			return;
+		}
+		ShellLaunch.AllowForeground();
+		string name = entry.Name;
+		string appId = entry.AppId;
+		ShellLaunch.Run(delegate
+		{
+			if (AppLauncher.TryLaunch(launchPath, null, appId, asAdmin, out string error))
+			{
+				UsageStore.RecordLaunch(launchPath, DateTime.UtcNow.Ticks);
+				return;
+			}
+			if (asAdmin && error != null && error.Contains("canceled", StringComparison.OrdinalIgnoreCase))
+			{
+				return;
+			}
+			((DispatcherObject)this).Dispatcher.BeginInvoke((Delegate)(Func<MessageBoxResult>)(() => System.Windows.MessageBox.Show("Couldn't launch:\n" + error, name)), Array.Empty<object>());
+		});
+	}
+
 	private static AppEntry MakeDesktopAppEntry()
 	{
 		// The authentic Win8.1 Desktop icon is a full-bleed purple (#4214B5) tile with a white monitor glyph,
@@ -5047,6 +5119,7 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 					Icon = AppInventory.LoadIcon(exePath)
 				};
 				_apps.Add(entry);
+				RaiseAppsReloaded();
 			}
 			PinEntryToStart(entry);
 			ToastService.Show(entry.Icon, "Start", "Pinned", entry.Name + " was pinned to Start.");
