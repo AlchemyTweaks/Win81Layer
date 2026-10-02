@@ -3252,22 +3252,24 @@ public partial class App : System.Windows.Application
 				Logger.Log("Volume keys left native (audio init failed): " + ex4.Message);
 			}
 		});
-		_winHook.GlobalLeftDown += delegate(int x, int y)
+		// Presses on any bar's Action Center button belong to ActionCenter.Toggle, never to its light-dismiss.
+		ActionCenter.IsToggleButtonAt = (int x, int y) => _taskbar?.HitsActionCenterButton(x, y) == true;
+		_winHook.GlobalLeftDown += delegate(int x, int y, int downTime)
 		{
 			((DispatcherObject)this).Dispatcher.BeginInvoke((Delegate)(Action)delegate
 			{
 				_taskbar?.CloseFlyoutsOutside(x, y);
 				TaskbarWindow.CloseContextMenuOnOutsideClick(x, y);
-				ActionCenter.CloseOnOutsideClick(x, y);
+				ActionCenter.CloseOnOutsideClick(x, y, downTime, leftButton: true);
 			}, Array.Empty<object>());
 		};
-		_winHook.GlobalRightDown += delegate(int x, int y)
+		_winHook.GlobalRightDown += delegate(int x, int y, int downTime)
 		{
 			((DispatcherObject)this).Dispatcher.BeginInvoke((Delegate)(Action)delegate
 			{
 				_taskbar?.CloseFlyoutsOutside(x, y);
 				TaskbarWindow.CloseContextMenuOnOutsideClick(x, y);
-				ActionCenter.CloseOnOutsideClick(x, y);
+				ActionCenter.CloseOnOutsideClick(x, y, downTime, leftButton: false);
 			}, Array.Empty<object>());
 		};
 		_winHook.GlobalMouseWheel += delegate(int x, int y, int delta)

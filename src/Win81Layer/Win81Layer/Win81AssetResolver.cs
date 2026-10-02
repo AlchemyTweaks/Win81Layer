@@ -53,7 +53,18 @@ public static class Win81AssetResolver
     // Maps the live network state to the authentic pnidui semantic and returns the icon (null => caller falls back).
     public static ImageSource NetworkImage(NetState81 state, int px)
     {
-        if (state == null) return null;
+        return state == null ? null : GetAsset(NetworkSemantic(state), px);
+    }
+
+    // TRAY variant: the same semantic as the 1:1, ink-centred tray canvas (see GetTrayAsset). Null => caller falls back.
+    public static ImageSource NetworkTrayImage(NetState81 state, int px)
+    {
+        return state == null ? null : GetTrayAsset(NetworkSemantic(state), px);
+    }
+
+    // The pnidui semantic for a live network state (shared by NetworkImage and NetworkTrayImage).
+    public static string NetworkSemantic(NetState81 state)
+    {
         NetworkIconState es = state.EffectiveIconState;
         string sem;
         switch (es)
@@ -67,7 +78,11 @@ public static class Win81AssetResolver
             case NetworkIconState.Disabled:
             case NetworkIconState.HardwareOff:
             case NetworkIconState.NetworkError:
-                sem = state.Kind == NetKind.Ethernet ? "Ethernet.Disconnected" : "Wifi.Disconnected";
+                // A kind-less Offline state has no connection profile to name the family, so use the hardware: a
+                // radio-less desktop shows the monitor + X, not Wi-Fi bars + X.
+                sem = state.Kind == NetKind.Ethernet || es == NetworkIconState.CableUnplugged
+                    || (state.Kind == NetKind.Offline && !NetCaps.HasWifi && !NetCaps.HasCellular)
+                    ? "Ethernet.Disconnected" : "Wifi.Disconnected";
                 break;
             case NetworkIconState.Scanning:
             case NetworkIconState.Identifying:
@@ -87,7 +102,7 @@ public static class Win81AssetResolver
                 }
                 break;
         }
-        return GetAsset(sem, px);
+        return sem;
     }
 
     // Canonical volume icon (SndVolSSO) for the current level/mute — used by the tray, the volume flyout, the OSD and the
@@ -183,6 +198,130 @@ public static class Win81AssetResolver
             _padCache[cacheKey] = result;
             return result;
         }
+    }
+
+    private static readonly Dictionary<string, ImageSource> _trayCache = new Dictionary<string, ImageSource>(StringComparer.OrdinalIgnoreCase);
+    private static readonly Dictionary<string, int> _trayDyCache = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+
+    // TRAY icon for the taskbar notification area. px = the bar's PHYSICAL tray frame (TaskbarMetrics.TrayIconPx): a native
+    // frame size, drawn 1:1, or exactly twice one (baked as a 2x pixel copy, still 1:1 on screen). The frame is copied
+    // UNSCALED onto a transparent canvas 2 rows taller at the top and bottom (px x (px + 4), doubled with the frame) and
+    // shifted by its FAMILY's integer ink-centring offset (TrayFamilyDy), so every tray icon's ink sits on the bar centre
+    // with zero resampling, and a state change (badge / level) never moves the base glyph or clips it. Always re-baked at
+    // 96 DPI (the extracted PNGs carry a 95.99 DPI pHYs). Null => asset missing (callers keep their fallbacks).
+    public static ImageSource GetTrayAsset(string semantic, int px)
+    {
+        if (string.IsNullOrEmpty(semantic)) return null;
+        EnsureLoaded();
+        if (!_map.TryGetValue(semantic, out Entry e)) return null;
+        int frame = px, zoom = 1;
+        if (Array.IndexOf(e.Sizes, px) < 0)
+        {
+            if (px % 2 == 0 && Array.IndexOf(e.Sizes, px / 2) >= 0)
+            {
+                frame = px / 2;
+                zoom = 2;
+            }
+            else
+            {
+                frame = BestSize(e.Sizes, px);
+            }
+        }
+        string key = semantic + "@" + frame + "x" + zoom;
+        lock (_gate)
+        {
+            if (_trayCache.TryGetValue(key, out ImageSource cached)) return cached;
+            ImageSource src = GetAsset(semantic, frame);
+            ImageSource result = src;
+            try
+            {
+                if (src is BitmapSource bs)
+                {
+                    FormatConvertedBitmap fmt = new FormatConvertedBitmap(bs, PixelFormats.Bgra32, null, 0.0);
+                    int w = fmt.PixelWidth, h = fmt.PixelHeight, stride = w * 4;
+                    byte[] srcPx = new byte[h * stride];
+                    fmt.CopyPixels(srcPx, stride, 0);
+                    int dy = TrayFamilyDy(semantic, frame);
+                    int ch = h + 4;
+                    byte[] canvas = new byte[ch * stride];   // zero-filled = transparent
+                    for (int y = 0; y < h; y++)
+                    {
+                        int ty = y + 2 + dy;
+                        if (ty >= 0 && ty < ch) Array.Copy(srcPx, y * stride, canvas, ty * stride, stride);
+                    }
+                    int ow = w, oh = ch;
+                    if (zoom == 2)
+                    {
+                        ow = w * 2;
+                        oh = ch * 2;
+                        byte[] big = new byte[oh * ow * 4];
+                        for (int y = 0; y < oh; y++)
+                        {
+                            for (int x = 0; x < ow; x++)
+                            {
+                                Array.Copy(canvas, ((y / 2) * w + (x / 2)) * 4, big, (y * ow + x) * 4, 4);
+                            }
+                        }
+                        canvas = big;
+                    }
+                    BitmapSource tray = BitmapSource.Create(ow, oh, 96.0, 96.0, PixelFormats.Bgra32, null, canvas, ow * 4);
+                    tray.Freeze();
+                    result = tray;
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.Log("Win81AssetResolver tray " + key + ": " + ex.Message);
+            }
+            _trayCache[key] = result;
+            return result;
+        }
+    }
+
+    // Integer row shift that centres a tray icon FAMILY's base glyph in its frame: floor((frame - top - bottom) / 2) over the
+    // rows with alpha > 40 of the family BODY at that frame, clamped to the canvas's 2-row margin. One value per family,
+    // shared by all of its states, so badges (Limited / Disconnected / mute / flag warning) hang where Windows draws them
+    // and the base glyph never jumps on a state change. Measured on the 8.1 assets: Ethernet +1 at 16/20/24 and +2 at 32
+    // (the pnidui monitor art is top-anchored), Airplane +1 at 24, Wi-Fi bars / Searching / Volume / flag 0. Caller holds _gate.
+    private static int TrayFamilyDy(string semantic, int frame)
+    {
+        string body = semantic.StartsWith("Ethernet.", StringComparison.OrdinalIgnoreCase) ? "Ethernet.Connected"
+            : (semantic.StartsWith("Wifi.", StringComparison.OrdinalIgnoreCase) || semantic.Equals("Network.Searching", StringComparison.OrdinalIgnoreCase)) ? "Wifi.Bars5"
+            : semantic.StartsWith("Volume.", StringComparison.OrdinalIgnoreCase) ? "Volume.High"
+            : semantic.StartsWith("Notifications.", StringComparison.OrdinalIgnoreCase) ? "Notifications.Flag"
+            : semantic;
+        string key = body + "@" + frame;
+        if (_trayDyCache.TryGetValue(key, out int known)) return known;
+        int dy = 0;
+        try
+        {
+            if (GetAsset(body, frame) is BitmapSource bs)
+            {
+                FormatConvertedBitmap fmt = new FormatConvertedBitmap(bs, PixelFormats.Bgra32, null, 0.0);
+                int w = fmt.PixelWidth, h = fmt.PixelHeight, stride = w * 4;
+                byte[] p = new byte[h * stride];
+                fmt.CopyPixels(p, stride, 0);
+                int top = -1, bottom = -1;
+                for (int y = 0; y < h; y++)
+                {
+                    for (int x = 0; x < w; x++)
+                    {
+                        if (p[y * stride + x * 4 + 3] > 40)
+                        {
+                            if (top < 0) top = y;
+                            bottom = y;
+                            break;
+                        }
+                    }
+                }
+                if (top >= 0) dy = Math.Clamp((int)Math.Floor((h - top - bottom) / 2.0), -2, 2);
+            }
+        }
+        catch
+        {
+        }
+        _trayDyCache[key] = dy;
+        return dy;
     }
 
     private static int BestSize(int[] sizes, int px)

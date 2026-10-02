@@ -973,12 +973,40 @@ public sealed partial class ActionCenter
 		_slide.X = _offScreen;
 		_metroRoot.Opacity = Motion.Mode == MotionMode.Off ? 1.0 : 0.94;
 		_metroRoot.CacheMode = Motion.Mode == MotionMode.Off ? null : new BitmapCache();
-		if (!base.IsVisible) Show();
-		base.Left = _finalLeft;
-		// Robustly take the real foreground (AttachThreadInput + SetForegroundWindow), like the Start screen. Plain
-		// Activate() is subject to Windows' foreground-lock and INTERMITTENTLY leaves the flyout visible-but-inactive,
-		// so the FIRST click on a slider/tile only activates the window (gets eaten) and needs a second click.
-		WindowUtil.ForceForeground(this);
+		// Show()+ForceForeground can bounce activation (WA_INACTIVE, then WA_ACTIVE again) while the foreground is handed over
+		// from another process; Start, which makes the same two calls from the same taskbar route, logs that bounce on ~1 in 8
+		// opens. Deactivated is raised synchronously inside these calls, so _showing tells its handler the bounce is ours.
+		_showing = true;
+		try
+		{
+			if (!base.IsVisible) Show();
+			base.Left = _finalLeft;
+			// Robustly take the real foreground (AttachThreadInput + SetForegroundWindow), like the Start screen. Plain
+			// Activate() is subject to Windows' foreground-lock and INTERMITTENTLY leaves the flyout visible-but-inactive,
+			// so the FIRST click on a slider/tile only activates the window (gets eaten) and needs a second click.
+			WindowUtil.ForceForeground(this);
+		}
+		finally
+		{
+			_showing = false;
+		}
+		if (!base.IsVisible)
+		{
+			return;
+		}
+		if (_dismissing)
+		{
+			// Backstop: a dismiss still ran inside the show. If we ended up active it was a bounce: a new generation voids the
+			// stale close Completed and the 800ms fallback (both bound to the old one). If not, let that close finish.
+			if (!base.IsActive)
+			{
+				return;
+			}
+			_dismissing = false;
+			generation = ++_animationGeneration;
+			Logger.Log("Action Center: mid-show dismiss cancelled (activation bounce)");
+		}
+		Logger.Log($"Action Center: show via {(_screen == null ? "Win+A" : "taskbar")} active={base.IsActive} fg={ForegroundDescription()} took={System.Environment.TickCount64 - _shownTick}ms");
 		if (Motion.Mode == MotionMode.Off)
 		{
 			_slide.X = 0.0;
@@ -1021,9 +1049,10 @@ public sealed partial class ActionCenter
 		_dismissing = false;
 	}
 
-	private void DismissMetroPanel()
+	private void DismissMetroPanel(string cause = "action")
 	{
 		if (!base.IsVisible) return;
+		Logger.Log($"Action Center: hide cause = {cause}{(_dismissing ? " (forced, close already in flight)" : "")} at +{System.Environment.TickCount64 - _shownTick}ms after show");
 		if (_dismissing) { HardHide(); return; }   // a repeat dismiss while the close is mid-flight (or stuck) forces the hide
 		_dismissing = true;
 		int generation = ++_animationGeneration;
@@ -1052,7 +1081,11 @@ public sealed partial class ActionCenter
 		fallback.Tick += delegate
 		{
 			fallback.Stop();
-			if (generation == _animationGeneration && _dismissing) HardHide();
+			if (generation == _animationGeneration && _dismissing)
+			{
+				Logger.Log("Action Center: hide completed by fallback timer (close animation Completed was dropped)");
+				HardHide();
+			}
 		};
 		fallback.Start();
 	}

@@ -276,9 +276,11 @@ public sealed class WinKeyHook : IDisposable
 
 	public event Action? StartButtonClicked;
 
-	public event Action<int, int>? GlobalLeftDown;
+	// (x, y, time): time = MSLLHOOKSTRUCT.time, the input's own GetTickCount timestamp, so consumers can judge a press by when it
+	// happened rather than when the threadpool + dispatcher hop delivered it.
+	public event Action<int, int, int>? GlobalLeftDown;
 
-	public event Action<int, int>? GlobalRightDown;
+	public event Action<int, int, int>? GlobalRightDown;
 
 	// Left-button up + mouse move, surfaced ONLY while TrackMouseDrag is set (the charms edge-pull gesture arms it on
 	// an edge mouse-down and clears it on release), so there is zero per-move overhead when no gesture is in progress.
@@ -707,12 +709,13 @@ public sealed class WinKeyHook : IDisposable
 					}
 					return CallNextHookEx(_mouseHook, nCode, wParam, lParam);
 				}
-				Action<int, int> ev = ((wm == 513) ? GlobalLeftDown : GlobalRightDown);
+				Action<int, int, int> ev = ((wm == 513) ? GlobalLeftDown : GlobalRightDown);
 				if (ev != null)
 				{
+					int downTime = info.time;   // the input's own timestamp: immune to the hop delay below
 					ThreadPool.QueueUserWorkItem(delegate
 					{
-						ev(x, y);
+						ev(x, y, downTime);
 					});
 				}
 				if (wm == 513 && ReplaceStartButton && !StartOpen && HitsStartButton(x, y))

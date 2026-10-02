@@ -37,7 +37,7 @@ internal sealed class CharmsEdgeGesture : IDisposable
 		_hook.GlobalLeftUp += OnLeftUp;
 	}
 
-	private void OnLeftDown(int x, int y)
+	private void OnLeftDown(int x, int y, int downTime)
 	{
 		if (_active)
 		{

@@ -64,7 +64,7 @@ public sealed class TrayVm : INotifyPropertyChanged
 			if (_volumePct != value)
 			{
 				_volumePct = value;
-				OnCh("VolumePct"); OnCh("VolumeImage"); OnCh("VolumeImagePadded"); OnCh("VolumeImageVis"); OnCh("VolumeGlyphVis");
+				OnCh("VolumePct"); OnCh("VolumeImage"); OnCh("VolumeImagePadded"); OnCh("VolumeImageVis"); OnCh("VolumeGlyphVis"); OnCh("TrayVolumeImage");
 				OnCh("VolumeGlyph");
 				OnCh("VolumeTip");
 			}
@@ -82,7 +82,7 @@ public sealed class TrayVm : INotifyPropertyChanged
 			if (_muted != value)
 			{
 				_muted = value;
-				OnCh("Muted"); OnCh("VolumeImage"); OnCh("VolumeImagePadded"); OnCh("VolumeImageVis"); OnCh("VolumeGlyphVis");
+				OnCh("Muted"); OnCh("VolumeImage"); OnCh("VolumeImagePadded"); OnCh("VolumeImageVis"); OnCh("VolumeGlyphVis"); OnCh("TrayVolumeImage");
 				OnCh("VolumeGlyph");
 				OnCh("VolumeTip");
 			}
@@ -97,15 +97,32 @@ public sealed class TrayVm : INotifyPropertyChanged
 
 	private string VolumeSemantic => Muted ? "Volume.Muted" : ((_volumePct == 0) ? "Volume.Zero" : ((_volumePct < 34) ? "Volume.Low" : ((_volumePct < 67) ? "Volume.Medium" : "Volume.High")));
 
-	// Tray box sizes at the CURRENT taskbar size. Requesting the authentic asset at these makes Win81AssetResolver pick the
-	// native frame nearest the box (16/20/24) instead of the 32px master, so the icon renders near 1:1 = crisp (fixes the
-	// blurry net/volume tray icons at 100% DPI). Net icon box = round(GlyphSize*1.5); volume box = GlyphSize.
+	// Volume-FLYOUT speaker box (VolumeImage = the mute button in the flyout header): the native frame nearest GlyphSize.
 	private static int VolBox => (int)Math.Round(TaskbarMetrics.GlyphSize);
-	private static int NetBox => (int)Math.Round(TaskbarMetrics.GlyphSize * 1.5);
 
-	// TRAY icon: authentic SndVolSSO speaker at FULL size (no padding) so it isn't shrunk and the wave arcs stay legible in the
-	// small tray. null when the library is absent -> the MDL2 glyph (VolumeGlyph) shows instead. Resolver caches.
+	// TRAY frame in PHYSICAL pixels for this bar (TaskbarMetrics.TrayIconPx: 16/20/24 at 100% DPI for Small/Medium/Large),
+	// pushed by TaskbarWindow.ApplyTrayIconMetrics. The network and volume tray icons are requested at exactly this frame and
+	// drawn 1:1 on an ink-centred canvas (Win81AssetResolver.GetTrayAsset), so they share the Action Center flag's size and
+	// centre line. Replaces NetBox = round(GlyphSize*1.5), which fetched a 24/32 frame and shrank it into the GlyphSize box
+	// (the network icon read smaller and ~1.5px higher than the speaker).
+	private int _trayPx = 20;
+
+	public void SetTrayPx(int px)
+	{
+		if (px > 0)
+		{
+			_trayPx = px;
+			NotifySizeChanged();
+		}
+	}
+
+	// Authentic SndVolSSO speaker for the volume FLYOUT (square native frame, full size, no padding). null when the library
+	// is absent -> the MDL2 glyph (VolumeGlyph) shows instead (VolumeImageVis / VolumeGlyphVis). Resolver caches.
 	public ImageSource? VolumeImage => Win81AssetResolver.GetAsset(VolumeSemantic, VolBox);
+
+	// TRAY speaker: the same state as the 1:1 ink-centred tray canvas at _trayPx. Separate from VolumeImage so the flyout's
+	// square speaker is unaffected. Null exactly when VolumeImage is null (same manifest entry).
+	public ImageSource? TrayVolumeImage => Win81AssetResolver.GetTrayAsset(VolumeSemantic, _trayPx);
 
 	// FLYOUT header icon (large, ~44px). The authentic SndVolSSO raster tops out at a 32px native frame, so it upscaled
 	// SOFT in the big header ("θολό"). Use a crisp VECTOR of the Segoe MDL2 speaker instead — razor-sharp at any header
@@ -207,14 +224,25 @@ public sealed class TrayVm : INotifyPropertyChanged
 		}
 	}
 
-	public string BatteryGlyph
+	public string BatteryGlyph => G(BatteryCodepoint(_batteryPct, _charging, _saver));
+
+	// Segoe MDL2 Assets battery codepoint for level = round(pct/10) (0-10). The font's tables are NOT contiguous at the top:
+	// Battery0-9 = E850-E859 but Battery10 = E83F; BatteryCharging0-8 = E85A-E862, Charging9 = E83E, Charging10 = EA93;
+	// BatterySaver0-8 = E863-E86B, Saver9 = EA94, Saver10 = EA95. (The old base+level math drew the charging plug for a full
+	// battery, was off by one for charging and by three for saver, where levels 6-10 drew cell-signal bars.) Shared with
+	// the Charms clock so both surfaces use one table.
+	internal static int BatteryCodepoint(int pct, bool charging, bool saver)
 	{
-		get
+		int level = Math.Clamp((int)Math.Round((double)pct / 10.0), 0, 10);
+		if (charging)
 		{
-			int level = Math.Clamp((int)Math.Round((double)_batteryPct / 10.0), 0, 10);
-			int baseCp = (_charging ? 59483 : (_saver ? 59494 : 59472));
-			return G(baseCp + level);
+			return (level < 9) ? (0xE85A + level) : ((level == 9) ? 0xE83E : 0xEA93);
 		}
+		if (saver)
+		{
+			return (level < 9) ? (0xE863 + level) : ((level == 9) ? 0xEA94 : 0xEA95);
+		}
+		return (level < 10) ? (0xE850 + level) : 0xE83F;
 	}
 
 	public string BatteryTip
@@ -371,24 +399,28 @@ public sealed class TrayVm : INotifyPropertyChanged
 
 	private NetState81 _lastNet;
 
-	// Re-request the size-dependent tray icons when the taskbar size changes (Small/Normal/Large), so the resolver picks
-	// the native frame nearest the NEW box instead of leaving a frame chosen for the old size. Called from ApplyTaskbarSize.
+	// Re-request the size-dependent tray icons for the current tray frame (_trayPx: taskbar size or monitor DPI changed).
+	// Called from SetTrayPx. Before the first network read the vector placeholder is redrawn at the new frame too.
 	public void NotifySizeChanged()
 	{
 		if (_lastNet != null)
 		{
 			SetNetwork(_lastNet);
 		}
-		OnCh("VolumeImage"); OnCh("VolumeImagePadded");
+		else
+		{
+			NetImage = NetIcons81.Draw(NetworkIconKind.Wifi, NetworkIconState.Connected, 4, _trayPx);
+		}
+		OnCh("VolumeImage"); OnCh("VolumeImagePadded"); OnCh("TrayVolumeImage");
 	}
 
 	public void SetNetwork(NetState81 state)
 	{
 		_lastNet = state;
 		// Prefer the AUTHENTIC extracted Windows 8.1 network icon (pnidui.dll); fall back to the vector renderer if the
-		// asset library isn't present or lacks this state, so the tray icon can never break. Request at the tray box size
-		// (NetBox) so the resolver returns the near-1:1 native frame (crisp) rather than a downscaled 32px master.
-		NetImage = Win81AssetResolver.NetworkImage(state, NetBox) ?? NetIcons81.For(state, NetBox);
+		// asset library isn't present or lacks this state, so the tray icon can never break. Requested at the bar's tray
+		// frame (_trayPx) as the 1:1 ink-centred tray canvas, so it matches the speaker and flag in size and centre line.
+		NetImage = Win81AssetResolver.NetworkTrayImage(state, _trayPx) ?? NetIcons81.For(state, _trayPx);
 		string name = state.Kind switch
 		{
 			NetKind.Wifi => string.IsNullOrWhiteSpace(state.Label) ? "Wi-Fi" : state.Label,

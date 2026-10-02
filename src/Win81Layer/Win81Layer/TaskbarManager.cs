@@ -236,6 +236,18 @@ public sealed class TaskbarManager
 		}
 	}
 
+	public bool HitsActionCenterButton(int x, int y)
+	{
+		foreach (TaskbarWindow b in _bars)
+		{
+			if (b.HitsActionCenterButton(x, y))
+			{
+				return true;
+			}
+		}
+		return false;
+	}
+
 	public bool TryRouteGlobalFlyoutMouseWheel(int x, int y, int delta)
 	{
 		foreach (TaskbarWindow bar in Volatile.Read(ref _wheelRouteBars))

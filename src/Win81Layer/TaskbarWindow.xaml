@@ -46,9 +46,9 @@
           <Control.Template>
             <ControlTemplate TargetType="{x:Type Button}">
               <Grid>
-                <Border Name="Bd" Background="#00FFFFFF" Padding="6,0">
+                <Border Name="Bd" Background="#00FFFFFF" Padding="0" MinWidth="{DynamicResource TB.TraySlotWidth}" MinHeight="{DynamicResource TB.TraySlotWidth}">
                   <Grid>
-                    <Image Name="IconImg" Width="16" Height="16" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality" SnapsToDevicePixels="True" Source="{Binding Image}" />
+                    <Image Name="IconImg" Width="{DynamicResource TB.TrayAppIconSize}" Height="{DynamicResource TB.TrayAppIconSize}" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality" SnapsToDevicePixels="True" Source="{Binding Image}" />
                     <ContentPresenter Name="HostHolder" Content="{Binding HostElement}" Visibility="Collapsed" VerticalAlignment="Center" />
                   </Grid>
                 </Border>
@@ -463,6 +463,14 @@
           </Setter.Value>
         </Setter>
       </Style>
+      <!-- Tray status buttons (overflow chevron, network, volume, battery, Action Center): ONE slot shared with the app
+           icons (TB.TraySlotWidth = 1.5 x the native tray frame, set per bar by ApplyTrayIconMetrics). No padding: the 1:1
+           tray canvas or glyph is centred over the full bar height, so every icon shares the bar's centre line. -->
+      <Style x:Key="TrayIcon" TargetType="{x:Type Button}" BasedOn="{StaticResource TrayGlyph}">
+        <Setter Property="Padding" Value="0" />
+        <Setter Property="MinWidth" Value="{DynamicResource TB.TraySlotWidth}" />
+        <Setter Property="MinHeight" Value="{DynamicResource TB.TraySlotWidth}" />
+      </Style>
     </ResourceDictionary>
   </FrameworkElement.Resources>
   <Grid Name="RootLayout" Background="#00FFFFFF" AllowDrop="True" DragOver="OnPinDragOver" Drop="OnPinFileDrop">
@@ -557,7 +565,7 @@
         </Border>
       </Popup>
     </Grid>
-    <StackPanel Name="TrayRoot" Grid.Column="6" Orientation="Horizontal">
+    <StackPanel Name="TrayRoot" Grid.Column="6" Orientation="Horizontal" UseLayoutRounding="True" SnapsToDevicePixels="True">
       <!-- Classic taskbar "Toolbars": Address box + one shortcuts button per enabled folder, sitting next to the tray. -->
       <TextBox Name="AddressBox" Width="160" Margin="4,4,8,4" VerticalAlignment="Center" VerticalContentAlignment="Center"
                Visibility="Collapsed" Background="#22FFFFFF" Foreground="#FFFFFFFF" CaretBrush="#FFFFFFFF"
@@ -596,7 +604,7 @@
           <TextBlock Foreground="#DDFFFFFF" FontFamily="Segoe UI" FontSize="11" Margin="0,0,10,0" VerticalAlignment="Center" Text="{Binding RamText}" />
           <TextBlock Foreground="#AAFFFFFF" FontFamily="Segoe UI" FontSize="11" VerticalAlignment="Center" Text="{Binding NetText}" />
         </StackPanel>
-        <Button Name="OverflowChevron" Style="{StaticResource TrayGlyph}" Content="" ToolTip="Show hidden icons (drop an icon here to hide it)" Visibility="Collapsed" AllowDrop="True" Click="OnOverflowChevron" DragOver="OnTrayDragOver" Drop="OnTrayHideDrop" />
+        <Button Name="OverflowChevron" Style="{StaticResource TrayIcon}" Content="" ToolTip="Show hidden icons (drop an icon here to hide it)" Visibility="Collapsed" AllowDrop="True" Click="OnOverflowChevron" DragOver="OnTrayDragOver" Drop="OnTrayHideDrop" />
         <Popup Name="OverflowPopup" StaysOpen="True" AllowsTransparency="True" Placement="Top" PopupAnimation="Fade" PlacementTarget="{Binding ElementName=OverflowChevron}" Opened="OnBarPopupOpened">
           <Border Background="{DynamicResource TB.FlyoutBg}" BorderBrush="#40FFFFFF" BorderThickness="1" CornerRadius="0" Padding="6,4">
             <ItemsControl Name="OverflowHost" ItemTemplate="{StaticResource TrayIconTemplate}">
@@ -615,8 +623,8 @@
             </ItemsPanelTemplate>
           </ItemsControl.ItemsPanel>
         </ItemsControl>
-        <Button Name="NetButton" Style="{StaticResource TrayGlyph}" Padding="5,7" ToolTip="{Binding NetTip}" Click="OnNetworkClick" MouseRightButtonUp="OnNetworkRightClick">
-          <Image Width="{DynamicResource TB.Win81TrayIconSize}" Height="{DynamicResource TB.Win81TrayIconSize}" RenderOptions.BitmapScalingMode="HighQuality" SnapsToDevicePixels="True" Source="{Binding NetImage}" />
+        <Button Name="NetButton" Style="{StaticResource TrayIcon}" ToolTip="{Binding NetTip}" Click="OnNetworkClick" MouseRightButtonUp="OnNetworkRightClick">
+          <Image Width="{DynamicResource TB.Win81TrayIconSize}" RenderOptions.BitmapScalingMode="HighQuality" SnapsToDevicePixels="True" Source="{Binding NetImage}" />
         </Button>
         <Popup Name="NetPopup" Placement="Custom" StaysOpen="True" AllowsTransparency="True" PopupAnimation="None" PlacementTarget="{Binding ElementName=NetButton}" Opened="OnNetworkPopupOpened" Closed="OnNetworkPopupClosed">
           <Border Name="NetworkFlyoutRoot" Width="420" Height="500" Background="#00000000" BorderBrush="{DynamicResource TB.NetworkBorder}" BorderThickness="1" CornerRadius="0" SnapsToDevicePixels="True" UseLayoutRounding="True" TextOptions.TextFormattingMode="Display" TextOptions.TextRenderingMode="ClearType">
@@ -761,13 +769,13 @@
             </StackPanel>
           </Border>
         </Popup>
-        <Button Name="VolumeButton" Style="{StaticResource TrayGlyph}" ToolTip="{Binding VolumeTip}" Click="OnVolumeClick" MouseWheel="OnVolumeWheel" MouseRightButtonUp="OnVolumeRightClick">
+        <Button Name="VolumeButton" Style="{StaticResource TrayIcon}" ToolTip="{Binding VolumeTip}" Click="OnVolumeClick" MouseWheel="OnVolumeWheel" MouseRightButtonUp="OnVolumeRightClick">
           <Grid>
-            <Image Name="VolumeIcon81" Width="{DynamicResource TB.Win81TrayIconSize}" Height="{DynamicResource TB.Win81TrayIconSize}" RenderOptions.BitmapScalingMode="HighQuality" SnapsToDevicePixels="True" Source="{Binding VolumeImage}" Visibility="{Binding VolumeImageVis}" />
+            <Image Name="VolumeIcon81" Width="{DynamicResource TB.Win81TrayIconSize}" RenderOptions.BitmapScalingMode="HighQuality" SnapsToDevicePixels="True" Source="{Binding TrayVolumeImage}" Visibility="{Binding VolumeImageVis}" />
             <TextBlock Name="VolumeGlyphText" Text="{Binding VolumeGlyph}" Visibility="{Binding VolumeGlyphVis}" FontFamily="Segoe MDL2 Assets" FontSize="{DynamicResource TB.GlyphSize}" Foreground="#EEFFFFFF" HorizontalAlignment="Center" VerticalAlignment="Center" />
           </Grid>
         </Button>
-        <Button Name="BatteryButton" Style="{StaticResource TrayGlyph}" Content="{Binding BatteryGlyph}" ToolTip="{Binding BatteryTip}" Visibility="{Binding BatteryVisible, Converter={StaticResource B2V}}" Click="OnBatteryClick" MouseRightButtonUp="OnBatteryRightClick" />
+        <Button Name="BatteryButton" Style="{StaticResource TrayIcon}" Content="{Binding BatteryGlyph}" ToolTip="{Binding BatteryTip}" Visibility="{Binding BatteryVisible, Converter={StaticResource B2V}}" Click="OnBatteryClick" MouseRightButtonUp="OnBatteryRightClick" />
         <Popup Name="VolumePopup" Placement="Custom" StaysOpen="True" AllowsTransparency="True" PopupAnimation="None" PlacementTarget="{Binding ElementName=VolumeButton}" Opened="OnVolumePopupOpened" Closed="OnVolumePopupClosed">
           <Border Name="VolumeFlyoutRoot" Width="420" Height="540" Background="#00000000" BorderBrush="{DynamicResource TB.SoundBorder}" BorderThickness="1" SnapsToDevicePixels="True" UseLayoutRounding="True" TextOptions.TextFormattingMode="Display" TextOptions.TextRenderingMode="ClearType">
             <Border.RenderTransform>
@@ -1058,9 +1066,9 @@
           </Grid>
         </Border>
       </Popup>
-      <Button Name="ActionCenterBtn" Style="{StaticResource TrayGlyph}" ToolTip="Notifications" Click="OnActionCenter">
+      <Button Name="ActionCenterBtn" Style="{StaticResource TrayIcon}" ToolTip="Notifications" Click="OnActionCenter">
         <Grid>
-          <Image Name="NotifIcon81" Width="{DynamicResource TB.Win81TrayIconSize}" Height="{DynamicResource TB.Win81TrayIconSize}" RenderOptions.BitmapScalingMode="HighQuality" SnapsToDevicePixels="True" Source="pack://application:,,,/Assets/win81icons/notifications81.png" />
+          <Image Name="NotifIcon81" Width="{DynamicResource TB.Win81TrayIconSize}" RenderOptions.BitmapScalingMode="HighQuality" SnapsToDevicePixels="True" Source="pack://application:,,,/Assets/win81icons/notifications81.png" />
           <TextBlock Name="NotifGlyphNative" Visibility="Collapsed" Text="&#xE7E7;" FontFamily="Segoe MDL2 Assets" FontSize="{DynamicResource TB.GlyphSize}" Foreground="#EEFFFFFF" HorizontalAlignment="Center" VerticalAlignment="Center" />
         </Grid>
       </Button>

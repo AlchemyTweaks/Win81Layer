@@ -30,6 +30,10 @@ public sealed class TrayAppIcon : INotifyPropertyChanged
 	// of forwarding a tray message. Null for legacy Win8.1/Win10 icons (which use OwnerHwnd + CallbackMessage).
 	public string? ExecutablePath;
 
+	// Native-size icon as received (HICON / registry snapshot / fallback), before fitting to the tray box. Image is
+	// TrayIconFit.Fit(RawImage, app box px); kept so a taskbar size or DPI change can re-fit without a new HICON.
+	public ImageSource? RawImage;
+
 	private ImageSource? _image;
 
 	private UIElement? _hostElement;

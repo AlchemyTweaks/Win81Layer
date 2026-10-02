@@ -590,6 +590,16 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		System.Net.NetworkInformation.NetworkChange.NetworkAvailabilityChanged += OnNetAvail;
 		Microsoft.Win32.SystemEvents.PowerModeChanged += OnPowerModeChanged;                     // instant battery refresh on plug/unplug/suspend
 		TaskbarSizeChanged += ApplyTaskbarSize;
+		// Per-monitor DPI change without a bar rebuild (e.g. the first move onto a different-DPI monitor): re-pick the tray
+		// frames for the new physical pixel size. Lightweight on purpose: sets resources/images only, never PlaceOnScreen.
+		DpiChanged += delegate
+		{
+			Dispatcher.BeginInvoke(DispatcherPriority.Loaded, new Action(delegate
+			{
+				ApplyTrayIconMetrics();
+				PolishTrayIconRendering();
+			}));
+		};
 		TaskbarLayoutChanged += Refresh;
 		TaskbarAlignmentChanged += ApplyAlignment;
 		TaskbarButtonsChanged += ApplyBarButtons;
@@ -722,8 +732,9 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		NotifGlyphNative.Visibility = (win81Icons ? Visibility.Collapsed : Visibility.Visible);
 		if (win81Icons)
 		{
-			// Prefer the AUTHENTIC Win8.1 Action Center flag (ActionCenter.dll); keep the recreated PNG as fallback.
-			System.Windows.Media.ImageSource notif = Win81AssetResolver.GetAsset("Notifications.Flag", 20);
+			// Prefer the AUTHENTIC Win8.1 Action Center flag (ActionCenter.dll) at this bar's tray frame (1:1, ink-centred
+			// canvas, same as network/volume); keep the recreated PNG as fallback. ApplyTrayIconMetrics refreshes it on resize.
+			System.Windows.Media.ImageSource notif = Win81AssetResolver.GetTrayAsset("Notifications.Flag", _trayPx);
 			if (notif != null) { NotifIcon81.Source = notif; }
 		}
 	}
@@ -831,27 +842,63 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		base.Resources["TB.BarHeight"] = TaskbarMetrics.BarHeight;
 		base.Resources["TB.IconSize"] = TaskbarMetrics.IconSize;
 		base.Resources["TB.GlyphSize"] = TaskbarMetrics.GlyphSize;
-		// The tray NETWORK icon is an Image (a NetIcons81 vector glyph), not a font glyph like the volume/battery
-		// buttons. Size it so its visible mark matches the MDL2 tray glyphs at every taskbar size: the network
-		// glyph fills ~19/32 of its image, so image = GlyphSize * 1.5 makes the ethernet/wifi mark the same height
-		// as the volume speaker glyph. ROUND to whole pixels — a fractional box (13*1.5=19.5, 15*1.5=22.5) forces the
-		// bitmap to render at a sub-pixel size, which is a primary source of the "blurry tray icon" the user reported.
-		base.Resources["TB.NetIconSize"] = Math.Round(TaskbarMetrics.GlyphSize * 1.5);
-		// Authentic Win8.1 tray-status icons (network/volume/notifications) are drawn near-full-bleed, so at the 1.5x
-		// NetIconSize box they read oversized vs the recreated predecessors. Render them at glyph scale so they match the
-		// other tray glyphs / their predecessors. RULE: all authentic tray icons use TB.Win81TrayIconSize, not NetIconSize.
-		base.Resources["TB.Win81TrayIconSize"] = TaskbarMetrics.GlyphSize;
 		base.Resources["TB.StartGlyphSize"] = TaskbarMetrics.StartGlyphSize;
 		if (PresentationSource.FromVisual(this) != null)
 		{
 			PlaceOnScreen();
 		}
-		// Re-request the size-dependent tray assets so the resolver picks the native frame nearest the NEW box (crisp,
-		// near 1:1) instead of keeping a frame chosen for the old size.
-		_tray?.NotifySizeChanged();
+		// One tray geometry for the new size: system icons re-requested at the matching native frame (1:1), app icons
+		// re-fitted, Action Center flag refreshed, slots resized. See ApplyTrayIconMetrics.
+		ApplyTrayIconMetrics();
 		// A size change re-lays-out the tray; re-assert crisp rendering (pixel snap + HighQuality scaling) once the new
 		// containers exist so icons stay sharp at Small / Normal / Large.
 		Dispatcher.BeginInvoke(DispatcherPriority.Loaded, new Action(PolishTrayIconRendering));
+	}
+
+	// Physical tray frame (TaskbarMetrics.TrayIconPx) and app-icon box currently applied to this bar.
+	private int _trayPx = 20;
+
+	private int _trayAppPx;
+
+	// ONE tray geometry for every tray icon, per bar and per monitor DPI (user: all tray icons the same height and size,
+	// scaled with the taskbar). The network / volume / Action Center flag images use the authentic native frame whose size
+	// equals the box in PHYSICAL pixels, drawn 1:1 on an ink-centred canvas (Win81AssetResolver.GetTrayAsset; the Image
+	// sets only Width, its height follows the canvas). App icons are resampled once to the matching visible size
+	// (TrayIconFit) and drawn 1:1. Every tray button and app icon shares one slot (TB.TraySlotWidth = pitch + hover box).
+	// Idempotent; run from ApplyTaskbarSize (ctor, size change, ReapplyAll) and on DpiChanged.
+	private void ApplyTrayIconMetrics()
+	{
+		double s = 1.0;
+		try
+		{
+			s = Math.Max(0.5, VisualTreeHelper.GetDpi(this).DpiScaleY);
+		}
+		catch
+		{
+		}
+		int px = TaskbarMetrics.TrayIconPx(s);
+		int appPx = TaskbarMetrics.TrayAppIconPx(px);
+		base.Resources["TB.Win81TrayIconSize"] = px / s;
+		base.Resources["TB.TrayAppIconSize"] = appPx / s;
+		base.Resources["TB.TraySlotWidth"] = TaskbarMetrics.TraySlotPx(px) / s;
+		_trayPx = px;
+		_tray?.SetTrayPx(px);
+		System.Windows.Media.ImageSource flag = Win81AssetResolver.GetTrayAsset("Notifications.Flag", px);
+		if (flag != null && NotifIcon81 != null)
+		{
+			NotifIcon81.Source = flag;
+		}
+		if (appPx != _trayAppPx)
+		{
+			_trayAppPx = appPx;
+			foreach (TrayAppIcon vm in _appIcons.Concat(_overflowIcons))
+			{
+				if (vm.RawImage != null)
+				{
+					vm.Image = TrayIconFit.Fit(vm.RawImage, appPx);
+				}
+			}
+		}
 	}
 
 	// Tray icons were rendering soft ("θολά"): the centered taskbar places the tray strip at fractional device-pixel
@@ -4528,8 +4575,24 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 			{
 				vm.HIcon = info.HIcon;
 				string trayName = (!string.IsNullOrEmpty(info.Tooltip)) ? info.Tooltip : ((!string.IsNullOrEmpty(info.ExecutablePath)) ? System.IO.Path.GetFileNameWithoutExtension(info.ExecutablePath) : "App");
-				vm.Image = IconResolver.EnsureNonBlank(info.Image ?? IconToSource(info.HIcon, info.OwnerHwnd), trayName);
-				if (audioSwitcher) { System.Windows.Media.ImageSource sw = AudioSwitchImage(); if (sw != null) { vm.Image = sw; } }
+				vm.RawImage = IconResolver.EnsureNonBlank(info.Image ?? IconToSource(info.HIcon, info.OwnerHwnd), trayName);
+				if (audioSwitcher) { System.Windows.Media.ImageSource sw = AudioSwitchImage(); if (sw != null) { vm.RawImage = sw; } }
+				if (ownerPid == _ownPid)
+				{
+					// The launcher's OWN tray flag is vector art: render it large and let the fit downscale it, instead of
+					// shrinking its 32px HICON (crisper at every tray size; re-run whenever its HICON changes, e.g. accent).
+					try
+					{
+						using System.Drawing.Icon own = TrayIconFactory.Win81Flag(128, TrayMetro.Accent());
+						vm.RawImage = Imaging.CreateBitmapSourceFromHIcon(own.Handle, Int32Rect.Empty, BitmapSizeOptions.FromEmptyOptions());
+					}
+					catch
+					{
+					}
+				}
+				// Resample ONCE to this bar's app-icon box (exact physical px, drawn 1:1) so app icons match the system tray
+				// icons' visible size at Small / Medium / Large; ApplyTrayIconMetrics re-fits from RawImage on a size change.
+				vm.Image = TrayIconFit.Fit(vm.RawImage, _trayAppPx);
 			}
 			if (!over)
 			{
@@ -5290,6 +5353,12 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		}
 		FlyoutOutside(OverflowPopup, OverflowChevron, sx, sy);
 		FlyoutOutside(TaskOverflowPopup, TaskOverflowButton, sx, sy);
+	}
+
+	// Light-dismiss exclusion for the Action Center: a press on this bar's own Action Center button belongs to Toggle.
+	internal bool HitsActionCenterButton(int sx, int sy)
+	{
+		return InScreenRect(ActionCenterBtn, sx, sy);
 	}
 
 	private static void FlyoutOutside(Popup popup, FrameworkElement icon, int sx, int sy)

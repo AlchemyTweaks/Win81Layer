@@ -74,9 +74,7 @@ public partial class CharmsClock : Window, IComponentConnector
 			return;
 		}
 		BatteryPanel.Visibility = Visibility.Visible;
-		int level = Math.Clamp((int)Math.Round((double)p.percent / 10.0), 0, 10);
-		int baseCp = (p.charging ? 59483 : (p.saver ? 59494 : 59472));
-		BatteryImage.Source = GlyphImage81.Get("Segoe MDL2 Assets", baseCp + level, Colors.White, 0.92);
+		BatteryImage.Source = GlyphImage81.Get("Segoe MDL2 Assets", TrayVm.BatteryCodepoint(p.percent, p.charging, p.saver), Colors.White, 0.92);
 		BatteryText.Text = p.percent + "%";
 	}
 

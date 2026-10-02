@@ -64,6 +64,10 @@ public sealed partial class ActionCenter : Window
 
 	private bool _dismissing;
 
+	// True only while ShowMetroPanel is inside its own Show()+ForceForeground (see there). A Deactivated raised in that window is
+	// our own foreground hand-over bouncing, never the user leaving the panel.
+	private bool _showing;
+
 	// Monotonic ms of the last ShowMetroPanel. The light-dismiss hook marshals the OPENING click's mouse-DOWN through
 	// the threadpool + dispatcher; on a cold/idle threadpool (first open, or after long idle) that hop can deliver the
 	// down-event AFTER the panel is visible, so the click that OPENED the panel reads as an outside click and closes it
@@ -87,12 +91,35 @@ public sealed partial class ActionCenter : Window
 	[DllImport("user32.dll", CharSet = CharSet.Auto)]
 	private static extern nint SendMessageTimeout(nint hWnd, uint Msg, nint wParam, string lParam, uint fuFlags, uint uTimeout, out nint lpdwResult);
 
+	[DllImport("user32.dll")]
+	private static extern int GetMessageTime();
+
+	// This mouse's switch chatter turns one press into two Clicks 33-53ms apart (log: identical taskbar Click pairs, then a clean
+	// gap to >=150ms). Unguarded, the twin closes the panel its first half just opened (Motion Off: re-opens one just closed).
+	// Compared on the presses' own message times, so a UI-thread stall that delivers both back to back can neither fake nor hide
+	// the gap. Same idea as App.ToggleStart's debounce, but sized to the measured chatter so a deliberate second press closes.
+	private const int DuplicatePressMs = 120;
+
+	private static int _lastTogglePressTime;
+
+	private static bool _hasToggled;
+
 	public static void Toggle(Screen? screen = null, string edge = "Bottom")
 	{
-		ActionCenter instance = _instance;
-		if (instance != null && instance.IsVisible)
+		// Called synchronously from the taskbar button's Click this is the WM_LBUTTONUP's own time; from Win+A, the dispatch time.
+		int pressTime = GetMessageTime();
+		int sinceLast = unchecked(pressTime - _lastTogglePressTime);
+		if (_hasToggled && sinceLast >= 0 && sinceLast < DuplicatePressMs)
 		{
-			_instance.Dismiss();
+			Logger.Log($"Action Center: toggle ignored (duplicate press {sinceLast}ms after the previous one)");
+			return;
+		}
+		_hasToggled = true;
+		_lastTogglePressTime = pressTime;
+		ActionCenter instance = _instance;
+		if (instance != null && instance.IsVisible && !instance._dismissing)   // mid-close counts as closed: re-open it
+		{
+			_instance.Dismiss("toggle");
 			return;
 		}
 		ActionCenter ac = _instance ?? (_instance = new ActionCenter());
@@ -127,10 +154,26 @@ public sealed partial class ActionCenter : Window
 		base.Title = "Action Center";
 		base.Deactivated += delegate
 		{
-			if (!_menuOpen)   // keep the flyout up while its Power sub-menu is open
+			if (_menuOpen)   // keep the flyout up while its Power sub-menu is open
 			{
-				Dismiss();
+				return;
 			}
+			if (_showing)
+			{
+				// Self-inflicted bounce inside our own Show()+ForceForeground (see ShowMetroPanel). Dismissing here latched
+				// _dismissing mid-show and the 800ms fallback then hid the panel that had just opened.
+				Logger.Log("Action Center: deactivate ignored (show in progress)");
+				return;
+			}
+			// Decide on the next dispatcher turn, after any re-activation already sent to us has been handled: a bounce that
+			// leaves us active again is ignored, a real switch to another window still light-dismisses.
+			Dispatcher.BeginInvoke(DispatcherPriority.Input, (Action)delegate
+			{
+				if (IsVisible && !IsActive && !_menuOpen && !_dismissing)
+				{
+					Dismiss("Deactivated fg=" + ForegroundDescription());
+				}
+			});
 		};
 		base.PreviewKeyDown += delegate(object _, System.Windows.Input.KeyEventArgs e)
 		{
@@ -138,7 +181,7 @@ public sealed partial class ActionCenter : Window
 			//IL_0009: Invalid comparison between Unknown and I4
 			if ((int)e.Key == 13 || (int)e.Key == 27)   // Enter or Escape closes the panel
 			{
-				Dismiss();
+				Dismiss("key " + e.Key);
 			}
 		};
 		base.SourceInitialized += delegate
@@ -153,9 +196,44 @@ public sealed partial class ActionCenter : Window
 		ShowMetroPanel();
 	}
 
-	private void Dismiss()
+	private void Dismiss(string cause = "action")
 	{
-		DismissMetroPanel();
+		DismissMetroPanel(cause);
+	}
+
+	[DllImport("user32.dll")]
+	private static extern nint GetForegroundWindow();
+
+	[DllImport("user32.dll")]
+	private static extern uint GetWindowThreadProcessId(nint hWnd, out uint pid);
+
+	[DllImport("user32.dll", CharSet = CharSet.Unicode)]
+	private static extern int GetClassName(nint hWnd, System.Text.StringBuilder className, int maxCount);
+
+	// "WindowClass/process" of the current foreground window, for the show/hide log lines (runs only on show and dismiss).
+	private static string ForegroundDescription()
+	{
+		try
+		{
+			nint fg = GetForegroundWindow();
+			if (fg == IntPtr.Zero)
+			{
+				return "none";
+			}
+			System.Text.StringBuilder cls = new System.Text.StringBuilder(64);
+			GetClassName(fg, cls, cls.Capacity);
+			GetWindowThreadProcessId(fg, out uint pid);
+			if (pid == (uint)Environment.ProcessId)
+			{
+				return cls + "/self";
+			}
+			using System.Diagnostics.Process proc = System.Diagnostics.Process.GetProcessById((int)pid);
+			return cls + "/" + proc.ProcessName;
+		}
+		catch
+		{
+			return "?";
+		}
 	}
 
 	[System.Runtime.InteropServices.DllImport("user32.dll")]
@@ -254,7 +332,14 @@ public sealed partial class ActionCenter : Window
 	// Light dismiss: any click OUTSIDE the open panel closes it (x,y are physical pixels from the global mouse hook).
 	// This is the reliable path — Deactivated alone doesn't fire consistently for clicks on the shell desktop. Runs on the
 	// UI thread (App marshals the hook callback). A click inside the panel, or while the Power sub-menu is up, is ignored.
-	internal static void CloseOnOutsideClick(int x, int y)
+	// Set once by App: true when a physical screen point lies on ANY taskbar's Action Center button. Presses on that button
+	// belong to Toggle (its mouse-up Click), never to light-dismiss: otherwise the opening press, delivered late through the
+	// threadpool + dispatcher, reads as an outside click and closes the panel it just opened - and, with Motion Off or a long
+	// press, a closing press hides on mouse-down and Toggle then re-opens on mouse-up.
+	internal static Func<int, int, bool>? IsToggleButtonAt;
+
+	// downTime = the hook event's own timestamp (MSLLHOOKSTRUCT.time, GetTickCount clock), not when it reached this thread.
+	internal static void CloseOnOutsideClick(int x, int y, int downTime, bool leftButton)
 	{
 		ActionCenter ac = _instance;
 		// NOTE: intentionally does NOT bail when ac._dismissing - a second outside click while a close is
@@ -263,9 +348,19 @@ public sealed partial class ActionCenter : Window
 		{
 			return;
 		}
+		// A press that physically happened before this show can never dismiss it, however late the hop delivered it.
+		// (int)TickCount64 is GetTickCount, the same clock as the hook timestamp; unchecked handles the 49.7-day wrap.
+		if (unchecked(downTime - (int)ac._shownTick) <= 0)
+		{
+			return;
+		}
 		if (System.Environment.TickCount64 - ac._shownTick < 350L)
 		{
-			return;   // ignore the (threadpool-delayed) mouse-DOWN that just opened the panel on a cold/idle pool
+			return;   // backstop grace from 2026-10-01; the timestamp check above is the deterministic guard
+		}
+		if (leftButton && IsToggleButtonAt != null && IsToggleButtonAt(x, y))   // only a LEFT press becomes Toggle's Click
+		{
+			return;   // the Action Center button itself: Toggle owns it
 		}
 		try
 		{
@@ -274,7 +369,7 @@ public sealed partial class ActionCenter : Window
 			{
 				return;   // click landed inside the panel — keep it open
 			}
-			ac.Dismiss();
+			ac.Dismiss($"outside-click at ({x},{y}) lag={unchecked(System.Environment.TickCount - downTime)}ms");
 		}
 		catch (Exception ex)
 		{
@@ -925,7 +1020,7 @@ public sealed partial class ActionCenter : Window
 		{
 			_menuOpen = false;
 			base.Topmost = true;
-			Dismiss();
+			Dismiss("power-menu closed");
 		};
 		_menuOpen = true;
 		base.Topmost = false;   // let the menu popup render above this (otherwise a Topmost window can cover it)
