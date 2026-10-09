@@ -585,6 +585,25 @@ public partial class App : System.Windows.Application
 		}
 	}
 
+	// Repaints everything that follows the seasonal look right away. Other surfaces (Action Center, Charms, toasts,
+	// OSD, Snap, the switcher, thumbnails, PC Settings) read the new accent the next time they open.
+	public void ApplySeasonalLive()
+	{
+		try
+		{
+			SeasonalTheme.InvalidateCache();
+			TaskbarTheme.Invalidate();
+			_startScreen?.RefreshBackground();
+			TaskbarWindow.RaiseTaskbarColorChanged(invalidateWallpaper: true);
+			Win81Window.RefreshAllAccents();
+			Logger.Log("Seasonal: live refresh applied (active=" + SettingsStore.FastSnapshot.SeasonalActive + ")");
+		}
+		catch (Exception ex)
+		{
+			Logger.Log("Seasonal: live refresh failed: " + ex.Message);
+		}
+	}
+
 	public void ApplyTileDensity(double scale)
 	{
 		try { TileMetrics.Scale = scale; _startScreen?.SetTileDensity(scale); } catch { }
@@ -1325,6 +1344,15 @@ public partial class App : System.Windows.Application
 			SwitcherEdgeDiagnostics.Begin(this);
 			return;
 		}
+		if (e.Args.Contains("--seasonaltest"))
+		{
+			// Offscreen QA of the seasonal presets. Read-only: settings/state writes throw and the desktop wallpaper
+			// setters refuse to run, so it never reaches the startup path, the tray, the hooks or ResumeAll.
+			SettingsStore.ReadOnlyDiagnostics = true;
+			PersistenceDiagnostics.SuppressAutomaticPostBootVerification = true;
+			SeasonalDiagnostics.Begin(this, e.Args);
+			return;
+		}
 		// A shell started BY the supervisor is "managed" Ã¢â‚¬â€ it must NOT spawn its own watchdog (the supervisor is the
 		// single monitor); double-monitoring would fight over kill/relaunch.
 		_managed = e.Args.Contains("--managed");
@@ -1389,7 +1417,8 @@ public partial class App : System.Windows.Application
 		bool trayIconTest = e.Args.Contains("--trayicontest");
 		bool weatherTileTest = e.Args.Contains("--weathertiletest") || e.Args.Contains("--metrotiletest");
 		bool pinDropTest = e.Args.Contains("--pindroptest");
-		bool persistenceCli = persistenceSelfTest || persistenceMigrate || persistenceVerify || persistenceExpect || ensureLogonTask || appLaunchTest || restoreNativeShell || shellProfileSelfTest || shellProfileStatus || shellProfileApply || shellProfileRestorePrevious || taskbarLayoutSelfTest;
+		bool seasonalRestore = e.Args.Contains("--seasonal-restore");
+		bool persistenceCli = persistenceSelfTest || persistenceMigrate || persistenceVerify || persistenceExpect || ensureLogonTask || appLaunchTest || restoreNativeShell || shellProfileSelfTest || shellProfileStatus || shellProfileApply || shellProfileRestorePrevious || taskbarLayoutSelfTest || seasonalRestore;
 		// Safety net: unconditionally resume any native host a PRIOR unclean exit may have left suspended (no-op if none).
 		// Skip for mutex-free diagnostic CLIs: they must not resume hosts intentionally suspended by the live shell.
 		// The isolated taskbar runtime test replaces the live shell, so it must recover stale suspension first.
@@ -1533,6 +1562,17 @@ public partial class App : System.Windows.Application
 				else if (persistenceSelfTest)
 				{
 					PersistenceDiagnostics.RunSelfTest();
+				}
+				else if (seasonalRestore)
+				{
+					// Rescue path: restore the normal (non-seasonal) look, then ask the running shell to repaint.
+					SeasonalResult normal = SeasonalTheme.ApplyBlocking(SeasonalTheme.Normal);
+					ShellProfileChangeSignal.Set();
+					if (!normal.Success)
+					{
+						throw new InvalidOperationException(normal.Message);
+					}
+					Logger.Log("Seasonal: normal look restored by maintenance command: " + normal.Message);
 				}
 				else if (restoreNativeShell)
 				{
@@ -2680,6 +2720,8 @@ public partial class App : System.Windows.Application
 		// A prepared profile transaction means the prior process stopped between prepare and commit. Restore its
 		// source slot before any taskbar/native-host decision is made, then continue from the reconciled settings.
 		try { ShellProfileManager.InitializeAndRecover(); } catch (Exception exRec) { Logger.Log("Profile InitializeAndRecover failed (continuing with current settings): " + exRec.Message); }
+		// Seasonal theme: load its restore point; an interrupted change is finished on a worker once Explorer is up.
+		try { SeasonalTheme.InitializeAndRecover(this); } catch (Exception exSeason) { Logger.Log("Seasonal InitializeAndRecover failed (continuing): " + exSeason.Message); }
 		settings = SettingsStore.Load();
 		if (_isPrimary)
 		{
@@ -3099,6 +3141,7 @@ public partial class App : System.Windows.Application
 				if (ShellProfileChangeSignal.TryConsume())
 				{
 					AppSettings refreshed = SettingsStore.LoadForced();   // external profile change must bypass the Load() TTL
+					SeasonalTheme.InvalidateCache();   // a maintenance command may also have changed the seasonal restore point
 					DesktopComposition.ApplyPersistedModeTransition(refreshed.DesktopCompositionMode);
 					ApplyShellProfileLive(refreshed);
 					Logger.Log("Shell profile refresh signal consumed by the managed shell.");
@@ -4008,6 +4051,55 @@ public partial class App : System.Windows.Application
 			}
 		};
 		personalization.DropDownItems.Add(wallpaperItem);
+		ToolStripMenuItem seasonalMenu = new ToolStripMenuItem("Seasonal theme");
+		foreach ((string seasonId, string seasonLabel) in new (string, string)[3] { (SeasonalTheme.Normal, "Normal"), (SeasonalTheme.Halloween, "Halloween"), (SeasonalTheme.Christmas, "Christmas") })
+		{
+			string sid = seasonId;
+			ToolStripMenuItem seasonItem = new ToolStripMenuItem(seasonLabel)
+			{
+				Tag = sid
+			};
+			seasonItem.Click += async delegate
+			{
+				seasonalMenu.Enabled = false;
+				try
+				{
+					SeasonalResult r = await SeasonalTheme.ApplyAsync(sid);
+					ApplySeasonalLive();
+					if (!r.Success)
+					{
+						ToastService.Show(null, "Seasonal theme", "Could not apply", r.Message);
+					}
+				}
+				catch (Exception exSeason)
+				{
+					Logger.Log("Seasonal: tray change failed: " + exSeason.Message);
+				}
+				finally
+				{
+					seasonalMenu.Enabled = true;
+				}
+			};
+			seasonalMenu.DropDownItems.Add(seasonItem);
+		}
+		seasonalMenu.DropDownOpening += delegate
+		{
+			string active = SeasonalTheme.NormalizeId(SettingsStore.FastSnapshot.SeasonalActive);
+			string want = (active.Length == 0) ? SeasonalTheme.Normal : active;
+			foreach (ToolStripItem item in seasonalMenu.DropDownItems)
+			{
+				if (item is ToolStripMenuItem mi)
+				{
+					mi.Checked = string.Equals(mi.Tag as string, want, StringComparison.Ordinal);
+				}
+			}
+		};
+		personalization.DropDownItems.Insert(0, seasonalMenu);
+		personalization.DropDownOpening += delegate
+		{
+			// The Win8.1 wallpaper snapshot would capture the seasonal picture as the user's own.
+			wallpaperItem.Enabled = WallpaperModule.AssetAvailable && !SeasonalTheme.OwnsDesktopWallpaper;
+		};
 		ToolStripMenuItem cursorsInfo = new ToolStripMenuItem("Cursors: extracted (module on request)")
 		{
 			Enabled = false

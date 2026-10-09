@@ -1422,6 +1422,229 @@ public sealed class PcSettingsWindow : Window
 		return wp;
 	}
 
+	private StackPanel? _seasonTiles;
+
+	private TextBlock? _seasonStatus;
+
+	private FrameworkElement? _seasonWallpaperRow;
+
+	private bool _seasonBusyUi;
+
+	// Seasonal theme: three tiles (Normal / Halloween / Christmas) that apply at once, a status line that always says
+	// what Normal restores, and the two seasonal preferences.
+	private void BuildSeasonalSection(StackPanel panel, AppSettings s)
+	{
+		panel.Children.Add(SubHeader("Seasonal theme"));
+		panel.Children.Add(new TextBlock
+		{
+			Text = "Give the shell a seasonal look. Choose Normal at any time to get back exactly what you had before \u2014 your Start background, accent colour and desktop wallpaper.",
+			Foreground = Text2,
+			FontFamily = new System.Windows.Media.FontFamily("Segoe UI"),
+			FontSize = 13.0,
+			TextWrapping = TextWrapping.Wrap,
+			MaxWidth = 760.0,
+			HorizontalAlignment = System.Windows.HorizontalAlignment.Left,
+			Margin = new Thickness(0.0, 2.0, 0.0, 12.0)
+		});
+		_seasonTiles = new StackPanel
+		{
+			Orientation = System.Windows.Controls.Orientation.Horizontal
+		};
+		panel.Children.Add(_seasonTiles);
+		_seasonStatus = new TextBlock
+		{
+			Foreground = Text2,
+			FontFamily = new System.Windows.Media.FontFamily("Segoe UI"),
+			FontSize = 12.5,
+			TextWrapping = TextWrapping.Wrap,
+			MaxWidth = 760.0,
+			HorizontalAlignment = System.Windows.HorizontalAlignment.Left,
+			Margin = new Thickness(0.0, 10.0, 0.0, 4.0),
+			Text = SeasonalTheme.StatusText(SeasonalTheme.Describe())
+		};
+		panel.Children.Add(_seasonStatus);
+		_seasonWallpaperRow = ToggleRow("Seasonal desktop wallpaper", "Also set a matching desktop wallpaper while a seasonal theme is on. Your own wallpaper comes back with Normal.", s.SeasonalWallpaper, delegate(bool on)
+		{
+			SettingsStore.Update(delegate(AppSettings x) { x.SeasonalWallpaper = on; });
+			string active = SeasonalTheme.NormalizeId(SettingsStore.FastSnapshot.SeasonalActive);
+			if (active.Length > 0)
+			{
+				// ON captures and sets the wallpaper; OFF restores the user's own and drops it from the restore point.
+				ApplySeason(active);
+			}
+		});
+		RebuildSeasonTiles();
+		panel.Children.Add(_seasonWallpaperRow);
+		panel.Children.Add(ToggleRow("Seasonal effects on Start", "Falling snow or drifting bats behind the Start tiles. Runs only while Start is open and follows the Motion setting.", s.SeasonalAmbient, delegate(bool on)
+		{
+			SettingsStore.Update(delegate(AppSettings x) { x.SeasonalAmbient = on; });
+			HostApp?.ApplySeasonalLive();
+		}));
+	}
+
+	private void RebuildSeasonTiles()
+	{
+		if (_seasonTiles == null)
+		{
+			return;
+		}
+		_seasonTiles.Children.Clear();
+		string active = SeasonalTheme.NormalizeId(SettingsStore.FastSnapshot.SeasonalActive);
+		foreach ((string id, string label) in new (string, string)[3] { (SeasonalTheme.Normal, "Normal"), (SeasonalTheme.Halloween, "Halloween"), (SeasonalTheme.Christmas, "Christmas") })
+		{
+			bool selected = (id == SeasonalTheme.Normal) ? active.Length == 0 : active == id;
+			_seasonTiles.Children.Add(SeasonTile(id, label, selected));
+		}
+		_seasonTiles.IsHitTestVisible = !_seasonBusyUi;
+		_seasonTiles.Opacity = _seasonBusyUi ? 0.6 : 1.0;
+		if (_seasonWallpaperRow != null)
+		{
+			// The running change has already read this preference; it can be changed again once it finishes.
+			_seasonWallpaperRow.IsEnabled = !_seasonBusyUi;
+		}
+	}
+
+	private Border SeasonTile(string id, string label, bool selected)
+	{
+		SeasonPreset? preset = SeasonalTheme.Find(id);
+		Grid g = new Grid
+		{
+			Width = 176.0,
+			Height = 116.0,
+			Cursor = System.Windows.Input.Cursors.Hand,
+			ClipToBounds = true
+		};
+		if (preset == null)
+		{
+			// Normal previews what it brings back (the restore point while a season is on), dimmed under the undo glyph.
+			g.Background = SeasonalTheme.NormalPreviewBrush(0.5);
+			g.Children.Add(new Border
+			{
+				Background = new SolidColorBrush(System.Windows.Media.Color.FromArgb(90, 0, 0, 0))
+			});
+			g.Children.Add(new TextBlock
+			{
+				Text = "\uE7A7",
+				FontFamily = new System.Windows.Media.FontFamily("Segoe MDL2 Assets"),
+				FontSize = 34.0,
+				Foreground = System.Windows.Media.Brushes.White,
+				HorizontalAlignment = System.Windows.HorizontalAlignment.Center,
+				VerticalAlignment = VerticalAlignment.Center,
+				Margin = new Thickness(0.0, 0.0, 0.0, 22.0),
+				Effect = new System.Windows.Media.Effects.DropShadowEffect { BlurRadius = 6.0, ShadowDepth = 0.0, Opacity = 0.8 }
+			});
+		}
+		else
+		{
+			// The season's own desktop scene, drawn small; it reads far better than a crop of the Start pattern.
+			g.Background = SeasonalArt.PreviewBrush(preset.Art);
+		}
+		Border cap = new Border
+		{
+			Height = 30.0,
+			VerticalAlignment = VerticalAlignment.Bottom,
+			Background = selected ? new SolidColorBrush(SettingsPane.AccentToneColor(0.5)) : new SolidColorBrush(System.Windows.Media.Color.FromArgb(204, 0, 0, 0))
+		};
+		if (selected)
+		{
+			g.Children.Add(new TextBlock
+			{
+				Text = "",
+				FontFamily = new System.Windows.Media.FontFamily("Segoe MDL2 Assets"),
+				FontSize = 16.0,
+				Foreground = System.Windows.Media.Brushes.White,
+				HorizontalAlignment = System.Windows.HorizontalAlignment.Right,
+				VerticalAlignment = VerticalAlignment.Top,
+				Margin = new Thickness(0.0, 7.0, 8.0, 0.0),
+				Effect = new System.Windows.Media.Effects.DropShadowEffect { BlurRadius = 4.0, ShadowDepth = 0.0, Opacity = 0.9 }
+			});
+		}
+		cap.Child = new TextBlock
+		{
+			Text = label,
+			Foreground = System.Windows.Media.Brushes.White,
+			FontFamily = new System.Windows.Media.FontFamily("Segoe UI"),
+			FontSize = 12.0,
+			TextTrimming = TextTrimming.CharacterEllipsis,
+			VerticalAlignment = VerticalAlignment.Center,
+			HorizontalAlignment = System.Windows.HorizontalAlignment.Center
+		};
+		g.Children.Add(cap);
+		Border tile = new Border
+		{
+			Child = g,
+			Margin = new Thickness(0.0, 0.0, 10.0, 0.0),
+			// constant thickness, so selecting a tile never shifts its content
+			BorderThickness = new Thickness(2.0),
+			BorderBrush = selected ? new SolidColorBrush(SettingsPane.AccentToneColor(0.5)) : System.Windows.Media.Brushes.Transparent,
+			ToolTip = (preset == null) ? "Back to your own look" : label
+		};
+		System.Windows.Automation.AutomationProperties.SetName(tile, "Seasonal theme: " + label);
+		tile.MouseLeftButtonUp += delegate
+		{
+			ApplySeason(id);
+		};
+		return tile;
+	}
+
+	// Applies at once: every step is reversible, so there is no separate Apply button.
+	private async void ApplySeason(string id)
+	{
+		if (_seasonBusyUi)
+		{
+			return;
+		}
+		_seasonBusyUi = true;
+		RebuildSeasonTiles();
+		SeasonPreset? preset = SeasonalTheme.Find(id);
+		if (_seasonStatus != null)
+		{
+			_seasonStatus.Text = preset == null ? "Restoring your normal look\u2026" : "Applying " + preset.Name + "\u2026";
+		}
+		bool wallpaperPrefBefore = SettingsStore.FastSnapshot.SeasonalWallpaper;
+		SeasonalResult result;
+		try
+		{
+			result = await SeasonalTheme.ApplyAsync(id);
+		}
+		catch (Exception ex)
+		{
+			result = new SeasonalResult { Success = false, Message = "Could not change the seasonal theme: " + ex.Message };
+		}
+		finally
+		{
+			_seasonBusyUi = false;
+		}
+		HostApp?.ApplySeasonalLive();
+		ReskinShell();
+		RebuildSeasonTiles();
+		string activeAfter = SeasonalTheme.NormalizeId(SettingsStore.FastSnapshot.SeasonalActive);
+		if (result.Success && activeAfter.Length > 0 && SettingsStore.FastSnapshot.SeasonalWallpaper != wallpaperPrefBefore)
+		{
+			// The wallpaper preference changed while this ran (the change had already read it): apply it now.
+			ApplySeason(activeAfter);
+			return;
+		}
+		if (_seasonStatus != null)
+		{
+			SeasonalStatus status = SeasonalTheme.Describe();
+			string name = preset?.Name ?? "";
+			bool plain = result.Message == name + " is on." || result.Message == name + " is already on." || result.Message == "Normal look restored.";
+			if (result.Success && plain)
+			{
+				_seasonStatus.Text = SeasonalTheme.StatusText(status);
+			}
+			else if (result.Success && status.ActiveId.Length > 0)
+			{
+				_seasonStatus.Text = result.Message + " Normal restores your previous Start background, accent colour" + (status.OwnsWallpaper ? " and desktop wallpaper." : ".");
+			}
+			else
+			{
+				_seasonStatus.Text = result.Message;
+			}
+		}
+	}
+
 	private void ReskinShell()
 	{
 		try
@@ -1671,6 +1894,8 @@ public sealed class PcSettingsWindow : Window
 		panel.Children.Add(_shellProfileStatus);
 		RefreshShellProfileStatus();
 
+		BuildSeasonalSection(panel, s);
+
 		// ===== Startup =====
 		panel.Children.Add(SubHeader("Startup"));
 		panel.Children.Add(ToggleRow("Start at sign-in", "Launch the Win8.1 layer automatically when you sign in (a per-user logon task, which also runs the boot supervisor that keeps the shell healthy).", LogonTask.IsEnabled(), delegate(bool on)
@@ -1868,13 +2093,26 @@ public sealed class PcSettingsWindow : Window
 		}));
 		if (WallpaperModule.AssetAvailable)
 		{
-			panel.Children.Add(ToggleRow("Win8.1 desktop wallpaper", "Set the authentic Win8.1 desktop wallpaper (reversible).", s.Win81Wallpaper, delegate(bool on)
+			// While the seasonal wallpaper is on, the Win8.1 wallpaper snapshot would capture the seasonal picture.
+			bool seasonalOwnsWallpaper = SeasonalTheme.OwnsDesktopWallpaper;
+			FrameworkElement win81WallpaperRow = ToggleRow("Win8.1 desktop wallpaper", seasonalOwnsWallpaper ? "Unavailable while the seasonal wallpaper is on \u2014 choose Normal under Seasonal theme first." : "Set the authentic Win8.1 desktop wallpaper (reversible).", s.Win81Wallpaper, delegate(bool on)
 			{
+				if (SeasonalTheme.OwnsDesktopWallpaper)
+				{
+					Logger.Log("Win8.1 wallpaper unavailable while the seasonal wallpaper is on");
+					return;
+				}
 				if (on ? WallpaperModule.Apply() : WallpaperModule.Revert())
 				{
 					SettingsStore.Update(delegate(AppSettings x) { x.Win81Wallpaper = on; });
 				}
-			}));
+			});
+			if (seasonalOwnsWallpaper)
+			{
+				win81WallpaperRow.IsEnabled = false;
+				win81WallpaperRow.Opacity = 0.5;
+			}
+			panel.Children.Add(win81WallpaperRow);
 		}
 		panel.Children.Add(SubLabel("Motion"));
 		string[] motionOpts = new string[4] { "Authentic", "Fast", "Reduced", "Off" };
@@ -2884,6 +3122,7 @@ public sealed class PcSettingsWindow : Window
 		back.Margin = new Thickness(0.0, 0.0, 0.0, 10.0);
 		panel.Children.Add(back);
 		panel.Children.Add(SectionTitle("Start screen"));
+		BuildSeasonalSection(panel, SettingsStore.Load());
 		panel.Children.Add(SubLabel("Background"));
 		WrapPanel wrap = new WrapPanel
 		{
@@ -4367,7 +4606,7 @@ public sealed class PcSettingsWindow : Window
 	// Full-height content render for QA: renders a page's ScrollViewer body at its natural height on white.
 	public void QaRenderTall(string outPath, string category, double w = 900.0)
 	{
-		if (BuildPage(category) is ScrollViewer scr)   // fresh, UNPARENTED element renders correctly offscreen
+		if ((category == "Start screen" ? StartScreenPage() : BuildPage(category)) is ScrollViewer scr)   // fresh, UNPARENTED element renders correctly offscreen
 		{
 			scr.Background = System.Windows.Media.Brushes.White;
 			scr.VerticalScrollBarVisibility = ScrollBarVisibility.Disabled;

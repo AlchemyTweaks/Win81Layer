@@ -20,6 +20,9 @@ public static class TaskbarTheme
 
 	private const uint SPI_GETDESKWALLPAPER = 115u;
 
+	// QA only: the wallpaper read in read-only diagnostics, so offscreen renders never depend on the real desktop.
+	internal static string? DiagnosticsWallpaperPath { get; set; }
+
 	public static System.Windows.Media.Color Current
 	{
 		get
@@ -52,7 +55,7 @@ public static class TaskbarTheme
 		{
 			AppSettings s = SettingsStore.Load();
 			bool transparent = s.TaskbarTransparent || s.TaskbarColorMode == "Transparent";
-			System.Windows.Media.Color baseColor = ((s.TaskbarColorMode == "Start") ? Darken(StartAccent.Color()) : Current);
+			System.Windows.Media.Color baseColor = ((EffectiveColorMode(s) == "Start") ? Darken(StartAccent.Color()) : Current);
 			// 8.1 taskbar is translucent by default (wallpaper tint reads through). Keep the explicit Transparent
 			// toggle's existing strength (140); only the previously-opaque default becomes translucent (205).
 			byte a = (byte)(transparent ? 140 : 205);
@@ -73,7 +76,7 @@ public static class TaskbarTheme
 		try
 		{
 			AppSettings s = SettingsStore.Load();
-			return (s.TaskbarColorMode == "Start") ? Darken(StartAccent.Color()) : Current;
+			return (EffectiveColorMode(s) == "Start") ? Darken(StartAccent.Color()) : Current;
 		}
 		catch
 		{
@@ -85,7 +88,7 @@ public static class TaskbarTheme
 	{
 		try
 		{
-			return (SettingsStore.Load().TaskbarColorMode == "Start") ? StartAccent.Color() : WallpaperAccent();
+			return (EffectiveColorMode(SettingsStore.Load()) == "Start") ? StartAccent.Color() : WallpaperAccent();
 		}
 		catch
 		{
@@ -99,7 +102,7 @@ public static class TaskbarTheme
 	{
 		try
 		{
-			if (SettingsStore.Load().TaskbarColorMode == "Start")
+			if (EffectiveColorMode(SettingsStore.Load()) == "Start")
 			{
 				color = StartAccent.Color();
 				return true;
@@ -117,6 +120,17 @@ public static class TaskbarTheme
 		}
 		color = default(System.Windows.Media.Color);
 		return false;
+	}
+
+	// Runtime-only overlay: while a seasonal theme is on but its wallpaper is not the desktop picture, the Wallpaper
+	// colour mode follows the seasonal accent instead. Nothing is persisted; TaskbarColorMode stays the user's.
+	private static string EffectiveColorMode(AppSettings s)
+	{
+		if (s.TaskbarColorMode == "Wallpaper" && !string.IsNullOrEmpty(s.SeasonalActive) && !SeasonalTheme.OwnsDesktopWallpaper)
+		{
+			return "Start";
+		}
+		return s.TaskbarColorMode;
 	}
 
 	public static System.Windows.Media.Color SelectionColor()
@@ -163,6 +177,10 @@ public static class TaskbarTheme
 
 	public static string? WallpaperPath()
 	{
+		if (SettingsStore.ReadOnlyDiagnostics && DiagnosticsWallpaperPath != null)
+		{
+			return File.Exists(DiagnosticsWallpaperPath) ? DiagnosticsWallpaperPath : null;
+		}
 		StringBuilder sb = new StringBuilder(1024);
 		if (SystemParametersInfo(115u, (uint)sb.Capacity, sb, 0u) && sb.Length > 0)
 		{

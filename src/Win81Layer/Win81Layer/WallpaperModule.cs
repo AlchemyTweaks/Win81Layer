@@ -31,6 +31,12 @@ public static class WallpaperModule
 
 	public static bool Apply()
 	{
+		if (SeasonalTheme.OwnsDesktopWallpaper)
+		{
+			// Its snapshot would capture the seasonal picture as the user's own wallpaper.
+			Logger.Log("Win8.1 wallpaper unavailable while the seasonal wallpaper is on");
+			return false;
+		}
 		if (!AssetAvailable)
 		{
 			Logger.Log("Wallpaper asset missing; cannot apply");
@@ -71,6 +77,11 @@ public static class WallpaperModule
 
 	public static bool Revert()
 	{
+		if (SeasonalTheme.OwnsDesktopWallpaper)
+		{
+			Logger.Log("Win8.1 wallpaper unavailable while the seasonal wallpaper is on");
+			return false;
+		}
 		try
 		{
 			if (!File.Exists(SnapshotPath))

@@ -38,6 +38,10 @@ public static class SettingsStore
 	// Deliberately fail an accidental write so QA catches it instead of silently masking the mutation.
 	internal static bool ReadOnlyDiagnostics { get; set; }
 
+	// QA only: while ReadOnlyDiagnostics is set, a non-null override is what every read returns (a fresh clone), so
+	// offscreen renders can show a look without writing it. Ignored by real runs.
+	internal static AppSettings? DiagnosticsOverride { get; set; }
+
 	// Never expose the mutable cache. Every caller receives a snapshot and persists changes through Save/Update.
 	public static AppSettings Current => Load();
 
@@ -49,6 +53,10 @@ public static class SettingsStore
 		{
 			lock (Gate)
 			{
+				if (ReadOnlyDiagnostics && DiagnosticsOverride != null)
+				{
+					return DiagnosticsOverride.Clone();
+				}
 				return _cache?.Clone() ?? LoadCore(force: false, 8, out _);
 			}
 		}
@@ -101,6 +109,64 @@ public static class SettingsStore
 		}
 	}
 
+	// Update for transactional callers: re-reads the durable settings, applies mutate and reports whether the result
+	// reached the verified primary file or the durable pending journal. It refuses (returns false) when the settings
+	// could not be read from the durable store, so a cached or default fallback is never saved over the real file.
+	public static bool TryUpdate(Action<AppSettings> mutate)
+	{
+		if (mutate == null)
+		{
+			throw new ArgumentNullException(nameof(mutate));
+		}
+		if (ReadOnlyDiagnostics)
+		{
+			throw new InvalidOperationException("Settings writes are disabled in read-only diagnostics mode.");
+		}
+		lock (Gate)
+		{
+			AppSettings settings = LoadCore(force: true, 8, out string source);
+			if (!IsDurableSource(source))
+			{
+				Logger.Log($"Settings update refused: the settings could not be read from the durable store (source={source}).");
+				return false;
+			}
+			mutate(settings);
+			return SaveCore(settings);
+		}
+	}
+
+	// A forced read for transactional callers. False when the result is a cached or default fallback rather than the
+	// durable settings themselves; such a result must not be acted on.
+	public static bool TryLoadDurable(out AppSettings settings)
+	{
+		lock (Gate)
+		{
+			settings = LoadCore(force: true, 24, out string source);
+			if (!IsDurableSource(source))
+			{
+				Logger.Log($"Settings durable read unavailable (source={source}).");
+				return false;
+			}
+			return true;
+		}
+	}
+
+	private static bool IsDurableSource(string source)
+	{
+		if (source.StartsWith("primary", StringComparison.Ordinal)
+			|| source.StartsWith("pending", StringComparison.Ordinal)
+			|| source.StartsWith("lastgood", StringComparison.Ordinal)
+			|| source.StartsWith("legacy-seed", StringComparison.Ordinal))
+		{
+			return true;
+		}
+		// A genuine first run (no settings anywhere) may start from the defaults.
+		return source == "defaults-first-run"
+			&& !File.Exists(SettingsPath)
+			&& !File.Exists(DurableStateStore.PendingPath("settings"))
+			&& !File.Exists(DurableStateStore.LastGoodPath("settings"));
+	}
+
 	public static void Save(AppSettings settings)
 	{
 		if (settings == null)
@@ -137,6 +203,11 @@ public static class SettingsStore
 
 	private static AppSettings LoadCore(bool force, int attempts, out string source)
 	{
+		if (ReadOnlyDiagnostics && DiagnosticsOverride != null)
+		{
+			source = "diagnostics-override";
+			return DiagnosticsOverride.Clone();
+		}
 		// TTL fast path: re-serve a healthy cache for up to 500ms WITHOUT the multi-syscall on-disk stamp probe
 		// below. Steady-state hot readers (taskbar 2s timer, per-keystroke search, per-brush accent) hit this
 		// instead of ~5 File.Exists/GetLastWriteTime calls each. In-process Save refreshes _cache immediately, and
@@ -288,5 +359,6 @@ public static class SettingsStore
 		settings.WeatherUnits = string.Equals(settings.WeatherUnits, "F", StringComparison.OrdinalIgnoreCase) ? "F" : "C";
 		settings.NewsFeedUrl = NewsFeedService.NormalizeUrl(settings.NewsFeedUrl) ?? NewsFeedService.DefaultUrl;
 		settings.PlaceSearchEngine = string.Equals(settings.PlaceSearchEngine, "Google", StringComparison.OrdinalIgnoreCase) ? "Google" : "Bing";
+		settings.SeasonalActive = SeasonalTheme.NormalizeId(settings.SeasonalActive);
 	}
 }

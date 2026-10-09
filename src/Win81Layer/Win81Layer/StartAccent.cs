@@ -164,6 +164,12 @@ public static class StartAccent
 		return Boost(ar, ag, ab);
 	}
 
+	// The Automatic accent a pattern background with this base colour gets.
+	internal static Color AutoFromBase(Color baseColor)
+	{
+		return Boost(baseColor.R, baseColor.G, baseColor.B);
+	}
+
 	private static Color Boost(byte r, byte g, byte b)
 	{
 		double R = (double)(int)r / 255.0;

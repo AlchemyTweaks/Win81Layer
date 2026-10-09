@@ -1468,23 +1468,32 @@ public sealed partial class ActionCenter
 	{
 		System.Windows.Media.Color accent = StartAccent.Color();
 		System.Windows.Media.Color themeBase = accent;
+		bool seasonal = false;
 		try
 		{
 			AppSettings settings = SettingsStore.Load();
 			if (settings.StartBgMode == "pattern" && !string.IsNullOrWhiteSpace(settings.StartBgColor))
 			{
 				themeBase = (System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString(settings.StartBgColor);
+				seasonal = !string.IsNullOrEmpty(settings.SeasonalActive) || SeasonalArt.IsSeasonalPattern(settings.StartPattern);
 			}
 		}
 		catch { }
-		ApplyMetroPalette(themeBase, accent);
+		ApplyMetroPalette(themeBase, accent, seasonal);
 	}
 
-	private void ApplyMetroPalette(System.Windows.Media.Color themeBase, System.Windows.Media.Color accent)
+	private void ApplyMetroPalette(System.Windows.Media.Color themeBase, System.Windows.Media.Color accent, bool seasonal = false)
 	{
 		_themeBase = themeBase;
 		_themeAccent = accent;
 		System.Windows.Media.Color top = EnsureMetroSaturation(Mix(themeBase, accent, 0.28));
+		if (seasonal)
+		{
+			// Seasonal palettes pair colours from opposite sides of the wheel (pine and red, purple and orange), and a
+			// mix of the two turns to grey. The panel keeps the base hue, lifted to a Metro value; the accent stays on
+			// the sliders and the link.
+			top = LiftedBase(themeBase);
+		}
 		System.Windows.Media.Color bottom = Mix(top, System.Windows.Media.Colors.Black, 0.32);
 		_themeBackground = new LinearGradientBrush(top, bottom, new Point(0.0, 0.0), new Point(1.0, 1.0));
 		_themeBackground.Freeze();
@@ -1492,7 +1501,16 @@ public sealed partial class ActionCenter
 		_metroRoot.Background = _themeBackground;
 		SyncNativeClearColor();
 		_secondaryTextBrush = FreezeMetroBrush(System.Windows.Media.Color.FromArgb(205, 255, 255, 255));
-		_linkBrush = FreezeMetroBrush(Mix(accent, System.Windows.Media.Colors.White, 0.56));
+		System.Windows.Media.Color link = Mix(accent, System.Windows.Media.Colors.White, 0.56);
+		if (seasonal)
+		{
+			// keep the "Clear all" link readable on the base-hued panel (at least 4.5:1)
+			for (double w = 0.56; w < 0.95 && ContrastRatio(link, top) < 4.5; w += 0.04)
+			{
+				link = Mix(accent, System.Windows.Media.Colors.White, w);
+			}
+		}
+		_linkBrush = FreezeMetroBrush(link);
 		_clearAllButton.Foreground = _linkBrush;
 		_emptySubtitle.Foreground = _secondaryTextBrush;
 		_collapseLabel.Foreground = System.Windows.Media.Brushes.White;
@@ -1547,6 +1565,21 @@ public sealed partial class ActionCenter
 		amount = Math.Clamp(amount, 0.0, 1.0);
 		byte blend(byte a, byte b) => (byte)Math.Round(a + (b - a) * amount);
 		return System.Windows.Media.Color.FromArgb(blend(from.A, to.A), blend(from.R, to.R), blend(from.G, to.G), blend(from.B, to.B));
+	}
+
+	// The base colour with its hue and saturation kept and its lightness raised to a Metro panel value.
+	private static System.Windows.Media.Color LiftedBase(System.Windows.Media.Color b)
+	{
+		ColorMath.RgbToHsl(b.R / 255.0, b.G / 255.0, b.B / 255.0, out double h, out double s, out double l);
+		ColorMath.HslToRgb(h, Math.Min(1.0, s * 0.95), Math.Max(l, 0.23), out double r, out double g, out double bl);
+		return System.Windows.Media.Color.FromRgb((byte)Math.Round(r * 255.0), (byte)Math.Round(g * 255.0), (byte)Math.Round(bl * 255.0));
+	}
+
+	private static double ContrastRatio(System.Windows.Media.Color a, System.Windows.Media.Color b)
+	{
+		double la = ColorMath.RelLuminance(a);
+		double lb = ColorMath.RelLuminance(b);
+		return (Math.Max(la, lb) + 0.05) / (Math.Min(la, lb) + 0.05);
 	}
 
 	private static System.Windows.Media.Color EnsureMetroSaturation(System.Windows.Media.Color color)
@@ -1721,7 +1754,7 @@ public sealed partial class ActionCenter
 		return new Path { Data = geometry, Fill = System.Windows.Media.Brushes.White };
 	}
 
-	internal static ActionCenterQaMetrics QaRenderMetro(string outPath, double width, double height, bool compact, bool withNotifications)
+	internal static ActionCenterQaMetrics QaRenderMetro(string outPath, double width, double height, bool compact, bool withNotifications, bool currentTheme = false)
 	{
 		Stopwatch total = Stopwatch.StartNew();
 		Stopwatch build = Stopwatch.StartNew();
@@ -1758,7 +1791,14 @@ public sealed partial class ActionCenter
 		panel._collapseArrow.Direction = panel._expanded ? MetroArrowDirection81.Up : MetroArrowDirection81.Down;
 		panel.ConfigureMetroLayout(width, height);
 		System.Windows.Media.Color blue = System.Windows.Media.Color.FromRgb(0, 112, 192);
-		panel.ApplyMetroPalette(blue, System.Windows.Media.Color.FromRgb(0, 174, 239));
+		if (currentTheme)
+		{
+			panel.ApplyMetroTheme();   // render with the live Start theme (seasonal QA)
+		}
+		else
+		{
+			panel.ApplyMetroPalette(blue, System.Windows.Media.Color.FromRgb(0, 174, 239));
+		}
 		if (withNotifications)
 		{
 			panel.ShowMetroNotifications(new List<(uint, string, string, string, string, ImageSource?)>

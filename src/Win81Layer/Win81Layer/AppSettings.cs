@@ -101,6 +101,15 @@ public sealed class AppSettings
 
 	public string StartPattern { get; set; } = "waves";
 
+	// Seasonal theme marker ("" = normal, "halloween", "christmas"). Written in the same save as the Start values it
+	// describes; the user's own values live in seasonal-state.json until Normal puts them back. Not profile-owned.
+	public string SeasonalActive { get; set; } = "";
+
+	// Seasonal preferences (kept across Normal): also set a matching desktop wallpaper, and show the Start effect.
+	public bool SeasonalWallpaper { get; set; } = true;
+
+	public bool SeasonalAmbient { get; set; } = true;
+
 	public bool StartGridFilledV1 { get; set; }
 
 	public string MotionMode { get; set; } = "Authentic";

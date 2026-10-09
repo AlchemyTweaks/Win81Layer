@@ -2696,7 +2696,7 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		try
 		{
 			AppSettings s = SettingsStore.Load();
-			string sig = $"{s.TaskbarColorMode}|{s.TaskbarTransparent}|{s.StartAccentColor}|{s.StartBgColor}|{s.StartPattern}|{s.StartBgMode}|{s.StartBgCustomPath}|{TaskbarTheme.WallpaperPath()}";
+			string sig = $"{s.TaskbarColorMode}|{s.TaskbarTransparent}|{s.StartAccentColor}|{s.StartBgColor}|{s.StartPattern}|{s.StartBgMode}|{s.StartBgCustomPath}|{s.SeasonalActive}|{TaskbarTheme.WallpaperPath()}";
 			if (!string.Equals(sig, _lastThemeSig, StringComparison.Ordinal))
 			{
 				bool first = _lastThemeSig == null;

@@ -7,13 +7,13 @@ public static class StartBackgroundFactory
 {
 	public sealed record Preset(string Pattern, string Base, string Accent);
 
-	public static readonly string[] Patterns = new string[14]
+	public static readonly string[] Patterns = new string[20]
 	{
 		"none", "dots", "diagonal", "grid", "circles", "triangles", "weave", "waves", "chevron", "crosshatch",
-		"rings", "confetti", "plus", "scales"
+		"rings", "confetti", "plus", "scales", "pumpkins", "bats", "webs", "ornaments", "snowflakes", "holly"
 	};
 
-	public static readonly Preset[] Presets = new Preset[20]
+	public static readonly Preset[] Presets = new Preset[26]
 	{
 		new Preset("waves", "#FF6A2C91", "#FFB388D6"),
 		new Preset("dots", "#FF1F1F1F", "#FF5A5A5A"),
@@ -34,11 +34,22 @@ public static class StartBackgroundFactory
 		new Preset("circles", "#FF0091F7", "#FF9CD2FF"),
 		new Preset("triangles", "#FFC81E5B", "#FFF07CA6"),
 		new Preset("none", "#FF1F1F1F", "#FF1F1F1F"),
-		new Preset("none", "#FFF2F2F2", "#FFF2F2F2")
+		new Preset("none", "#FFF2F2F2", "#FFF2F2F2"),
+		// Seasonal designs (drawn by SeasonalArt). Anyone can pick them here without turning on a seasonal theme.
+		new Preset("pumpkins", "#FF22103A", "#FFE0620B"),
+		new Preset("bats", "#FF22103A", "#FFE0620B"),
+		new Preset("webs", "#FF151019", "#FFE0620B"),
+		new Preset("ornaments", "#FF0B3D2C", "#FFC8102E"),
+		new Preset("snowflakes", "#FF0E2F4F", "#FFC8102E"),
+		new Preset("holly", "#FF0B3D2C", "#FFC8102E")
 	};
 
-	public static Brush Build(Color baseColor, Color accent, string pattern)
+	public static Brush Build(Color baseColor, Color accent, string pattern, double scale = 1.0)
 	{
+		if (SeasonalArt.IsSeasonalPattern(pattern))
+		{
+			return BuildSeasonal(baseColor, accent, pattern, scale);
+		}
 		//IL_00dc: Unknown result type (might be due to invalid IL or missing references)
 		//IL_07af: Unknown result type (might be due to invalid IL or missing references)
 		//IL_07fb: Unknown result type (might be due to invalid IL or missing references)
@@ -171,6 +182,31 @@ public static class StartBackgroundFactory
 			//IL_001d: Unknown result type (might be due to invalid IL or missing references)
 			draw.Children.Add(new GeometryDrawing(null, pen, new LineGeometry(new Point(x1, y1), new Point(x2, y2))));
 		}
+	}
+
+	// Seasonal tiles are larger illustrations, so the tile is drawn once at full size and the brush scales it
+	// (scale < 1 for thumbnails). The cached tile keeps scrolling and parallax cheap.
+	private static Brush BuildSeasonal(Color baseColor, Color accent, string pattern, double scale)
+	{
+		double s = SeasonalArt.TileSize(pattern);
+		double k = (scale > 0.0 && !double.IsNaN(scale)) ? scale : 1.0;
+		// Full size lines the tiles up with the Start header; a small preview centres the main motif instead.
+		Point origin = (k < 1.0) ? SeasonalArt.ThumbnailOrigin(pattern, k) : new Point(0.0, SeasonalArt.TileOffsetY(pattern) * k);
+		DrawingGroup draw = new DrawingGroup();
+		draw.Children.Add(new GeometryDrawing(new SolidColorBrush(baseColor), null, new RectangleGeometry(new Rect(0.0, 0.0, s, s))));
+		SeasonalArt.DrawPatternTile(draw, pattern, baseColor, accent, s);
+		DrawingBrush brush = new DrawingBrush(draw)
+		{
+			TileMode = TileMode.Tile,
+			Viewbox = new Rect(0.0, 0.0, s, s),
+			ViewboxUnits = BrushMappingMode.Absolute,
+			Viewport = new Rect(origin.X, origin.Y, s * k, s * k),
+			ViewportUnits = BrushMappingMode.Absolute,
+			Stretch = Stretch.Fill
+		};
+		RenderOptions.SetCachingHint(brush, CachingHint.Cache);
+		((Freezable)brush).Freeze();
+		return brush;
 	}
 
 	private static PathGeometry Tri(double x1, double y1, double x2, double y2, double x3, double y3)

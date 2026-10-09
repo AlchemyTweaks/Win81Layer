@@ -279,6 +279,11 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 
 	private bool _personalizeBuilt;
 
+	// Seasonal effect behind the tiles (only attached while Start is visible) and the Personalize chip busy flag.
+	private SeasonalAmbientLayer? _ambient;
+
+	private bool _seasonBusy;
+
 	private string _personalizeWallpaperSignature = "";
 
 	private int _personalizeThumbGeneration;
@@ -303,6 +308,9 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 	}
 
 	private int _bgToken;
+
+	// The token whose background is on screen; it lags _bgToken while an image decode is still running.
+	private int _bgAppliedToken;
 
 	private static readonly Dictionary<string, ImageBrush> _bgBrushCache = new Dictionary<string, ImageBrush>(StringComparer.OrdinalIgnoreCase);
 
@@ -429,6 +437,11 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 		StartScroller.SizeChanged += delegate
 		{
 			UpdateBandCapacity();
+		};
+		// Every show and hide path (including press-and-hold peek and its cancel) starts or releases the seasonal effect.
+		base.IsVisibleChanged += delegate
+		{
+			SyncSeasonalAmbient();
 		};
 		base.Loaded += delegate
 		{
@@ -587,6 +600,8 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 	{
 		try
 		{
+			// A newer background always wins: an image decode still running from an earlier refresh is discarded.
+			_bgAppliedToken = ++_bgToken;
 			AppSettings s = SettingsStore.Load();
 			switch (s.StartBgMode)
 			{
@@ -644,10 +659,49 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 			catch
 			{
 			}
+			SyncSeasonalAmbient();
 		}
 		catch (Exception ex)
 		{
 			Logger.Log("Start background apply failed: " + ex.Message);
+		}
+	}
+
+	// Attaches the seasonal effect only while it can be seen: a season with effects on, Start visible, the background
+	// layer shown and no semantic-zoom overlay covering it. Otherwise every animation and child is released.
+	internal void SyncSeasonalAmbient()
+	{
+		try
+		{
+			AppSettings s = SettingsStore.FastSnapshot;
+			SeasonPreset? preset = SeasonalTheme.Find(s.SeasonalActive);
+			bool want = preset != null
+				&& s.SeasonalAmbient
+				&& base.IsVisible
+				&& BgLayer.Visibility == Visibility.Visible
+				&& ZoomOverlay.Visibility != Visibility.Visible
+				&& AppsZoomOverlay.Visibility != Visibility.Visible;
+			if (want)
+			{
+				_ambient ??= new SeasonalAmbientLayer();
+				if (BgLayer.Child != _ambient)
+				{
+					BgLayer.Child = _ambient;
+				}
+				_ambient.Show(preset!.Ambient, StartAccent.FastColor(), Motion.Mode);
+			}
+			else
+			{
+				_ambient?.Hide();
+				if (BgLayer.Child != null)
+				{
+					BgLayer.Child = null;
+				}
+			}
+		}
+		catch (Exception ex)
+		{
+			Logger.Log("Seasonal effect sync failed: " + ex.Message);
 		}
 	}
 
@@ -719,6 +773,80 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 		return build.ElapsedMilliseconds;
 	}
 
+	// QA: the Start screen with the current (diagnostics) look and its seasonal effect drawn static, offscreen and
+	// without activation. Only used with the synthetic diagnostics board.
+	internal void QaRenderSeason(string outPath, double width, double height, bool withAmbient)
+	{
+		Width = width;
+		Height = height;
+		Left = -6000.0;
+		Top = -6000.0;
+		base.ShowActivated = false;
+		base.Topmost = false;
+		if (!IsVisible)
+		{
+			Show();
+		}
+		PersonalizeHost.Visibility = Visibility.Collapsed;
+		RefreshBackground();
+		// A picture background (custom or desktop) is decoded on a worker: wait for it, so the render never shows the
+		// previous background.
+		Stopwatch wait = Stopwatch.StartNew();
+		while (_bgAppliedToken != _bgToken && wait.ElapsedMilliseconds < 4000)
+		{
+			((DispatcherObject)this).Dispatcher.Invoke(DispatcherPriority.Background, (Action)delegate
+			{
+			});
+			System.Threading.Thread.Sleep(10);
+		}
+		SeasonPreset? preset = SeasonalTheme.Find(SettingsStore.FastSnapshot.SeasonalActive);
+		if (withAmbient && preset != null)
+		{
+			_ambient ??= new SeasonalAmbientLayer();
+			BgLayer.Child = _ambient;
+			_ambient.Show(preset.Ambient, StartAccent.Color(), MotionMode.Off);
+		}
+		else
+		{
+			_ambient?.Hide();
+			BgLayer.Child = null;
+		}
+		FrameworkElement root = (FrameworkElement)Content;
+		root.Measure(new System.Windows.Size(width, height));
+		root.Arrange(new Rect(0.0, 0.0, width, height));
+		root.UpdateLayout();
+		RenderTargetBitmap bitmap = new RenderTargetBitmap((int)width, (int)height, 96.0, 96.0, PixelFormats.Pbgra32);
+		bitmap.Render(root);
+		PngBitmapEncoder encoder = new PngBitmapEncoder();
+		encoder.Frames.Add(BitmapFrame.Create(bitmap));
+		using FileStream stream = File.Create(outPath);
+		encoder.Save(stream);
+	}
+
+	// QA: varied tile colours on the synthetic board, closer to a real Start screen than one flat colour.
+	internal void QaVaryTileColors()
+	{
+		string[] palette = new string[8] { "#FF2672EC", "#FF00A300", "#FFDC572E", "#FF8C0095", "#FF008299", "#FFAC193D", "#FF2E8DEF", "#FF4E4E4E" };
+		for (int i = 0; i < _apps.Count; i++)
+		{
+			SolidColorBrush b = new SolidColorBrush(StartBackgroundFactory.Parse(palette[(i * 5 + i / 8) % palette.Length], Colors.SteelBlue));
+			b.Freeze();
+			_apps[i].TileBrush = b;
+		}
+	}
+
+	internal SeasonalAmbientLayer? QaAmbient => _ambient;
+
+	internal bool QaBgLayerHasChild => BgLayer.Child != null;
+
+	internal bool QaBackgroundSettled => _bgAppliedToken == _bgToken;
+
+	internal void QaHideForAmbientCheck()
+	{
+		Hide();
+		SyncSeasonalAmbient();
+	}
+
 	private void SetStartChromeVisible(bool v)
 	{
 		Visibility vis = ((!v) ? Visibility.Collapsed : Visibility.Visible);
@@ -732,6 +860,7 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 			BottomScroll.Visibility = Visibility.Collapsed;
 			SelectionBar.Visibility = Visibility.Collapsed;
 		}
+		SyncSeasonalAmbient();
 	}
 
 	private void OpenPersonalize()
@@ -801,7 +930,7 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 					Width = 80.0,
 					Height = 50.0,
 					Margin = new Thickness(0.0, 0.0, 7.0, 7.0),
-					Background = StartBackgroundFactory.Build(pbase, pacc, preset.Pattern),
+					Background = StartBackgroundFactory.Build(pbase, pacc, preset.Pattern, SeasonalArt.IsSeasonalPattern(preset.Pattern) ? 0.4 : 1.0),
 					BorderBrush = new SolidColorBrush(System.Windows.Media.Color.FromArgb(68, byte.MaxValue, byte.MaxValue, byte.MaxValue)),
 					BorderThickness = new Thickness(1.0),
 					Cursor = System.Windows.Input.Cursors.Hand,
@@ -813,6 +942,7 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 			}
 			BuildColorBand(BgColorGrid, "background", ApplyBgColor);
 			BuildColorBand(AccentColorGrid, "accent", delegate(string hex) { ApplyPersonalize(null, null, hex); });
+			BuildSeasonChips();
 			_personalizeBuilt = true;
 		}
 
@@ -941,6 +1071,23 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 
 	private void RefreshPersonalizeSelection(AppSettings s)
 	{
+		string season = SeasonalTheme.NormalizeId(s.SeasonalActive);
+		foreach (UIElement element in SeasonGrid.Children)
+		{
+			if (element is Border chip && chip.Tag is PersonalizeChoice choice)
+			{
+				SetSeasonSelected(chip, choice.Value == SeasonalTheme.Normal ? season.Length == 0 : season == choice.Value);
+				if (choice.Value == SeasonalTheme.Normal)
+				{
+					chip.Background = SeasonalTheme.NormalPreviewBrush(0.4);
+				}
+			}
+		}
+		if (!_seasonBusy)
+		{
+			SeasonNote.Text = season.Length == 0 ? "" : SeasonNormalHint();
+			SeasonNote.Visibility = season.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
+		}
 		foreach (UIElement element in DesignGrid.Children)
 		{
 			if (element is Border border && border.Tag is PersonalizeChoice choice)
@@ -971,6 +1118,167 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 			}
 		}
 		AccentAutoBtn.Tag = (string.IsNullOrEmpty(s.StartAccentColor) ? "active" : null);
+	}
+
+	private void BuildSeasonChips()
+	{
+		SeasonGrid.Children.Clear();
+		foreach ((string id, string label) in new (string, string)[3] { (SeasonalTheme.Normal, "Normal"), (SeasonalTheme.Halloween, "Halloween"), (SeasonalTheme.Christmas, "Christmas") })
+		{
+			SeasonPreset? preset = SeasonalTheme.Find(id);
+			Grid content = new Grid();
+			DropShadowEffect shadow = new DropShadowEffect { BlurRadius = 3.0, ShadowDepth = 0.0, Color = Colors.Black, Opacity = 0.9 };
+			shadow.Freeze();
+			System.Windows.Media.Brush background;
+			if (preset == null)
+			{
+				// Normal previews what it brings back (the restore point while a season is on), dimmed under the undo glyph.
+				background = SeasonalTheme.NormalPreviewBrush(0.4);
+				content.Children.Add(new Border
+				{
+					Background = new SolidColorBrush(System.Windows.Media.Color.FromArgb(80, 0, 0, 0)),
+					IsHitTestVisible = false
+				});
+				content.Children.Add(new TextBlock
+				{
+					Text = "\uE7A7",
+					FontFamily = new System.Windows.Media.FontFamily("Segoe MDL2 Assets"),
+					FontSize = 16.0,
+					Foreground = System.Windows.Media.Brushes.White,
+					HorizontalAlignment = System.Windows.HorizontalAlignment.Center,
+					VerticalAlignment = VerticalAlignment.Center,
+					Margin = new Thickness(0.0, 0.0, 0.0, 10.0),
+					Effect = shadow
+				});
+			}
+			else
+			{
+				// The season's own desktop scene reads far better at this size than a crop of its Start pattern.
+				background = SeasonalArt.PreviewBrush(preset.Art);
+			}
+			content.Children.Add(new TextBlock
+			{
+				Text = label,
+				FontFamily = new System.Windows.Media.FontFamily("Segoe UI"),
+				FontSize = 11.0,
+				FontWeight = FontWeights.SemiBold,
+				Foreground = System.Windows.Media.Brushes.White,
+				HorizontalAlignment = System.Windows.HorizontalAlignment.Left,
+				VerticalAlignment = VerticalAlignment.Bottom,
+				Margin = new Thickness(6.0, 0.0, 0.0, 4.0),
+				Effect = shadow
+			});
+			content.Children.Add(new TextBlock
+			{
+				Text = "\uE73E",
+				FontFamily = new System.Windows.Media.FontFamily("Segoe MDL2 Assets"),
+				FontSize = 16.0,
+				Foreground = System.Windows.Media.Brushes.White,
+				HorizontalAlignment = System.Windows.HorizontalAlignment.Right,
+				VerticalAlignment = VerticalAlignment.Top,
+				Margin = new Thickness(0.0, 3.0, 4.0, 0.0),
+				Effect = shadow,
+				Visibility = Visibility.Collapsed,
+				Tag = "check"
+			});
+			// The selection frame is an overlay over the 1 px chip border, so selecting never shifts the content.
+			content.Children.Add(new Border
+			{
+				BorderBrush = System.Windows.Media.Brushes.White,
+				BorderThickness = new Thickness(2.0),
+				Margin = new Thickness(-1.0),
+				IsHitTestVisible = false,
+				Visibility = Visibility.Collapsed,
+				Tag = "sel"
+			});
+			Border chip = new Border
+			{
+				Width = 80.0,
+				Height = 50.0,
+				Margin = new Thickness(0.0, 0.0, 7.0, 7.0),
+				Background = background,
+				BorderBrush = new SolidColorBrush(System.Windows.Media.Color.FromArgb(68, byte.MaxValue, byte.MaxValue, byte.MaxValue)),
+				BorderThickness = new Thickness(1.0),
+				Cursor = System.Windows.Input.Cursors.Hand,
+				ToolTip = (preset == null) ? "Normal: your own look" : label,
+				Child = content,
+				Tag = new PersonalizeChoice("season", id, "", Colors.White)
+			};
+			System.Windows.Automation.AutomationProperties.SetName(chip, "Seasonal theme: " + label);
+			string captured = id;
+			chip.MouseLeftButtonDown += delegate
+			{
+				OnSeasonChip(captured);
+			};
+			SeasonGrid.Children.Add(chip);
+		}
+	}
+
+	private static void SetSeasonSelected(Border chip, bool selected)
+	{
+		if (chip.Child is Grid grid)
+		{
+			foreach (UIElement child in grid.Children)
+			{
+				if (child is FrameworkElement fe && (fe.Tag as string == "check" || fe.Tag as string == "sel"))
+				{
+					fe.Visibility = selected ? Visibility.Visible : Visibility.Collapsed;
+				}
+			}
+		}
+	}
+
+	private static string SeasonNormalHint()
+	{
+		return SeasonalTheme.OwnsDesktopWallpaper
+			? "Normal puts back your own background, accent and desktop wallpaper."
+			: "Normal puts back your own background and accent colour.";
+	}
+
+	private async void OnSeasonChip(string id)
+	{
+		if (_seasonBusy)
+		{
+			return;
+		}
+		_seasonBusy = true;
+		SeasonGrid.IsEnabled = false;
+		SeasonGrid.Opacity = 0.6;
+		SeasonPreset? preset = SeasonalTheme.Find(id);
+		SeasonNote.Text = preset == null ? "Restoring your normal look\u2026" : "Applying " + preset.Name + "\u2026";
+		SeasonNote.Visibility = Visibility.Visible;
+		SeasonalResult result;
+		try
+		{
+			result = await SeasonalTheme.ApplyAsync(id);
+		}
+		catch (Exception ex)
+		{
+			result = new SeasonalResult { Success = false, Message = "Could not change the seasonal theme: " + ex.Message };
+		}
+		finally
+		{
+			_seasonBusy = false;
+			SeasonGrid.IsEnabled = true;
+			SeasonGrid.Opacity = 1.0;
+		}
+		try
+		{
+			(System.Windows.Application.Current as App)?.ApplySeasonalLive();
+			RefreshPersonalizeSelection(SettingsStore.Load());
+		}
+		catch (Exception ex)
+		{
+			Logger.Log("Seasonal: Personalize refresh failed: " + ex.Message);
+		}
+		bool active = SeasonalTheme.NormalizeId(SettingsStore.FastSnapshot.SeasonalActive).Length > 0;
+		string name = preset?.Name ?? "";
+		bool plain = result.Message == name + " is on." || result.Message == name + " is already on." || result.Message == "Normal look restored.";
+		if (!result.Success || !plain)
+		{
+			SeasonNote.Text = (active && result.Success) ? result.Message + " " + SeasonNormalHint() : result.Message;
+			SeasonNote.Visibility = Visibility.Visible;
+		}
 	}
 
 	private static void SetPersonalizeSelected(Border border, bool selected, System.Windows.Media.Color ink, bool shadow, bool useBorder)
@@ -1248,6 +1556,7 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 		if (_bgBrushCache.TryGetValue(key, out ImageBrush cached))
 		{
 			SetStartBg(cached);
+			_bgAppliedToken = token;
 			return;
 		}
 		Task.Run(delegate
@@ -1282,6 +1591,7 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 					if (token == _bgToken)
 					{
 						SetStartBg(ib);
+						_bgAppliedToken = token;
 					}
 				}, Array.Empty<object>());
 			}
@@ -2096,6 +2406,7 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 		{
 			_liveTiles?.Start();
 			StartLiveFlips();
+			SyncSeasonalAmbient();
 		}, (DispatcherPriority)4, Array.Empty<object>());
 		((DispatcherObject)this).Dispatcher.BeginInvoke((Delegate)new Action(RefreshDesktopTile), (DispatcherPriority)4, Array.Empty<object>());
 		long tShow = sw.ElapsedMilliseconds;
@@ -2166,6 +2477,7 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 			ZoomOverlay.BeginAnimation(UIElement.OpacityProperty, new DoubleAnimation(0.0, 1.0, Motion.Dur(Motion.Cat.Micro)));
 			_semanticZoomed = true;
 			RefreshZoomButton();
+			SyncSeasonalAmbient();
 		}
 	}
 
@@ -2264,6 +2576,7 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 			{
 				ZoomOverlay.Visibility = Visibility.Collapsed;
 				ZoomHost.Children.Clear();
+				SyncSeasonalAmbient();
 			};
 			// Mirror the zoom-in's scale so the exit isn't a flat opacity-only fade (recede 1.0 -> 1.22 in step with the fade).
 			if (ZoomOverlay.RenderTransform is ScaleTransform zst)
@@ -2953,6 +3266,7 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 				_liveTiles?.Stop();
 				StopLiveFlips();
 				Hide();
+				SyncSeasonalAmbient();
 				EndViewLowLatency();
 				RootGrid.BeginAnimation(UIElement.OpacityProperty, null);
 				RootGrid.Opacity = 1.0;
@@ -2970,6 +3284,7 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 			_liveTiles?.Stop();
 			StopLiveFlips();
 			Hide();
+			SyncSeasonalAmbient();
 			EndViewLowLatency();
 			ScheduleIdleTrim();
 		}
@@ -8127,6 +8442,7 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 		AppsZoomOverlay.BeginAnimation(UIElement.OpacityProperty, new DoubleAnimation(0.0, 1.0, Motion.Dur(Motion.Cat.Micro)));
 		_semanticZoomed = true;
 		RefreshZoomButton();
+		SyncSeasonalAmbient();
 	}
 
 	private void HideAppsZoom()
@@ -8145,6 +8461,7 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 				AppsZoomOverlay.Visibility = Visibility.Collapsed;
 				AppsZoomOverlay.BeginAnimation(UIElement.OpacityProperty, null);
 				AppsZoomOverlay.Opacity = 1.0;
+				SyncSeasonalAmbient();
 			}
 		};
 		// Mirror the zoom-in's scale so the exit isn't opacity-only (recede 1.0 -> 1.15 in step with the fade).
