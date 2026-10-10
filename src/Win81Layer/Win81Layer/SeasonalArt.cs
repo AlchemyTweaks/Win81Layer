@@ -666,6 +666,138 @@ internal static class SeasonalArt
 		return (Math.Clamp(w, 1280, 7680), Math.Clamp(h, 720, 4320));
 	}
 
+	// A season can show the user's own desktop picture instead of the drawn scene. First match wins:
+	// <launcher data>\seasonal\custom\<art>.* (chosen in PC Settings) and <launcher folder>\seasonal\<art>.* (a
+	// picture dropped in by hand). The picture itself is never set as the wallpaper: it is cropped to the screen into
+	// SeasonalDir, so the restore logic handles it exactly like the drawn wallpaper.
+	public static readonly string CustomDir = Path.Combine(SeasonalDir, "custom");
+
+	private static readonly string[] PictureExtensions = new string[4] { ".jpg", ".jpeg", ".png", ".bmp" };
+
+	private static IEnumerable<string> PictureDirs()
+	{
+		yield return CustomDir;
+		yield return Path.Combine(AppContext.BaseDirectory, "seasonal");
+	}
+
+	public static string? CustomPictureFor(string art)
+	{
+		foreach (string dir in PictureDirs())
+		{
+			foreach (string ext in PictureExtensions)
+			{
+				string path = Path.Combine(dir, art + ext);
+				try
+				{
+					if (File.Exists(path) && new FileInfo(path).Length > 1024)
+					{
+						return path;
+					}
+				}
+				catch
+				{
+				}
+			}
+		}
+		return null;
+	}
+
+	// Copies the chosen picture in as the season's picture (replacing an earlier one in any format).
+	public static void SetCustomPicture(string art, string source)
+	{
+		string ext = Path.GetExtension(source).ToLowerInvariant();
+		if (Array.IndexOf(PictureExtensions, ext) < 0)
+		{
+			throw new InvalidOperationException("Choose a JPG, PNG or BMP picture.");
+		}
+		Directory.CreateDirectory(CustomDir);
+		string target = Path.Combine(CustomDir, art + ext);
+		string tmp = target + ".tmp-" + Environment.ProcessId;
+		File.Copy(source, tmp, overwrite: true);
+		foreach (string other in PictureExtensions)
+		{
+			string old = Path.Combine(CustomDir, art + other);
+			if (!string.Equals(old, target, StringComparison.OrdinalIgnoreCase) && File.Exists(old))
+			{
+				File.Delete(old);
+			}
+		}
+		File.Move(tmp, target, overwrite: true);
+	}
+
+	// Back to the drawn scene: removes the season's picture from both places.
+	public static void ClearCustomPicture(string art)
+	{
+		foreach (string dir in PictureDirs())
+		{
+			foreach (string ext in PictureExtensions)
+			{
+				string path = Path.Combine(dir, art + ext);
+				if (File.Exists(path))
+				{
+					File.Delete(path);
+				}
+			}
+		}
+	}
+
+	// File name of the screen-sized copy of a custom picture. The stamp changes when the picture changes, so a new picture
+	// is never mistaken for the old copy.
+	public static string CustomWallpaperFileName(string art, string source, int width, int height)
+	{
+		uint hash = 2166136261u;
+		try
+		{
+			FileInfo fi = new FileInfo(source);
+			string key = fi.FullName.ToLowerInvariant() + "|" + fi.Length + "|" + fi.LastWriteTimeUtc.Ticks;
+			foreach (char c in key)
+			{
+				hash = unchecked((hash ^ c) * 16777619u);
+			}
+		}
+		catch
+		{
+		}
+		return $"{art}-picture-{hash:x8}-{width}x{height}.png";
+	}
+
+	// Crops the picture to fill width x height (centred) and writes it as PNG. Must run on an STA thread.
+	public static void RenderPicturePng(string source, int width, int height, string path)
+	{
+		BitmapImage img = new BitmapImage();
+		img.BeginInit();
+		img.CacheOption = BitmapCacheOption.OnLoad;   // read fully now, so the source file is not kept open
+		img.CreateOptions = BitmapCreateOptions.PreservePixelFormat;
+		img.UriSource = new Uri(source, UriKind.Absolute);
+		img.EndInit();
+		img.Freeze();
+		DrawingVisual dv = new DrawingVisual();
+		RenderOptions.SetBitmapScalingMode(dv, BitmapScalingMode.HighQuality);
+		using (DrawingContext dc = dv.RenderOpen())
+		{
+			ImageBrush fill = new ImageBrush(img)
+			{
+				Stretch = Stretch.UniformToFill,
+				AlignmentX = AlignmentX.Center,
+				AlignmentY = AlignmentY.Center
+			};
+			dc.DrawRectangle(fill, null, new Rect(0.0, 0.0, width, height));
+		}
+		RenderTargetBitmap rtb = new RenderTargetBitmap(width, height, 96.0, 96.0, PixelFormats.Pbgra32);
+		rtb.Render(dv);
+		rtb.Freeze();
+		WritePngAtomic(rtb, path);
+	}
+
+	// File name of the season's wallpaper as it would be prepared now: the user's picture when the season has one,
+	// otherwise the drawn scene, both at the size of the largest screen.
+	public static string ExpectedWallpaperName(string art)
+	{
+		(int w, int h) = TargetWallpaperSize();
+		string? picture = CustomPictureFor(art);
+		return picture != null ? CustomWallpaperFileName(art, picture, w, h) : WallpaperFileName(art, w, h);
+	}
+
 	public static string WallpaperFileName(string art, int width, int height)
 	{
 		return $"{art}-v{WallpaperVersion}-{width}x{height}.png";
@@ -693,7 +825,11 @@ internal static class SeasonalArt
 	// to a temporary name first and then moved into place, so a crash never leaves a half-written wallpaper.
 	public static void RenderWallpaperPng(string art, int width, int height, string path)
 	{
-		BitmapSource bmp = RenderWallpaper(art, width, height);
+		WritePngAtomic(RenderWallpaper(art, width, height), path);
+	}
+
+	private static void WritePngAtomic(BitmapSource bmp, string path)
+	{
 		string dir = Path.GetDirectoryName(path) ?? SeasonalDir;
 		Directory.CreateDirectory(dir);
 		string tmp = path + ".tmp-" + Environment.ProcessId;
@@ -728,9 +864,11 @@ internal static class SeasonalArt
 	// A small render of the season's desktop scene for the preview tiles and chips, drawn once per process. UI thread.
 	public static Brush PreviewBrush(string art)
 	{
+		string? picture = CustomPictureFor(art);
+		string key = picture == null ? art : CustomWallpaperFileName(art, picture, 480, 270);
 		lock (Previews)
 		{
-			if (Previews.TryGetValue(art, out Brush? hit))
+			if (Previews.TryGetValue(key, out Brush? hit))
 			{
 				return hit;
 			}
@@ -738,7 +876,7 @@ internal static class SeasonalArt
 		Brush brush;
 		try
 		{
-			ImageBrush ib = new ImageBrush(RenderWallpaper(art, 480, 270))
+			ImageBrush ib = new ImageBrush(picture != null ? LoadPreviewPicture(picture) : RenderWallpaper(art, 480, 270))
 			{
 				Stretch = Stretch.UniformToFill,
 				// the lower part holds the ground and the caption covers it, so keep the sky and the decorations
@@ -755,9 +893,21 @@ internal static class SeasonalArt
 		}
 		lock (Previews)
 		{
-			Previews[art] = brush;
+			Previews[key] = brush;
 		}
 		return brush;
+	}
+
+	private static BitmapSource LoadPreviewPicture(string path)
+	{
+		BitmapImage img = new BitmapImage();
+		img.BeginInit();
+		img.CacheOption = BitmapCacheOption.OnLoad;
+		img.DecodePixelWidth = 480;
+		img.UriSource = new Uri(path, UriKind.Absolute);
+		img.EndInit();
+		img.Freeze();
+		return img;
 	}
 
 	public static BitmapSource RenderWallpaper(string art, int width, int height)

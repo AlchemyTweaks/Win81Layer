@@ -133,6 +133,9 @@ internal interface ISeasonalWorld
 	// snapshot at the copies. Returns the snapshot to keep.
 	DesktopWallpaperSnapshot PreserveVolatileFiles(DesktopWallpaperSnapshot snapshot);
 
+	// File name PrepareWallpaperFile would produce now (the drawn scene, or the user's own picture for the season).
+	string ExpectedWallpaperName(string art);
+
 	string? PrepareWallpaperFile(string art);
 
 	bool SetWallpaper(string path);
@@ -197,8 +200,8 @@ internal sealed class SeasonalEngine
 		// design or accent, or a desktop picture changed outside the launcher) it is applied again over the same restore point.
 		if (target == cur && st.Original != null && IsFullyOn(s, st.Original, p))
 		{
-			EnsureWallpaperFile(st, p);
-			return Result(true, target, p.Name + " is already on.");
+			bool swapped = EnsureWallpaperFile(st, p);
+			return Result(true, target, swapped ? p.Name + " desktop picture updated." : p.Name + " is already on.");
 		}
 		SeasonalOriginal orig;
 		if (st.Original != null)
@@ -418,11 +421,18 @@ internal sealed class SeasonalEngine
 		return Result(true, active, "Nothing to recover.");
 	}
 
-	// Re-draws the applied wallpaper when its file went missing while it is still on screen.
+	// Re-draws the applied wallpaper when its file went missing while it is still on screen, and swaps it when the season's
+	// picture changed (the user chose or removed their own picture) while the old one is still on screen.
 	private bool EnsureWallpaperFile(SeasonalStateFile st, SeasonPreset p)
 	{
 		DesktopWallpaperSnapshot? wp = st.Original?.Wallpaper;
-		if (wp == null || string.IsNullOrEmpty(wp.AppliedPath) || _w.FileExists(wp.AppliedPath))
+		if (wp == null || string.IsNullOrEmpty(wp.AppliedPath))
+		{
+			return false;
+		}
+		bool missing = !_w.FileExists(wp.AppliedPath);
+		bool changed = !string.Equals(Path.GetFileName(wp.AppliedPath), _w.ExpectedWallpaperName(p.Art), StringComparison.OrdinalIgnoreCase);
+		if (!missing && !changed)
 		{
 			return false;
 		}
@@ -446,7 +456,7 @@ internal sealed class SeasonalEngine
 			wp.AppliedPath = path;
 			_w.SaveState(st);
 		}
-		Logger.Log("Seasonal: the seasonal wallpaper file was missing and has been drawn again.");
+		Logger.Log(missing ? "Seasonal: the seasonal wallpaper file was missing and has been drawn again." : "Seasonal: the season's desktop picture changed; the new one is on.");
 		return true;
 	}
 
@@ -1029,6 +1039,21 @@ internal static class SeasonalTheme
 		}
 	}
 
+	// True when the active season's desktop picture is no longer the one applied (the user chose or removed a picture
+	// while the launcher was not running). A few file checks; safe on the UI thread.
+	private static bool PictureChanged(AppSettings s, string applied)
+	{
+		try
+		{
+			SeasonPreset? p = Find(NormalizeId(s.SeasonalActive));
+			return p != null && !string.Equals(Path.GetFileName(applied), SeasonalArt.ExpectedWallpaperName(p.Art), StringComparison.OrdinalIgnoreCase);
+		}
+		catch
+		{
+			return false;
+		}
+	}
+
 	// Startup: load the state (one small file) on the UI thread. An interrupted change, a marker that disagrees with
 	// the restore point, or a missing wallpaper file is handled on a worker a few seconds later, once Explorer is up.
 	public static void InitializeAndRecover(App app)
@@ -1052,7 +1077,7 @@ internal static class SeasonalTheme
 		}
 		else
 		{
-			needs = st.Phase != PhaseIdle || (!marker && st.Original != null) || (marker && applied.Length > 0 && !File.Exists(applied));
+			needs = st.Phase != PhaseIdle || (!marker && st.Original != null) || (marker && applied.Length > 0 && (!File.Exists(applied) || PictureChanged(s, applied)));
 		}
 		if (!needs)
 		{
@@ -1348,12 +1373,21 @@ internal sealed class RealSeasonalWorld : ISeasonalWorld
 		try
 		{
 			(int w, int h) = SeasonalArt.TargetWallpaperSize();
-			string path = Path.Combine(SeasonalArt.SeasonalDir, SeasonalArt.WallpaperFileName(art, w, h));
+			string? picture = SeasonalArt.CustomPictureFor(art);
+			string path = Path.Combine(SeasonalArt.SeasonalDir, picture != null ? SeasonalArt.CustomWallpaperFileName(art, picture, w, h) : SeasonalArt.WallpaperFileName(art, w, h));
 			if (!File.Exists(path) || new FileInfo(path).Length < 1024)
 			{
 				Stopwatch sw = Stopwatch.StartNew();
-				SeasonalArt.RenderWallpaperPng(art, w, h, path);
-				Logger.Log($"Seasonal: drew the {art} wallpaper at {w}x{h} in {sw.ElapsedMilliseconds} ms");
+				if (picture != null)
+				{
+					SeasonalArt.RenderPicturePng(picture, w, h, path);
+					Logger.Log($"Seasonal: fitted the user's {art} picture to {w}x{h} in {sw.ElapsedMilliseconds} ms");
+				}
+				else
+				{
+					SeasonalArt.RenderWallpaperPng(art, w, h, path);
+					Logger.Log($"Seasonal: drew the {art} wallpaper at {w}x{h} in {sw.ElapsedMilliseconds} ms");
+				}
 			}
 			return path;
 		}
@@ -1362,6 +1396,11 @@ internal sealed class RealSeasonalWorld : ISeasonalWorld
 			Logger.Log("Seasonal: wallpaper drawing failed: " + ex.Message);
 			return null;
 		}
+	}
+
+	public string ExpectedWallpaperName(string art)
+	{
+		return SeasonalArt.ExpectedWallpaperName(art);
 	}
 
 	public bool SetWallpaper(string path)

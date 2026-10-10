@@ -1475,11 +1475,71 @@ public sealed class PcSettingsWindow : Window
 		});
 		RebuildSeasonTiles();
 		panel.Children.Add(_seasonWallpaperRow);
+		foreach (SeasonPreset preset in SeasonalTheme.Presets)
+		{
+			SeasonPreset p = preset;
+			panel.Children.Add(RowLink(p.Name + " desktop picture", "Use your own picture instead of the drawn " + p.Name + " scene. It is cropped to fill the screen; Normal still brings back your usual wallpaper.", delegate
+			{
+				ChooseSeasonPicture(p);
+			}));
+		}
+		panel.Children.Add(RowLink("Use the drawn seasonal scenes", "Forget the pictures chosen above and go back to the wallpapers drawn by the launcher.", delegate
+		{
+			foreach (SeasonPreset p in SeasonalTheme.Presets)
+			{
+				try
+				{
+					SeasonalArt.ClearCustomPicture(p.Art);
+				}
+				catch (Exception ex)
+				{
+					Logger.Log("Seasonal: could not remove the " + p.Art + " picture: " + ex.Message);
+				}
+			}
+			RefreshSeasonPicture();
+		}));
 		panel.Children.Add(ToggleRow("Seasonal effects on Start", "Falling snow or drifting bats behind the Start tiles. Runs only while Start is open and follows the Motion setting.", s.SeasonalAmbient, delegate(bool on)
 		{
 			SettingsStore.Update(delegate(AppSettings x) { x.SeasonalAmbient = on; });
 			HostApp?.ApplySeasonalLive();
 		}));
+	}
+
+	private void ChooseSeasonPicture(SeasonPreset p)
+	{
+		Microsoft.Win32.OpenFileDialog dlg = new Microsoft.Win32.OpenFileDialog
+		{
+			Title = "Choose a " + p.Name + " desktop picture",
+			Filter = "Pictures (*.jpg;*.jpeg;*.png;*.bmp)|*.jpg;*.jpeg;*.png;*.bmp"
+		};
+		if (dlg.ShowDialog(this) != true)
+		{
+			return;
+		}
+		try
+		{
+			SeasonalArt.SetCustomPicture(p.Art, dlg.FileName);
+		}
+		catch (Exception ex)
+		{
+			if (_seasonStatus != null)
+			{
+				_seasonStatus.Text = "That picture could not be used: " + ex.Message;
+			}
+			return;
+		}
+		RefreshSeasonPicture();
+	}
+
+	// After a picture change: refresh the previews, and when that season is on, put the new picture on the desktop.
+	private void RefreshSeasonPicture()
+	{
+		RebuildSeasonTiles();
+		string active = SeasonalTheme.NormalizeId(SettingsStore.FastSnapshot.SeasonalActive);
+		if (active.Length > 0 && !_seasonBusyUi)
+		{
+			ApplySeason(active);
+		}
 	}
 
 	private void RebuildSeasonTiles()

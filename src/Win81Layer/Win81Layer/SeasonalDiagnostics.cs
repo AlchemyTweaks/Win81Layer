@@ -304,6 +304,11 @@ internal static class SeasonalDiagnostics
 		}
 
 		// Drawing the picture into the launcher's own folder is not a change to the user's state, so it is not a write.
+		public string ExpectedWallpaperName(string art)
+		{
+			return SeasonalArt.WallpaperFileName(art, 1920, 1080);
+		}
+
 		public string? PrepareWallpaperFile(string art)
 		{
 			string path = Folder + SeasonalArt.WallpaperFileName(art, 1920, 1080);
