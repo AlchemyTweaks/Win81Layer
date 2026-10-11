@@ -408,6 +408,32 @@ public sealed partial class Win7StartMenu
         Logger.Log("Win7StartMenu QaRender -> " + outDir + " (" + tag + ")");
     }
 
+    // One render of the default state with a given glass source colour (for example a preset's accent), written to
+    // outPath. Harness mode as in QaRender: never activated, never placed on screen. Returns the list pane colour the
+    // palette painted (W7.PaneBg). backdrop: a solid colour behind the translucent glass (for example the preset's own
+    // desktop) instead of the harness's blue-green test backdrop.
+    internal Color? QaRenderPreset(string outPath, Color glassSource, Color? backdrop = null)
+    {
+        QaInit();
+        QaReset();
+        EnsurePalette();
+        QaInjectDefault();
+        _qaGlassSource = glassSource;
+        ShowMenu("qa");
+        QaEnsureShown();
+        RenderTargetBitmap rtb = SnapBitmap(backdrop: true, solid: backdrop);
+        PngBitmapEncoder enc = new PngBitmapEncoder();
+        enc.Frames.Add(BitmapFrame.Create(rtb));
+        using (FileStream fs = File.Create(outPath))
+        {
+            enc.Save(fs);
+        }
+        Color? pane = (Resources["W7.PaneBg"] as SolidColorBrush)?.Color;
+        Dismiss("qa done", instant: true);
+        QaReset();
+        return pane;
+    }
+
     // Disposes this harness menu exactly like App does (DisposeMenu) and records the result in the tag's checks file.
     // The file is rewritten so the dispose-self line sits before the summary and is counted in it.
     internal void QaDispose(string outDir, string tag)

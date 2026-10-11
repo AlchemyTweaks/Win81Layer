@@ -52,7 +52,20 @@ public static class Motion
 		Exponent = 6.0
 	});
 
-	public static MotionMode Mode { get; set; }
+	private static MotionMode _userMode;
+
+	// Dark rest's calmer animations (DarkRest.Sync): Authentic and Fast play as Reduced while this is set; Off and
+	// Reduced are kept. The user's own mode is never changed by it.
+	internal static volatile bool CalmOverride;
+
+	public static MotionMode Mode
+	{
+		get => CalmOverride && _userMode is MotionMode.Authentic or MotionMode.Fast ? MotionMode.Reduced : _userMode;
+		set => _userMode = value;
+	}
+
+	// The mode as the user (or the startup policy) set it, without the Dark rest override.
+	internal static MotionMode UserMode => _userMode;
 
 	// Public multiplier so hand-rolled animations (e.g. live-tile flips) can honor the same timing contract as Dur/Time.
 	public static double Factor => Scale;

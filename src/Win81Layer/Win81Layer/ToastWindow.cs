@@ -25,6 +25,8 @@ public sealed class ToastWindow : Window
 		//IL_05c5: Unknown result type (might be due to invalid IL or missing references)
 		//IL_05ca: Unknown result type (might be due to invalid IL or missing references)
 		//IL_05dd: Expected O, but got Unknown
+		// Dark rest: a dark card with soft ink, read once for this toast.
+		bool rest = DarkRest.Visuals;
 		_onClick = onClick;
 		base.WindowStyle = WindowStyle.None;
 		base.ResizeMode = ResizeMode.NoResize;
@@ -76,7 +78,7 @@ public sealed class ToastWindow : Window
 			texts.Children.Add(new TextBlock
 			{
 				Text = appName,
-				Foreground = new SolidColorBrush(Color.FromRgb(110, 110, 110)),
+				Foreground = rest ? DarkRestPalette.ToastApp : new SolidColorBrush(Color.FromRgb(110, 110, 110)),
 				FontFamily = new FontFamily("Segoe UI"),
 				FontSize = 12.0,
 				TextTrimming = TextTrimming.CharacterEllipsis
@@ -85,7 +87,7 @@ public sealed class ToastWindow : Window
 		texts.Children.Add(new TextBlock
 		{
 			Text = title,
-			Foreground = new SolidColorBrush(Color.FromRgb(26, 26, 26)),
+			Foreground = rest ? DarkRestPalette.ToastTitle : new SolidColorBrush(Color.FromRgb(26, 26, 26)),
 			FontFamily = new FontFamily("Segoe UI Semibold"),
 			FontSize = 14.0,
 			TextTrimming = TextTrimming.CharacterEllipsis,
@@ -96,7 +98,7 @@ public sealed class ToastWindow : Window
 			texts.Children.Add(new TextBlock
 			{
 				Text = message,
-				Foreground = new SolidColorBrush(Color.FromRgb(58, 58, 58)),
+				Foreground = rest ? DarkRestPalette.ToastMessage : new SolidColorBrush(Color.FromRgb(58, 58, 58)),
 				FontFamily = new FontFamily("Segoe UI"),
 				FontSize = 13.0,
 				TextWrapping = TextWrapping.Wrap,
@@ -116,12 +118,12 @@ public sealed class ToastWindow : Window
 			Height = 42.0,
 			VerticalAlignment = VerticalAlignment.Top,
 			HorizontalAlignment = HorizontalAlignment.Right,
-			Foreground = new SolidColorBrush(Color.FromRgb(58, 58, 58)),
+			Foreground = rest ? DarkRestPalette.ToastClose : new SolidColorBrush(Color.FromRgb(58, 58, 58)),
 			Background = Brushes.Transparent,
 			BorderThickness = new Thickness(0.0),
 			Cursor = Cursors.Hand,
 			FocusVisualStyle = null,
-			Template = CloseTemplate()
+			Template = CloseTemplate(rest)
 		};
 		close.Click += delegate
 		{
@@ -134,7 +136,7 @@ public sealed class ToastWindow : Window
 			TextBlock ts = new TextBlock
 			{
 				Text = timestamp,
-				Foreground = new SolidColorBrush(Color.FromRgb(154, 154, 154)),
+				Foreground = rest ? DarkRestPalette.ToastTime : new SolidColorBrush(Color.FromRgb(154, 154, 154)),
 				FontFamily = new FontFamily("Segoe UI"),
 				FontSize = 11.0,
 				HorizontalAlignment = HorizontalAlignment.Right,
@@ -147,8 +149,10 @@ public sealed class ToastWindow : Window
 		}
 		Border card = new Border
 		{
-			Background = (ShellSkin.GlassOn ? new SolidColorBrush(Color.FromArgb(224, byte.MaxValue, byte.MaxValue, byte.MaxValue)) : Brushes.White),
-			BorderBrush = new SolidColorBrush(Color.FromRgb(173, 173, 173)),
+			Background = rest
+				? (ShellSkin.GlassOn ? DarkRestPalette.ToastCardGlass : DarkRestPalette.ToastCard)
+				: (ShellSkin.GlassOn ? new SolidColorBrush(Color.FromArgb(224, byte.MaxValue, byte.MaxValue, byte.MaxValue)) : Brushes.White),
+			BorderBrush = rest ? DarkRestPalette.ToastBorder : new SolidColorBrush(Color.FromRgb(173, 173, 173)),
 			BorderThickness = new Thickness(1.0),
 			Margin = new Thickness(1.0, 1.0, 1.0, 1.0),
 			Child = grid,
@@ -272,7 +276,7 @@ public sealed class ToastWindow : Window
 		}
 	}
 
-	private static ControlTemplate CloseTemplate()
+	private static ControlTemplate CloseTemplate(bool rest)
 	{
 		ControlTemplate t = new ControlTemplate(typeof(Button));
 		FrameworkElementFactory bd = new FrameworkElementFactory(typeof(Border))
@@ -290,7 +294,7 @@ public sealed class ToastWindow : Window
 			Property = UIElement.IsMouseOverProperty,
 			Value = true
 		};
-		hover.Setters.Add(new Setter(Border.BackgroundProperty, new SolidColorBrush(Color.FromRgb(230, 230, 230)), "bd"));
+		hover.Setters.Add(new Setter(Border.BackgroundProperty, rest ? DarkRestPalette.ToastCloseHover : new SolidColorBrush(Color.FromRgb(230, 230, 230)), "bd"));
 		t.Triggers.Add(hover);
 		return t;
 	}

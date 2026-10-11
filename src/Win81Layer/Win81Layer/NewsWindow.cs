@@ -20,7 +20,9 @@ internal sealed class NewsSourcePicker : StackPanel
 	{
 		if (!ShellSkin.GlassOn) MetroPatternTheme.Apply(this);
 		string current = SettingsStore.FastSnapshot.NewsFeedUrl;
-		ComboBox sources = new() { ItemsSource = NewsFeedService.Sources.Select(s => s.Name).Append("Custom RSS / Atom").ToArray(), Height = 32, Margin = new Thickness(0, 0, 0, 8), Foreground = Brushes.Black };
+		ComboBox sources = new() { ItemsSource = NewsFeedService.Sources.Select(s => s.Name).Append("Custom RSS / Atom").ToArray(), Height = 32, Margin = new Thickness(0, 0, 0, 8) };
+		// Ink and field colours follow light/dark mode (black on white in light mode, as before; readable when dark).
+		sources.SetResourceReference(Control.ForegroundProperty, "Metro81.Ink");
 		sources.SelectedIndex = Array.FindIndex(NewsFeedService.Sources, s => s.Url == current);
 		if (sources.SelectedIndex < 0) sources.SelectedIndex = NewsFeedService.Sources.Length;
 		AutomationProperties.SetName(sources, "News source");
@@ -28,7 +30,9 @@ internal sealed class NewsSourcePicker : StackPanel
 		Grid row = new();
 		row.ColumnDefinitions.Add(new ColumnDefinition());
 		row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-		UrlBox = new TextBox { Text = current, Height = 34, Padding = new Thickness(8, 4, 8, 4), VerticalContentAlignment = VerticalAlignment.Center, Foreground = Brushes.Black, Background = Brushes.White, MinWidth = 80 };
+		UrlBox = new TextBox { Text = current, Height = 34, Padding = new Thickness(8, 4, 8, 4), VerticalContentAlignment = VerticalAlignment.Center, MinWidth = 80 };
+		UrlBox.SetResourceReference(Control.ForegroundProperty, "Metro81.Ink");
+		UrlBox.SetResourceReference(Control.BackgroundProperty, "Metro81.Surface");
 		AutomationProperties.SetName(UrlBox, "RSS or Atom feed URL");
 		row.Children.Add(UrlBox);
 		Button save = IconButton("\ue74e", "Save news source");

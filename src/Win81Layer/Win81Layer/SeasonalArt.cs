@@ -50,9 +50,20 @@ internal static class SeasonalArt
 
 	private static readonly Geometry HollyVeinUnit = Freeze(new LineGeometry(new Point(0.03, 0.0), new Point(0.49, 0.0)));
 
+	// Dark rest: its desktop scene and its Start pattern. "dusk" is not one of the Personalize designs.
+	public const string RestArt = "rest";
+
+	public const string RestPattern = "dusk";
+
 	public static bool IsSeasonalPattern(string? pattern)
 	{
 		return pattern != null && Array.IndexOf(PatternIds, pattern) >= 0;
+	}
+
+	// The seasonal designs and the Dark rest pattern: the patterns a preset can write.
+	public static bool IsPresetPattern(string? pattern)
+	{
+		return IsSeasonalPattern(pattern) || pattern == RestPattern;
 	}
 
 	public static double TileSize(string pattern)
@@ -63,16 +74,24 @@ internal static class SeasonalArt
 			"ornaments" => 440.0,
 			"bats" => 240.0,
 			"webs" => 260.0,
+			"dusk" => 480.0,
 			_ => 220.0,
 		};
 	}
 
 	// The signature tiles leave a clear band at their top and bottom edges (tile y 0-44 and 408-440). Shifting the
 	// tiles down by this much lines that band up with the Start header (y 40-110), so no motif sits behind the title,
-	// the user name or the header buttons.
+	// the user name or the header buttons. The dusk lines (every 120 DIU) are shifted so that the header row (y 24-88)
+	// falls between two of them.
 	public static double TileOffsetY(string pattern)
 	{
-		return (pattern == "pumpkins" || pattern == "ornaments") ? 70.0 : 0.0;
+		return pattern switch
+		{
+			"pumpkins" => 70.0,
+			"ornaments" => 70.0,
+			"dusk" => 50.0,
+			_ => 0.0,
+		};
 	}
 
 	// Where a scaled-down tile starts in a small preview (scale < 1). The large signature tiles centre their main
@@ -119,7 +138,40 @@ internal static class SeasonalArt
 		case "holly":
 			DrawHollyTile(dc, baseColor, accent);
 			break;
+		case "dusk":
+			DrawDuskTile(dc, accent);
+			break;
 		}
+	}
+
+	// 480 DIU Dark rest tile: four faint, gently waving lines, each with a fainter echo 10 DIU below. Every line leaves
+	// and re-enters the tile at the same height with the same slope, so the repeat is seamless, and no line comes near
+	// the top or bottom edge (tile y 42-448). On the rest colours the lines are barely lighter than the base.
+	private static readonly Geometry DuskWaves = BuildDuskWaves(0.0);
+
+	private static readonly Geometry DuskEchoes = BuildDuskWaves(10.0);
+
+	private static void DrawDuskTile(DrawingContext dc, Color accent)
+	{
+		dc.DrawGeometry(null, MakePen(Solid(Color.FromArgb(0x1F, accent.R, accent.G, accent.B)), 1.6), DuskWaves);
+		dc.DrawGeometry(null, MakePen(Solid(Color.FromArgb(0x10, accent.R, accent.G, accent.B)), 1.0), DuskEchoes);
+	}
+
+	private static Geometry BuildDuskWaves(double dy)
+	{
+		StreamGeometry g = new StreamGeometry();
+		using (StreamGeometryContext c = g.Open())
+		{
+			foreach (double y0 in new double[4] { 60.0, 180.0, 300.0, 420.0 })
+			{
+				double y = y0 + dy;
+				c.BeginFigure(new Point(0.0, y), isFilled: false, isClosed: false);
+				c.QuadraticBezierTo(new Point(120.0, y - 36.0), new Point(240.0, y), isStroked: true, isSmoothJoin: true);
+				c.QuadraticBezierTo(new Point(360.0, y + 36.0), new Point(480.0, y), isStroked: true, isSmoothJoin: true);
+			}
+		}
+		g.Freeze();
+		return g;
 	}
 
 	// 440 DIU tile: five lit jack-o'-lanterns of different sizes and tilts scattered over two staggered rows, so the
@@ -821,8 +873,8 @@ internal static class SeasonalArt
 		}
 	}
 
-	// Renders the wallpaper for art ("halloween" / "christmas") to path. Must run on an STA thread. The file is written
-	// to a temporary name first and then moved into place, so a crash never leaves a half-written wallpaper.
+	// Renders the wallpaper for art ("halloween", "christmas" or "rest") to path. Must run on an STA thread. The file is
+	// written to a temporary name first and then moved into place, so a crash never leaves a half-written wallpaper.
 	public static void RenderWallpaperPng(string art, int width, int height, string path)
 	{
 		WritePngAtomic(RenderWallpaper(art, width, height), path);
@@ -889,7 +941,12 @@ internal static class SeasonalArt
 		catch (Exception ex)
 		{
 			Logger.Log("Seasonal: preview render failed: " + ex.Message);
-			brush = Solid(art == "christmas" ? Hex("#FF0B3D2C") : Hex("#FF22103A"));
+			brush = Solid(art switch
+			{
+				"christmas" => Hex("#FF0B3D2C"),
+				RestArt => Hex("#FF121519"),
+				_ => Hex("#FF22103A"),
+			});
 		}
 		lock (Previews)
 		{
@@ -912,6 +969,10 @@ internal static class SeasonalArt
 
 	public static BitmapSource RenderWallpaper(string art, int width, int height)
 	{
+		if (art == RestArt)
+		{
+			return RenderRestWallpaper(width, height);
+		}
 		DrawingVisual dv = new DrawingVisual();
 		using (DrawingContext dc = dv.RenderOpen())
 		{
@@ -931,18 +992,194 @@ internal static class SeasonalArt
 		using (DrawingContext dc = group.Open())
 		{
 			dc.PushClip(new RectangleGeometry(new Rect(0, 0, w, h)));
-			if (art == "christmas")
+			switch (art)
 			{
+			case "christmas":
 				DrawChristmasWallpaper(dc, w, h);
-			}
-			else
-			{
+				break;
+			case RestArt:
+				dc.DrawImage(RenderRestWallpaper(Math.Max(1, (int)Math.Round(w)), Math.Max(1, (int)Math.Round(h))), new Rect(0, 0, w, h));
+				break;
+			default:
 				DrawHalloweenWallpaper(dc, w, h);
+				break;
 			}
 			dc.Pop();
 		}
 		group.Freeze();
 		return group;
+	}
+
+	// ----- Dark rest "Night hills"
+
+	// Three layers of soft hills under a dark sky with a faint glow and a breath of mist. Low contrast and no bright
+	// element anywhere (the lightest pixel is about #1D232B), so it is calm to look at in a dark room.
+	// Its gradients span only a few colour levels across the whole screen, which 8-bit drawing shows as rings and steps.
+	// So every pixel is computed in floating point and then ordered-dithered with a fixed 8 x 8 Bayer matrix: smooth,
+	// and exactly the same every time (no randomness).
+	private static readonly (double X1, double Y1, double X2, double Y2, double X3, double Y3)[] FarRidge = new (double, double, double, double, double, double)[3]
+	{
+		(0.10, 0.57, 0.18, 0.56, 0.28, 0.59),
+		(0.40, 0.63, 0.50, 0.60, 0.60, 0.61),
+		(0.72, 0.62, 0.82, 0.55, 1.00, 0.58)
+	};
+
+	private static readonly (double X1, double Y1, double X2, double Y2, double X3, double Y3)[] MiddleRidge = new (double, double, double, double, double, double)[3]
+	{
+		(0.14, 0.69, 0.24, 0.67, 0.34, 0.69),
+		(0.48, 0.72, 0.62, 0.71, 0.74, 0.69),
+		(0.84, 0.68, 0.93, 0.71, 1.00, 0.72)
+	};
+
+	private static readonly (double X1, double Y1, double X2, double Y2, double X3, double Y3)[] NearRidge = new (double, double, double, double, double, double)[3]
+	{
+		(0.08, 0.78, 0.16, 0.77, 0.26, 0.79),
+		(0.42, 0.83, 0.56, 0.82, 0.66, 0.81),
+		(0.80, 0.80, 0.90, 0.84, 1.00, 0.83)
+	};
+
+	private static readonly byte[] Bayer8 = new byte[64]
+	{
+		0, 32, 8, 40, 2, 34, 10, 42, 48, 16, 56, 24, 50, 18, 58, 26, 12, 44, 4, 36, 14, 46, 6, 38, 60, 28, 52, 20, 62, 30, 54, 22,
+		3, 35, 11, 43, 1, 33, 9, 41, 51, 19, 59, 27, 49, 17, 57, 25, 15, 47, 7, 39, 13, 45, 5, 37, 63, 31, 55, 23, 61, 29, 53, 21
+	};
+
+	private static BitmapSource RenderRestWallpaper(int width, int height)
+	{
+		double W = width;
+		double H = height;
+		double[] far = RidgeHeights(width, H, 0.60, FarRidge);
+		double[] middle = RidgeHeights(width, H, 0.72, MiddleRidge);
+		double[] near = RidgeHeights(width, H, 0.80, NearRidge);
+		(double R, double G, double B) sky0 = Rgb("#0B0E12");
+		(double R, double G, double B) sky1 = Rgb("#121821");
+		(double R, double G, double B) sky2 = Rgb("#0E1116");
+		(double R, double G, double B) glow = Rgb("#1B2330");
+		(double R, double G, double B) farFill = Rgb("#141A22");
+		(double R, double G, double B) middleFill = Rgb("#10151C");
+		(double R, double G, double B) nearFill = Rgb("#0B0E13");
+		double gx = 0.70 * W;
+		double gy = 0.26 * H;
+		double gr = 0.30 * Math.Max(W, H);
+		// The mist lies on the far hills and follows their outline: it starts at their top edge, is densest a little below
+		// it and is gone 7 % of the height further down, before the middle hills begin. So it never shows as a straight
+		// band or as a light rim along the next ridge.
+		double mistDepth = 0.07 * H;
+		int stride = width * 4;
+		byte[] px = new byte[stride * height];
+		for (int y = 0; y < height; y++)
+		{
+			double cy = y + 0.5;
+			// sky: a vertical gradient with stops at 0, 0.55 and 1 of the height
+			double t = cy / H;
+			(double R, double G, double B) row = t < 0.55 ? Mix(sky0, sky1, t / 0.55) : Mix(sky1, sky2, (t - 0.55) / 0.45);
+			for (int x = 0; x < width; x++)
+			{
+				// mist: white, at most 4 %, fading in below the far ridge's edge and out again
+				double mist = (10.0 / 255.0) * Haze((cy - far[x]) / mistDepth);
+				(double R, double G, double B) c = row;
+				double dx = x + 0.5 - gx;
+				double dy = cy - gy;
+				double d = Math.Sqrt(dx * dx + dy * dy);
+				if (d < gr)
+				{
+					c = Mix(c, glow, 0.4 * (1.0 - d / gr));
+				}
+				c = Mix(c, farFill, Coverage(far[x], y));
+				if (mist > 0.0)
+				{
+					c = Mix(c, (255.0, 255.0, 255.0), mist);
+				}
+				c = Mix(c, middleFill, Coverage(middle[x], y));
+				c = Mix(c, nearFill, Coverage(near[x], y));
+				double dither = (Bayer8[(y & 7) * 8 + (x & 7)] + 0.5) / 64.0;
+				int i = y * stride + x * 4;
+				px[i] = Quantize(c.B, dither);
+				px[i + 1] = Quantize(c.G, dither);
+				px[i + 2] = Quantize(c.R, dither);
+				px[i + 3] = 255;
+			}
+		}
+		BitmapSource bmp = BitmapSource.Create(width, height, 96.0, 96.0, PixelFormats.Bgr32, null, px, stride);
+		bmp.Freeze();
+		return bmp;
+	}
+
+	// The height of a hill's top edge at the centre of every pixel column. The hill starts at (0, y0 H) and follows three
+	// cubic segments (fractions of the size) whose x only grows, so each column has exactly one height.
+	private static double[] RidgeHeights(int width, double H, double y0, (double X1, double Y1, double X2, double Y2, double X3, double Y3)[] segments)
+	{
+		List<Point> pts = new List<Point> { new Point(0.0, y0 * H) };
+		Point p0 = pts[0];
+		foreach ((double x1, double y1, double x2, double y2, double x3, double y3) in segments)
+		{
+			Point p1 = new Point(x1 * width, y1 * H);
+			Point p2 = new Point(x2 * width, y2 * H);
+			Point p3 = new Point(x3 * width, y3 * H);
+			for (int k = 1; k <= 512; k++)
+			{
+				double u = k / 512.0;
+				double a = (1 - u) * (1 - u) * (1 - u);
+				double b = 3 * (1 - u) * (1 - u) * u;
+				double c = 3 * (1 - u) * u * u;
+				double e = u * u * u;
+				pts.Add(new Point(a * p0.X + b * p1.X + c * p2.X + e * p3.X, a * p0.Y + b * p1.Y + c * p2.Y + e * p3.Y));
+			}
+			p0 = p3;
+		}
+		double[] heights = new double[width];
+		int j = 0;
+		for (int x = 0; x < width; x++)
+		{
+			double cx = x + 0.5;
+			while (j < pts.Count - 2 && pts[j + 1].X < cx)
+			{
+				j++;
+			}
+			Point a = pts[j];
+			Point b = pts[j + 1];
+			double f = b.X - a.X > 1e-9 ? Math.Clamp((cx - a.X) / (b.X - a.X), 0.0, 1.0) : 0.0;
+			heights[x] = a.Y + (b.Y - a.Y) * f;
+		}
+		return heights;
+	}
+
+	// The mist's density at depth d below the far ridge's edge (0 at the edge, 1 at the mist's lower end): a smooth rise
+	// to its densest point at 0.35 and a longer smooth fall; 0 outside.
+	private static double Haze(double d)
+	{
+		if (d <= 0.0 || d >= 1.0)
+		{
+			return 0.0;
+		}
+		double t = d < 0.35 ? d / 0.35 : 1.0 - (d - 0.35) / 0.65;
+		return t * t * (3.0 - 2.0 * t);
+	}
+
+	// How much of the pixel row y lies below a hill edge at height top (0..1): a soft, anti-aliased edge.
+	private static double Coverage(double top, int y)
+	{
+		return Math.Clamp(y + 1.0 - top, 0.0, 1.0);
+	}
+
+	private static (double R, double G, double B) Rgb(string hex)
+	{
+		Color c = Hex("#FF" + hex.TrimStart('#'));
+		return (c.R, c.G, c.B);
+	}
+
+	private static (double R, double G, double B) Mix((double R, double G, double B) a, (double R, double G, double B) b, double t)
+	{
+		if (t <= 0.0)
+		{
+			return a;
+		}
+		return (a.R + (b.R - a.R) * t, a.G + (b.G - a.G) * t, a.B + (b.B - a.B) * t);
+	}
+
+	private static byte Quantize(double v, double dither)
+	{
+		return (byte)Math.Clamp((int)Math.Floor(v + dither), 0, 255);
 	}
 
 	// ----- Halloween "Moonlit hill"

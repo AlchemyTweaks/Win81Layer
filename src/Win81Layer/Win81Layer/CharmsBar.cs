@@ -107,10 +107,7 @@ public partial class CharmsBar : Window, IComponentConnector
 		_dismissOnPointerLeave = fromPointer;
 		base.ShowActivated = !fromPointer;
 		Show();
-		// Win7-Aero → translucent smoked-glass strip (wallpaper shows through); Win8.1/native → opaque flat strip.
-		BarRoot.Background = new SolidColorBrush(ShellSkin.GlassOn
-			? System.Windows.Media.Color.FromArgb(0xC4, 0x1C, 0x1C, 0x1C)
-			: System.Windows.Media.Color.FromArgb(0xFF, 0x1C, 0x1C, 0x1C));
+		BarRoot.Background = BarBackground();
 		ShellSkin.ApplyGlass(this);
 		try
 		{
@@ -185,9 +182,7 @@ public partial class CharmsBar : Window, IComponentConnector
 			_dismissOnPointerLeave = false;
 			base.ShowActivated = false;
 			Show();
-			BarRoot.Background = new SolidColorBrush(ShellSkin.GlassOn
-				? System.Windows.Media.Color.FromArgb(0xC4, 0x1C, 0x1C, 0x1C)
-				: System.Windows.Media.Color.FromArgb(0xFF, 0x1C, 0x1C, 0x1C));
+			BarRoot.Background = BarBackground();
 			ShellSkin.ApplyGlass(this);
 			try { StartCharm.Foreground = new SolidColorBrush(StartAccent.Color()); } catch { }
 			PositionCharmsOnCursorScreen();
@@ -298,11 +293,30 @@ public partial class CharmsBar : Window, IComponentConnector
 		}
 	}
 
+	// Win7-Aero: a translucent smoked-glass strip (the wallpaper shows through); Win8.1/native: an opaque flat strip.
+	// Dark rest uses a slightly cooler, darker slate in both.
+	private static SolidColorBrush BarBackground()
+	{
+		System.Windows.Media.Color c;
+		if (DarkRest.Visuals)
+		{
+			c = ShellSkin.GlassOn ? DarkRestPalette.CharmsGlass : DarkRestPalette.Charms;
+		}
+		else
+		{
+			c = ShellSkin.GlassOn
+				? System.Windows.Media.Color.FromArgb(0xC4, 0x1C, 0x1C, 0x1C)
+				: System.Windows.Media.Color.FromArgb(0xFF, 0x1C, 0x1C, 0x1C);
+		}
+		return new SolidColorBrush(c);
+	}
+
 	public void QaRender(string outPath)
 	{
 		//IL_003e: Unknown result type (might be due to invalid IL or missing references)
 		//IL_0068: Unknown result type (might be due to invalid IL or missing references)
 		Show();
+		BarRoot.Background = BarBackground();
 		try
 		{
 			StartCharm.Foreground = new SolidColorBrush(StartAccent.Color());

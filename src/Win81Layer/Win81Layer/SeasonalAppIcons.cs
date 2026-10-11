@@ -368,6 +368,11 @@ internal static class SeasonalAppIcons
 	{
 		raw ??= "";
 		string season = SeasonalTheme.NormalizeId(raw);
+		if (!SeasonalTheme.IsSeason(season))
+		{
+			// Dark rest has no icon set: the apps keep their own icons.
+			season = "";
+		}
 		string head = season + "|" + (enabled ? "1" : "0");
 		if (season.Length == 0 || !enabled)
 		{

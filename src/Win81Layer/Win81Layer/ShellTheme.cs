@@ -18,6 +18,8 @@ public static class ShellTheme
 	private static readonly object Gate = new object();
 	private static bool? _isDark;
 	private static bool _initialized;
+	// Set by ForceForTest: a render harness pinned the state, so registry-driven refreshes leave it alone.
+	private static bool _forcedForTest;
 
 	// Frozen brush cache for code-behind consumers (File Browser, Win7 Start, PC Settings), rebuilt on Invalidate.
 	private static Dictionary<string, SolidColorBrush>? _brushes;
@@ -54,6 +56,7 @@ public static class ShellTheme
 		// Don't filter by category: Windows raises this under different categories across versions when the app
 		// theme flips. Re-reading the registry is cheap and the equality guard below skips all unrelated changes,
 		// so we never do work unless dark/light actually toggled.
+		if (_forcedForTest) return;   // a render harness pinned light/dark for this process
 		bool before;
 		lock (Gate) { before = _isDark ?? ReadIsDarkFromRegistry(); }
 		bool now = ReadIsDarkFromRegistry();
@@ -97,8 +100,21 @@ public static class ShellTheme
 	// Render harnesses only (e.g. --win7starttest): pin light/dark for THIS process without touching the registry.
 	internal static void ForceForTest(bool dark)
 	{
-		lock (Gate) { _isDark = dark; _brushes = null; }
+		lock (Gate) { _isDark = dark; _brushes = null; _forcedForTest = true; }
 		try { TaskbarContextMenu.InvalidateTheme(); } catch { }
+		ApplyResourceTokens();
+		RaiseChanged();
+	}
+
+	// Re-reads light/dark right away (after the seasonal engine changed it) instead of waiting for the
+	// WM_SETTINGCHANGE round-trip. Does nothing when the value did not change or a harness pinned it. UI thread.
+	public static void Refresh()
+	{
+		if (_forcedForTest) return;
+		bool before;
+		lock (Gate) { before = _isDark ?? ReadIsDarkFromRegistry(); }
+		if (ReadIsDarkFromRegistry() == before) return;
+		Invalidate();
 		ApplyResourceTokens();
 		RaiseChanged();
 	}
@@ -170,22 +186,36 @@ public static class ShellTheme
 		if (app == null) return;
 		void Do()
 		{
-			bool dark = IsDark;
-			ResourceDictionary res = app.Resources;
-			foreach (var (key, light, darkHex) in Tokens)
-			{
-				try
-				{
-					SolidColorBrush b = new SolidColorBrush((Color)ColorConverter.ConvertFromString(dark ? darkHex : light));
-					b.Freeze();
-					res[key] = b;
-				}
-				catch { }
-			}
+			WriteTokens(app.Resources, IsDark);
 		}
 		Dispatcher d = app.Dispatcher;
 		if (d.CheckAccess()) Do();
 		else d.Invoke(Do);
+	}
+
+	// Writes the light or dark value of every token into target. Dark rest also writes the dark set into a window's own
+	// resources, so that window stays dark even if Windows is switched back to light meanwhile.
+	internal static void WriteTokens(ResourceDictionary target, bool dark)
+	{
+		foreach (var (key, light, darkHex) in Tokens)
+		{
+			try
+			{
+				SolidColorBrush b = new SolidColorBrush((Color)ColorConverter.ConvertFromString(dark ? darkHex : light));
+				b.Freeze();
+				target[key] = b;
+			}
+			catch { }
+		}
+	}
+
+	// Removes the tokens WriteTokens put into target, so its lookups fall back to the application values again.
+	internal static void RemoveTokens(ResourceDictionary target)
+	{
+		foreach (var (key, _, _) in Tokens)
+		{
+			try { target.Remove(key); } catch { }
+		}
 	}
 
 	// ---- code-behind brush accessors (for surfaces that build brushes in code, not via XAML resources) -------------
@@ -216,6 +246,12 @@ public static class ShellTheme
 
 	[DllImport("user32.dll", CharSet = CharSet.Auto)]
 	private static extern nint SendMessageTimeout(nint hWnd, uint msg, nint wParam, string lParam, uint flags, uint timeout, out nint result);
+
+	// The broadcast Windows Settings sends after a light/dark change, so other apps repaint.
+	internal static void BroadcastImmersiveColorSet()
+	{
+		BroadcastSettingChange("ImmersiveColorSet");
+	}
 
 	private static void BroadcastSettingChange(string section)
 	{

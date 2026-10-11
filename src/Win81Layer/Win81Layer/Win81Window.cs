@@ -557,7 +557,8 @@ public partial class Win81Window : Window, IComponentConnector
 			BuildAeroPalette(accent);
 			base.Resources["WindowAccent"] = _active;
 			bool glass = ShellSkin.OwnedAeroOn && !_explorerChrome81;
-			bool light81 = !glass && SettingsStore.Current.Win81LightCaption && !_explorerChrome81;
+			// Dark rest keeps the accent caption: the white 8.1 caption would glare.
+			bool light81 = !glass && SettingsStore.Current.Win81LightCaption && !_explorerChrome81 && !DarkRest.Visuals;
 			if (glass)
 			{
 				// Native Win7 captions use dark title/button ink over light colorized glass; Close remains white.
@@ -590,7 +591,7 @@ public partial class Win81Window : Window, IComponentConnector
 		try
 		{
 			bool glass = ShellSkin.OwnedAeroOn && !_explorerChrome81;
-			bool light81 = !glass && SettingsStore.Current.Win81LightCaption && !_explorerChrome81;
+			bool light81 = !glass && SettingsStore.Current.Win81LightCaption && !_explorerChrome81 && !DarkRest.Visuals;
 			if (_nativeAeroFrame)
 			{
 				// Keep the real DWM blur and native caption buttons, then apply a frozen translucent Win7 Sky layer.

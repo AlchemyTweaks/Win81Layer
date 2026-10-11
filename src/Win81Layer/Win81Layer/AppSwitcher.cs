@@ -219,6 +219,8 @@ public sealed class AppSwitcher : Window
 			BorderThickness = new Thickness(1.0),
 			BorderBrush = new SolidColorBrush(System.Windows.Media.Color.FromArgb(102, byte.MaxValue, byte.MaxValue, byte.MaxValue))
 		};
+		_searchBgNormal = _search.Background;
+		_searchBorderNormal = _search.BorderBrush;
 		_search.TextChanged += delegate
 		{
 			ScheduleFilter();
@@ -1435,8 +1437,22 @@ public sealed class AppSwitcher : Window
 			_textBrush = new SolidColorBrush(Colors.White);
 			base.Background = new LinearGradientBrush(FaintTint(0.82), FaintTint(0.94), 90.0);
 		}
+		// Dark rest: the search box and the scrollbar join the other dark fields and quiet scrollbars; Normal puts back
+		// the very same brushes.
+		bool rest = DarkRest.Visuals;
+		_search.Background = rest ? DarkRestPalette.FieldBox : _searchBgNormal;
+		_search.BorderBrush = rest ? DarkRestPalette.FieldBorder : _searchBorderNormal;
+		DarkRestPalette.RemoveRestResources(base.Resources);
+		if (rest)
+		{
+			DarkRestPalette.WriteScrollBrushes(base.Resources);
+		}
 		RefreshStartBarPalette();
 	}
+
+	private readonly System.Windows.Media.Brush _searchBgNormal;
+
+	private readonly System.Windows.Media.Brush _searchBorderNormal;
 
 	private void ConfigureNativeSurface()
 	{
@@ -1589,6 +1605,8 @@ public sealed class AppSwitcher : Window
 		base.Left = -4000.0;
 		base.Top = -4000.0;
 		base.Height = 900.0;
+		// The live show refreshes the palette from the current accent; the render does the same.
+		SyncPalette();
 		Show();
 		_hwnd = new WindowInteropHelper(this).Handle;
 		BuildEntries();

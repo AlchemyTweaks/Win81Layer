@@ -54,6 +54,11 @@ public static class TaskbarTheme
 		try
 		{
 			AppSettings s = SettingsStore.Load();
+			if (Rest(s))
+			{
+				// Dark rest: one calm, nearly opaque slate whatever the colour mode or transparency (low glare).
+				return ColorMath.Frozen(DarkRestPalette.TaskbarBackground);
+			}
 			bool transparent = s.TaskbarTransparent || s.TaskbarColorMode == "Transparent";
 			System.Windows.Media.Color baseColor = ((EffectiveColorMode(s) == "Start") ? Darken(StartAccent.Color()) : Current);
 			// 8.1 taskbar is translucent by default (wallpaper tint reads through). Keep the explicit Transparent
@@ -76,6 +81,10 @@ public static class TaskbarTheme
 		try
 		{
 			AppSettings s = SettingsStore.Load();
+			if (Rest(s))
+			{
+				return DarkRestPalette.TaskbarChrome;
+			}
 			return (EffectiveColorMode(s) == "Start") ? Darken(StartAccent.Color()) : Current;
 		}
 		catch
@@ -88,6 +97,7 @@ public static class TaskbarTheme
 	{
 		try
 		{
+			// Dark rest counts as Start mode: the muted Start accent, never a colour picked from the wallpaper.
 			return (EffectiveColorMode(SettingsStore.Load()) == "Start") ? StartAccent.Color() : WallpaperAccent();
 		}
 		catch
@@ -124,13 +134,24 @@ public static class TaskbarTheme
 
 	// Runtime-only overlay: while a seasonal theme is on but its wallpaper is not the desktop picture, the Wallpaper
 	// colour mode follows the seasonal accent instead. Nothing is persisted; TaskbarColorMode stays the user's.
+	// Dark rest also follows the Start colours, whatever the mode. Render time only, like the seasonal overlay.
 	private static string EffectiveColorMode(AppSettings s)
 	{
+		if (Rest(s))
+		{
+			return "Start";
+		}
 		if (s.TaskbarColorMode == "Wallpaper" && !string.IsNullOrEmpty(s.SeasonalActive) && !SeasonalTheme.OwnsDesktopWallpaper)
 		{
 			return "Start";
 		}
 		return s.TaskbarColorMode;
+	}
+
+	// Dark rest with its dark variants allowed (not under High Contrast).
+	private static bool Rest(AppSettings s)
+	{
+		return DarkRest.Visuals && DarkRest.IsOnFor(s);
 	}
 
 	public static System.Windows.Media.Color SelectionColor()

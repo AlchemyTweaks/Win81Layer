@@ -906,7 +906,9 @@ public sealed partial class ActionCenter
 		bool on = false;
 		try { on = tile.IsOn?.Invoke() ?? false; } catch { }
 		tile.Check.Visibility = on ? Visibility.Visible : Visibility.Collapsed;
-		System.Windows.Media.Color target = Mix(tile.BaseColor, System.Windows.Media.Colors.Black, on ? 0.0 : 0.10);
+		// Dark rest mutes the tile colours; the off and hover mixes stay the same.
+		System.Windows.Media.Color fill = _restPalette ? DarkRestPalette.Mute(tile.BaseColor) : tile.BaseColor;
+		System.Windows.Media.Color target = Mix(fill, System.Windows.Media.Colors.Black, on ? 0.0 : 0.10);
 		if (hover) target = Mix(target, System.Windows.Media.Colors.White, 0.11);
 		if (!animate)
 		{
@@ -1466,6 +1468,11 @@ public sealed partial class ActionCenter
 
 	private void ApplyMetroTheme()
 	{
+		if (DarkRest.Visuals)
+		{
+			ApplyRestPalette();
+			return;
+		}
 		System.Windows.Media.Color accent = StartAccent.Color();
 		System.Windows.Media.Color themeBase = accent;
 		bool seasonal = false;
@@ -1482,8 +1489,47 @@ public sealed partial class ActionCenter
 		ApplyMetroPalette(themeBase, accent, seasonal);
 	}
 
+	// True while the Dark rest palette is applied (the quick tiles are muted).
+	private bool _restPalette;
+
+	// Dark rest: a near-black slate panel, a soft blue-grey link, the muted accent on the sliders and muted tiles.
+	private void ApplyRestPalette()
+	{
+		System.Windows.Media.Color accent = StartAccent.Color();
+		_restPalette = true;
+		// the notification list's scrollbar: quiet blue-grey
+		DarkRestPalette.WriteScrollBrushes(_metroRoot.Resources);
+		_themeBase = DarkRestPalette.PanelTop;
+		_themeAccent = accent;
+		_themeBackground = new LinearGradientBrush(DarkRestPalette.PanelTop, DarkRestPalette.PanelBottom, new Point(0.0, 0.0), new Point(1.0, 1.0));
+		_themeBackground.Freeze();
+		base.Background = _themeBackground;
+		_metroRoot.Background = _themeBackground;
+		SyncNativeClearColor();
+		_secondaryTextBrush = FreezeMetroBrush(System.Windows.Media.Color.FromArgb(205, 255, 255, 255));
+		_linkBrush = FreezeMetroBrush(DarkRestPalette.PanelLink);
+		_clearAllButton.Foreground = _linkBrush;
+		_emptySubtitle.Foreground = _secondaryTextBrush;
+		_collapseLabel.Foreground = System.Windows.Media.Brushes.White;
+		if (_volume is MetroSlider volume)
+		{
+			volume.FillBrush = FreezeMetroBrush(accent);
+			volume.TrackBrush = FreezeMetroBrush(DarkRestPalette.SliderTrack);
+			volume.InvalidateVisual();
+		}
+		if (_brightness is MetroSlider brightness)
+		{
+			brightness.FillBrush = FreezeMetroBrush(accent);
+			brightness.TrackBrush = FreezeMetroBrush(DarkRestPalette.SliderTrack);
+			brightness.InvalidateVisual();
+		}
+		RefreshMetroTileStates(animate: false);
+	}
+
 	private void ApplyMetroPalette(System.Windows.Media.Color themeBase, System.Windows.Media.Color accent, bool seasonal = false)
 	{
+		_restPalette = false;
+		DarkRestPalette.RemoveRestResources(_metroRoot.Resources);
 		_themeBase = themeBase;
 		_themeAccent = accent;
 		System.Windows.Media.Color top = EnsureMetroSaturation(Mix(themeBase, accent, 0.28));
@@ -1764,7 +1810,8 @@ public sealed partial class ActionCenter
 			Height = height,
 			Left = -5000.0,
 			Top = -5000.0,
-			Topmost = false
+			Topmost = false,
+			ShowActivated = false
 		};
 		build.Stop();
 		panel._qaRendering = true;

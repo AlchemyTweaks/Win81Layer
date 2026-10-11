@@ -1039,6 +1039,12 @@ public static class TaskbarContextMenu
 		}
 	}
 
+	// QA: the surface colour the code-built shell menus paint right now (M.Bg).
+	internal static Color QaMenuBackground()
+	{
+		return GetThemePalette().TryGetValue("M.Bg", out Brush b) && b is SolidColorBrush sc ? sc.Color : Colors.Transparent;
+	}
+
 	private static Dictionary<string, Brush> GetThemePalette()
 	{
 		bool glass = ShellSkin.GlassOn;

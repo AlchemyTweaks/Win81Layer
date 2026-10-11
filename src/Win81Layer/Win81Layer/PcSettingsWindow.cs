@@ -86,11 +86,37 @@ public sealed class PcSettingsWindow : Window
 
 	private bool _titleShown;
 
-	private static readonly System.Windows.Media.Brush RightBg = System.Windows.Media.Brushes.White;
+	private static readonly System.Windows.Media.Brush RightBgNormal = System.Windows.Media.Brushes.White;
 
-	private static readonly System.Windows.Media.Brush Text = Freeze(4281545523u);
+	private static readonly System.Windows.Media.Brush TextNormal = Freeze(4281545523u);
 
-	private static readonly System.Windows.Media.Brush Text2 = Freeze(4286216826u);
+	private static readonly System.Windows.Media.Brush Text2Normal = Freeze(4286216826u);
+
+	private static readonly System.Windows.Media.Brush FieldBorderNormal = Freeze(4286216826u);
+
+	private static readonly System.Windows.Media.Brush ListHoverNormal = Freeze(4293585642u);
+
+	private static readonly System.Windows.Media.Brush KnobNormal = Freeze(4279900698u);
+
+	private static readonly System.Windows.Media.Brush TrackNormal = Freeze(4291611852u);
+
+	// The page colours. Dark rest swaps in a dark slate page with soft ink; the white page is today's look.
+	private static System.Windows.Media.Brush RightBg => DarkRest.Visuals ? DarkRestPalette.PcPage : RightBgNormal;
+
+	private static System.Windows.Media.Brush Text => DarkRest.Visuals ? DarkRestPalette.PcText : TextNormal;
+
+	private static System.Windows.Media.Brush Text2 => DarkRest.Visuals ? DarkRestPalette.PcText2 : Text2Normal;
+
+	// Fields, drop-down lists, the toggle and the slider track of the hand-built controls.
+	private static System.Windows.Media.Brush FieldBg => DarkRest.Visuals ? DarkRestPalette.PcField : System.Windows.Media.Brushes.White;
+
+	private static System.Windows.Media.Brush FieldBorder => DarkRest.Visuals ? DarkRestPalette.PcFieldBorder : FieldBorderNormal;
+
+	private static System.Windows.Media.Brush ListHover => DarkRest.Visuals ? DarkRestPalette.PcListHover : ListHoverNormal;
+
+	private static System.Windows.Media.Brush KnobBrush => DarkRest.Visuals ? DarkRestPalette.PcKnob : KnobNormal;
+
+	private static System.Windows.Media.Brush TrackBrush => DarkRest.Visuals ? DarkRestPalette.PcTrack : TrackNormal;
 
 	private static readonly (string Name, string? Uri)[] Categories = new(string, string)[14]
 	{
@@ -173,7 +199,9 @@ public sealed class PcSettingsWindow : Window
 		}
 	}
 
-	private static System.Windows.Media.Brush TitleAccent => new SolidColorBrush(SettingsPane.AccentToneColor(0.46));
+	// Headings and link titles. On the Dark rest page the muted accent tone would be too dark to read, so a light
+	// blue-grey of the same hue is used instead.
+	private static System.Windows.Media.Brush TitleAccent => DarkRest.Visuals ? DarkRestPalette.PcAccentInk : new SolidColorBrush(SettingsPane.AccentToneColor(0.46));
 
 	internal static nint LiveHwnd { get; private set; }
 
@@ -237,6 +265,79 @@ public sealed class PcSettingsWindow : Window
 		}
 		catch
 		{
+		}
+		ApplyRestSkin();
+	}
+
+	private static Style _restLinkStyle;
+
+	// Whether the Dark rest skin is what this window shows now.
+	private bool _restSkinApplied;
+
+	// After Dark rest turned on or off (from here, Start, the tray or a recovery): an open window takes the new colours
+	// and builds the page on screen again. Nothing happens when the skin already matches. UI thread.
+	internal void SyncRestSkin()
+	{
+		if (_restSkinApplied == DarkRest.Visuals)
+		{
+			return;
+		}
+		ApplyRestSkin();
+		RebuildCurrentPage();
+	}
+
+	// Links on the Dark rest page: the plain accent would be too dark to read there, so they use the light accent ink
+	// (and the page ink on hover).
+	private static Style RestLinkStyle()
+	{
+		if (_restLinkStyle == null && System.Windows.Application.Current?.TryFindResource("Metro81.LinkButton") is Style baseStyle)
+		{
+			Style style = new Style(typeof(System.Windows.Controls.Button), baseStyle);
+			style.Setters.Add(new Setter(System.Windows.Controls.Control.ForegroundProperty, DarkRestPalette.PcAccentInk));
+			Trigger hover = new Trigger
+			{
+				Property = UIElement.IsMouseOverProperty,
+				Value = true
+			};
+			hover.Setters.Add(new Setter(System.Windows.Controls.Control.ForegroundProperty, DarkRestPalette.PcText));
+			style.Triggers.Add(hover);
+			style.Seal();
+			_restLinkStyle = style;
+		}
+		return _restLinkStyle;
+	}
+
+	// The Dark rest resources of this window (or of a page rendered on its own): the dark token set (so the controls
+	// stay dark even if Windows is switched back to light meanwhile), the blue-grey control family with toggles whose
+	// On and Off fills read apart and quiet scrollbars, and the light link style.
+	private static void WriteRestResources(ResourceDictionary target, Style toggleBase)
+	{
+		ShellTheme.WriteTokens(target, dark: true);
+		DarkRestPalette.WritePageResources(target, toggleBase);
+		if (RestLinkStyle() is Style link)
+		{
+			target["Metro81.LinkButton"] = link;
+		}
+	}
+
+	// Dark rest: the page turns dark slate with soft ink, and the Metro controls of this window take the dark resources
+	// above. Normal removes that override again.
+	private void ApplyRestSkin()
+	{
+		_restSkinApplied = DarkRest.Visuals;
+		// Whatever this window added before goes first, so the toggle style below is based on the normal one.
+		ShellTheme.RemoveTokens(base.Resources);
+		DarkRestPalette.RemoveRestResources(base.Resources);
+		base.Resources.Remove("Metro81.LinkButton");
+		if (DarkRest.Visuals)
+		{
+			WriteRestResources(base.Resources, TryFindResource("Metro81.ToggleSwitch") as Style);
+		}
+		base.Background = RightBg;
+		_content.Background = RightBg;
+		if (_leftPaneBorder != null)
+		{
+			_leftPaneBorder.Background = LeftBg;
 		}
 	}
 
@@ -547,7 +648,7 @@ public sealed class PcSettingsWindow : Window
 		//IL_00a2: Unknown result type (might be due to invalid IL or missing references)
 		//IL_00a7: Unknown result type (might be due to invalid IL or missing references)
 		//IL_0198: Unknown result type (might be due to invalid IL or missing references)
-		_leftPaneBorder.Background = LeftBg;
+		ApplyRestSkin();
 		Show();
 		Screen screen = Screen.FromPoint(System.Windows.Forms.Cursor.Position);
 		System.Drawing.Rectangle wa = TaskbarWorkArea.Current(screen);
@@ -822,7 +923,7 @@ public sealed class PcSettingsWindow : Window
 		{
 			btn.Tag = ((cat == name) ? "sel" : null);
 		}
-		_content.Child = BuildPage(name);
+		ShowPage(() => BuildPage(name));
 	}
 
 	private void DrillIntoEoa()
@@ -859,7 +960,7 @@ public sealed class PcSettingsWindow : Window
 		{
 			btn.Tag = ((name == sub) ? "sel" : null);
 		}
-		_content.Child = EoaPage(sub);
+		ShowPage(() => EoaPage(sub));
 	}
 
 	private UIElement EoaPage(string sub)
@@ -1429,16 +1530,18 @@ public sealed class PcSettingsWindow : Window
 
 	private FrameworkElement? _seasonWallpaperRow;
 
+	private FrameworkElement _restWallpaperRow;
+
 	private bool _seasonBusyUi;
 
-	// Seasonal theme: three tiles (Normal / Halloween / Christmas) that apply at once, a status line that always says
-	// what Normal restores, and the two seasonal preferences.
+	// Seasonal theme and Dark rest: four tiles (Normal / Halloween / Christmas / Dark rest) that apply at once, a status
+	// line that always says what Normal restores, the seasonal preferences and the Dark rest options.
 	private void BuildSeasonalSection(StackPanel panel, AppSettings s)
 	{
-		panel.Children.Add(SubHeader("Seasonal theme"));
+		panel.Children.Add(SubHeader("Seasonal theme and Dark rest"));
 		panel.Children.Add(new TextBlock
 		{
-			Text = "Give the shell a seasonal look. Choose Normal at any time to get back exactly what you had before \u2014 your Start background, accent colour and desktop wallpaper.",
+			Text = "Give the shell a seasonal look, or turn on Dark rest: a calm, fully dark shell for resting your eyes. Choose Normal at any time to get back exactly what you had before \u2014 your Start background, accent colour, desktop wallpaper and Windows light/dark mode.",
 			Foreground = Text2,
 			FontFamily = new System.Windows.Media.FontFamily("Segoe UI"),
 			FontSize = 13.0,
@@ -1468,15 +1571,23 @@ public sealed class PcSettingsWindow : Window
 		{
 			SettingsStore.Update(delegate(AppSettings x) { x.SeasonalWallpaper = on; });
 			string active = SeasonalTheme.NormalizeId(SettingsStore.FastSnapshot.SeasonalActive);
-			if (active.Length > 0)
+			if (SeasonalTheme.IsSeason(active))
 			{
 				// ON captures and sets the wallpaper; OFF restores the user's own and drops it from the restore point.
-				ApplySeason(active);
+				ApplySeason(active, optionRefresh: true);
+			}
+		});
+		_restWallpaperRow = ToggleRow("Dark rest desktop wallpaper", "Also set a calm, dark desktop wallpaper while Dark rest is on. Your own wallpaper comes back with Normal.", s.RestWallpaper, delegate(bool on)
+		{
+			SettingsStore.Update(delegate(AppSettings x) { x.RestWallpaper = on; });
+			if (SeasonalTheme.IsRest(SeasonalTheme.NormalizeId(SettingsStore.FastSnapshot.SeasonalActive)))
+			{
+				ApplySeason(SeasonalTheme.Rest, optionRefresh: true);
 			}
 		});
 		RebuildSeasonTiles();
 		panel.Children.Add(_seasonWallpaperRow);
-		foreach (SeasonPreset preset in SeasonalTheme.Presets)
+		foreach (SeasonPreset preset in SeasonalTheme.Seasons)
 		{
 			SeasonPreset p = preset;
 			panel.Children.Add(RowLink(p.Name + " desktop picture", "Use your own picture instead of the drawn " + p.Name + " scene. It is cropped to fill the screen; Normal still brings back your usual wallpaper.", delegate
@@ -1484,7 +1595,7 @@ public sealed class PcSettingsWindow : Window
 				ChooseSeasonPicture(p);
 			}));
 		}
-		panel.Children.Add(RowLink("Use the drawn seasonal scenes", "Forget the pictures chosen above and go back to the wallpapers drawn by the launcher.", delegate
+		panel.Children.Add(RowLink("Use the drawn scenes", "Forget the pictures chosen above and go back to the scenes drawn by the launcher.", delegate
 		{
 			foreach (SeasonPreset p in SeasonalTheme.Presets)
 			{
@@ -1499,18 +1610,68 @@ public sealed class PcSettingsWindow : Window
 			}
 			RefreshSeasonPicture();
 		}));
-		panel.Children.Add(ToggleRow("Seasonal effects on Start", "Falling snow or drifting bats behind the Start tiles. Runs only while Start is open and follows the Motion setting.", s.SeasonalAmbient, delegate(bool on)
+		panel.Children.Add(ToggleRow("Seasonal effects on Start", "Falling snow or drifting bats behind the Start tiles while Halloween or Christmas is on. Runs only while Start is open and follows the Motion setting.", s.SeasonalAmbient, delegate(bool on)
 		{
 			SettingsStore.Update(delegate(AppSettings x) { x.SeasonalAmbient = on; });
 			HostApp?.ApplySeasonalLive();
 		}));
-		panel.Children.Add(ToggleRow("Seasonal pointer colours", "While Halloween or Christmas is on, the Alchemy pointers take the season's colours like the website: orange for Halloween, red with a green spinner for Christmas. They go back to blue with Normal. Choose an Alchemy pointer style under Appearance > Pointers.", s.AlchemyCursorsSeasonal, delegate(bool on)
+		panel.Children.Add(ToggleRow("Seasonal pointer colours", "While Halloween or Christmas is on, the Alchemy pointers take the season's colours like the website: orange for Halloween, red with a green spinner for Christmas. While Dark rest is on they use the dark style in a muted blue-grey. They go back with Normal. Choose an Alchemy pointer style under Appearance > Pointers.", s.AlchemyCursorsSeasonal, delegate(bool on)
 		{
 			SettingsStore.Update(delegate(AppSettings x) { x.AlchemyCursorsSeasonal = on; });
 			RefreshPointerPreview();
 			FollowPointerChange(PointerScheme.ReconcileAsync("seasonal-toggle"));
 		}));
 		BuildSeasonalIconsRows(panel, s);
+		BuildRestRows(panel, s);
+	}
+
+	// A muted line under a setting that Dark rest overrides while it is on (the page is built again when it turns on
+	// or off), so the choice does not seem to be ignored.
+	private static void RestNote(StackPanel panel, bool show, string text)
+	{
+		if (!show)
+		{
+			return;
+		}
+		panel.Children.Add(new TextBlock
+		{
+			Text = text,
+			Foreground = Text2,
+			FontFamily = new System.Windows.Media.FontFamily("Segoe UI"),
+			FontSize = 12.0,
+			TextWrapping = TextWrapping.Wrap,
+			MaxWidth = 760.0,
+			HorizontalAlignment = System.Windows.HorizontalAlignment.Left,
+			Margin = new Thickness(0.0, 4.0, 0.0, 8.0)
+		});
+	}
+
+	// The Dark rest options. None of them is part of the restore point; they are kept across Normal.
+	private void BuildRestRows(StackPanel panel, AppSettings s)
+	{
+		panel.Children.Add(SubHeader("Dark rest"));
+		panel.Children.Add(_restWallpaperRow);
+		SeasonPreset rest = SeasonalTheme.Find(SeasonalTheme.Rest);
+		panel.Children.Add(RowLink("Dark rest desktop picture", "Use your own picture instead of the drawn Dark rest scene. It is cropped to fill the screen; Normal still brings back your usual wallpaper.", delegate
+		{
+			ChooseSeasonPicture(rest);
+		}, wrap: true));
+		panel.Children.Add(ToggleRow("Calmer animations", "While Dark rest is on, animations are shorter and move less, like Motion: Reduced. Your Motion setting itself is not changed.", s.RestCalmMotion, delegate(bool on)
+		{
+			SettingsStore.Update(delegate(AppSettings x) { x.RestCalmMotion = on; });
+			DarkRest.Sync();
+		}));
+		panel.Children.Add(ToggleRow("Dim Start tiles", "While Dark rest is on, Start tiles and the icons of the Start app list are dimmed a little so bright tile colours do not glare.", s.RestDimTiles, delegate(bool on)
+		{
+			SettingsStore.Update(delegate(AppSettings x) { x.RestDimTiles = on; });
+			HostApp?.ApplySeasonalLive();
+		}));
+		// Night light keeps its state in an undocumented binary value that changes between Windows builds, so it can be
+		// neither switched reliably nor put back exactly. Dark rest leaves it alone and links to its settings instead.
+		panel.Children.Add(RowLink("Night light", "Windows Night light warms the screen colours in the evening. Windows has no documented way for other programs to switch it, so Dark rest leaves it alone. Open its settings to turn it on or schedule it.", delegate
+		{
+			TaskbarContextMenu.OpenUri("ms-settings:nightlight");
+		}, wrap: true));
 	}
 
 	private TextBlock _seasonIconsStatus;
@@ -1591,7 +1752,7 @@ public sealed class PcSettingsWindow : Window
 	internal static string SeasonalIconsStatusText()
 	{
 		StringBuilder sb = new StringBuilder();
-		foreach (SeasonPreset p in SeasonalTheme.Presets)
+		foreach (SeasonPreset p in SeasonalTheme.Seasons)
 		{
 			IReadOnlyList<string> keys = SeasonalAppIcons.KeysFor(p.Id);
 			if (sb.Length > 0)
@@ -1625,7 +1786,7 @@ public sealed class PcSettingsWindow : Window
 		string root = SeasonalAppIcons.RootDir;
 		try
 		{
-			foreach (SeasonPreset p in SeasonalTheme.Presets)
+			foreach (SeasonPreset p in SeasonalTheme.Seasons)
 			{
 				Directory.CreateDirectory(SeasonalAppIcons.FolderFor(p.Id));
 			}
@@ -1684,7 +1845,7 @@ public sealed class PcSettingsWindow : Window
 		string active = SeasonalTheme.NormalizeId(SettingsStore.FastSnapshot.SeasonalActive);
 		if (active.Length > 0 && !_seasonBusyUi)
 		{
-			ApplySeason(active);
+			ApplySeason(active, optionRefresh: true);
 		}
 	}
 
@@ -1696,17 +1857,21 @@ public sealed class PcSettingsWindow : Window
 		}
 		_seasonTiles.Children.Clear();
 		string active = SeasonalTheme.NormalizeId(SettingsStore.FastSnapshot.SeasonalActive);
-		foreach ((string id, string label) in new (string, string)[3] { (SeasonalTheme.Normal, "Normal"), (SeasonalTheme.Halloween, "Halloween"), (SeasonalTheme.Christmas, "Christmas") })
+		foreach ((string id, string label) in SeasonalTheme.Choices)
 		{
 			bool selected = (id == SeasonalTheme.Normal) ? active.Length == 0 : active == id;
 			_seasonTiles.Children.Add(SeasonTile(id, label, selected));
 		}
 		_seasonTiles.IsHitTestVisible = !_seasonBusyUi;
 		_seasonTiles.Opacity = _seasonBusyUi ? 0.6 : 1.0;
+		// The running change has already read these preferences; they can be changed again once it finishes.
 		if (_seasonWallpaperRow != null)
 		{
-			// The running change has already read this preference; it can be changed again once it finishes.
 			_seasonWallpaperRow.IsEnabled = !_seasonBusyUi;
+		}
+		if (_restWallpaperRow != null)
+		{
+			_restWallpaperRow.IsEnabled = !_seasonBusyUi;
 		}
 	}
 
@@ -1782,10 +1947,12 @@ public sealed class PcSettingsWindow : Window
 			Margin = new Thickness(0.0, 0.0, 10.0, 0.0),
 			// constant thickness, so selecting a tile never shifts its content
 			BorderThickness = new Thickness(2.0),
-			BorderBrush = selected ? new SolidColorBrush(SettingsPane.AccentToneColor(0.5)) : System.Windows.Media.Brushes.Transparent,
-			ToolTip = (preset == null) ? "Back to your own look" : label
+			// On the Dark rest page the accent tone would be too dark to see; the selected tile gets the page ink, like the
+			// other pickers there.
+			BorderBrush = !selected ? System.Windows.Media.Brushes.Transparent : (DarkRest.Visuals ? DarkRestPalette.PcText : new SolidColorBrush(SettingsPane.AccentToneColor(0.5))),
+			ToolTip = (preset == null) ? "Back to your own look" : (SeasonalTheme.IsRest(id) ? SeasonalTheme.RestTooltip : label)
 		};
-		System.Windows.Automation.AutomationProperties.SetName(tile, "Seasonal theme: " + label);
+		System.Windows.Automation.AutomationProperties.SetName(tile, SeasonalTheme.IsRest(id) ? SeasonalTheme.RestTooltip : "Seasonal theme: " + label);
 		tile.MouseLeftButtonUp += delegate
 		{
 			ApplySeason(id);
@@ -1793,8 +1960,36 @@ public sealed class PcSettingsWindow : Window
 		return tile;
 	}
 
+	// QA: the picker tiles of the page built last (count, the accessible name of the selected one and its frame colour).
+	internal (int Count, string Selected) QaSeasonTiles()
+	{
+		(int count, string selected, _) = QaSeasonTilesWithFrame();
+		return (count, selected);
+	}
+
+	internal (int Count, string Selected, System.Windows.Media.Color Frame) QaSeasonTilesWithFrame()
+	{
+		if (_seasonTiles == null)
+		{
+			return (-1, "", System.Windows.Media.Colors.Transparent);
+		}
+		string selected = "";
+		System.Windows.Media.Color frame = System.Windows.Media.Colors.Transparent;
+		foreach (UIElement child in _seasonTiles.Children)
+		{
+			if (child is Border tile && tile.BorderBrush is SolidColorBrush sb && sb.Color.A > 0)
+			{
+				selected = System.Windows.Automation.AutomationProperties.GetName(tile);
+				frame = sb.Color;
+			}
+		}
+		return (_seasonTiles.Children.Count, selected, frame);
+	}
+
 	// Applies at once: every step is reversible, so there is no separate Apply button.
-	private async void ApplySeason(string id)
+	// optionRefresh: an option of the preset that is on changed (its wallpaper option or picture). Windows light/dark mode
+	// is then left as it is; only clicking a tile applies a choice in full.
+	private async void ApplySeason(string id, bool optionRefresh = false)
 	{
 		if (_seasonBusyUi)
 		{
@@ -1807,11 +2002,11 @@ public sealed class PcSettingsWindow : Window
 		{
 			_seasonStatus.Text = preset == null ? "Restoring your normal look\u2026" : "Applying " + preset.Name + "\u2026";
 		}
-		bool wallpaperPrefBefore = SettingsStore.FastSnapshot.SeasonalWallpaper;
+		bool wallpaperPrefBefore = SeasonalTheme.WantsWallpaper(SettingsStore.FastSnapshot, id);
 		SeasonalResult result;
 		try
 		{
-			result = await SeasonalTheme.ApplyAsync(id);
+			result = await SeasonalTheme.ApplyAsync(id, keepTheme: optionRefresh);
 		}
 		catch (Exception ex)
 		{
@@ -1821,36 +2016,70 @@ public sealed class PcSettingsWindow : Window
 		{
 			_seasonBusyUi = false;
 		}
+		// The live refresh also re-skins this window when Dark rest turned on or off (the page is built again).
 		HostApp?.ApplySeasonalLive();
+		SyncRestSkin();
 		ReskinShell();
 		RebuildSeasonTiles();
 		RefreshPointerPreview();
 		FollowPointerChange(PointerScheme.Pending);
 		string activeAfter = SeasonalTheme.NormalizeId(SettingsStore.FastSnapshot.SeasonalActive);
-		if (result.Success && activeAfter.Length > 0 && SettingsStore.FastSnapshot.SeasonalWallpaper != wallpaperPrefBefore)
+		if (result.Success && activeAfter.Length > 0 && SeasonalTheme.WantsWallpaper(SettingsStore.FastSnapshot, activeAfter) != wallpaperPrefBefore)
 		{
 			// The wallpaper preference changed while this ran (the change had already read it): apply it now.
-			ApplySeason(activeAfter);
+			ApplySeason(activeAfter, optionRefresh: true);
 			return;
+		}
+		SeasonalStatus status = SeasonalTheme.Describe();
+		string name = preset?.Name ?? "";
+		bool plain = result.Message == name + " is on." || result.Message == name + " is already on." || result.Message == "Normal look restored.";
+		string message;
+		if (result.Success && plain)
+		{
+			message = SeasonalTheme.StatusText(status);
+		}
+		else if (result.Success && status.ActiveId.Length > 0)
+		{
+			message = result.Message + " " + SeasonalTheme.NormalRestoresText(status);
+		}
+		else
+		{
+			message = result.Message;
 		}
 		if (_seasonStatus != null)
 		{
-			SeasonalStatus status = SeasonalTheme.Describe();
-			string name = preset?.Name ?? "";
-			bool plain = result.Message == name + " is on." || result.Message == name + " is already on." || result.Message == "Normal look restored.";
-			if (result.Success && plain)
-			{
-				_seasonStatus.Text = SeasonalTheme.StatusText(status);
-			}
-			else if (result.Success && status.ActiveId.Length > 0)
-			{
-				_seasonStatus.Text = result.Message + " " + SeasonalTheme.RestoresText(status.OwnsWallpaper);
-			}
-			else
-			{
-				_seasonStatus.Text = result.Message;
-			}
+			_seasonStatus.Text = message;
 		}
+	}
+
+	// Builds the page on screen again (after the page colours changed): the same page, including a sub-page or a page
+	// drilled into from a category (Ease of Access, Network), at the same scroll position.
+	private void RebuildCurrentPage()
+	{
+		if (_pageBuilder == null)
+		{
+			Nav(_current.Length == 0 ? "PC & devices" : _current);
+			return;
+		}
+		double offset = (_content.Child as ScrollViewer)?.VerticalOffset ?? 0.0;
+		_content.Child = _pageBuilder();
+		if (offset > 0.0 && _content.Child is ScrollViewer page)
+		{
+			// The new page has no extent until it is laid out.
+			base.Dispatcher.BeginInvoke(DispatcherPriority.Loaded, (Action)delegate
+			{
+				page.ScrollToVerticalOffset(offset);
+			});
+		}
+	}
+
+	// What the content area shows now, and how to build it again.
+	private Func<UIElement> _pageBuilder;
+
+	private void ShowPage(Func<UIElement> build)
+	{
+		_pageBuilder = build;
+		_content.Child = build();
 	}
 
 	// ===== Pointers (Appearance) =====
@@ -1908,7 +2137,7 @@ public sealed class PcSettingsWindow : Window
 		panel.Children.Add(dropdown);
 		panel.Children.Add(new TextBlock
 		{
-			Text = "Alchemy pointers replace every Windows pointer: normal, link, help, text, precision, handwriting, unavailable, move, the four resize pointers, alternate, location, person, and animated busy and working pointers. Windows has no separate pointer for pressing; while something starts you see the animated working pointer. While Halloween or Christmas is on they can take the season's colours. Windows default puts back exactly the pointers you had before.",
+			Text = "Alchemy pointers replace every Windows pointer: normal, link, help, text, precision, handwriting, unavailable, move, the four resize pointers, alternate, location, person, and animated busy and working pointers. Windows has no separate pointer for pressing; while something starts you see the animated working pointer. While Halloween or Christmas is on they can take the season's colours, and while Dark rest is on they use the dark style. Windows default puts back exactly the pointers you had before.",
 			Foreground = Text2,
 			FontFamily = new System.Windows.Media.FontFamily("Segoe UI"),
 			FontSize = 12.0,
@@ -2167,10 +2396,15 @@ public sealed class PcSettingsWindow : Window
 	{
 		Border host = new Border
 		{
-			Background = System.Windows.Media.Brushes.White,
+			Background = RightBg,
 			Width = w,
 			Child = panel
 		};
+		if (DarkRest.Visuals)
+		{
+			// The panel renders unparented, so it gets the window's Dark rest token override here.
+			ShellTheme.WriteTokens(host.Resources, dark: true);
+		}
 		host.Measure(new System.Windows.Size(w, double.PositiveInfinity));
 		double h = Math.Min(8000.0, Math.Max(200.0, host.DesiredSize.Height));
 		host.Arrange(new Rect(0.0, 0.0, w, h));
@@ -2563,6 +2797,7 @@ public sealed class PcSettingsWindow : Window
 			SettingsStore.Update(delegate(AppSettings x) { x.TaskbarColorMode = v; });
 			TaskbarWindow.RaiseTaskbarColorChanged();
 		}));
+		RestNote(panel, DarkRest.IsOn, "Dark rest keeps the taskbar dark; your choice here comes back with Normal.");
 		panel.Children.Add(ToggleRow("Show Search button", "Show the Search button on the taskbar.", s.ShowSearch, delegate(bool on)
 		{
 			SettingsStore.Update(delegate(AppSettings x) { x.ShowSearch = on; });
@@ -2629,7 +2864,7 @@ public sealed class PcSettingsWindow : Window
 		{
 			// While the seasonal wallpaper is on, the Win8.1 wallpaper snapshot would capture the seasonal picture.
 			bool seasonalOwnsWallpaper = SeasonalTheme.OwnsDesktopWallpaper;
-			FrameworkElement win81WallpaperRow = ToggleRow("Win8.1 desktop wallpaper", seasonalOwnsWallpaper ? "Unavailable while the seasonal wallpaper is on \u2014 choose Normal under Seasonal theme first." : "Set the authentic Win8.1 desktop wallpaper (reversible).", s.Win81Wallpaper, delegate(bool on)
+			FrameworkElement win81WallpaperRow = ToggleRow("Win8.1 desktop wallpaper", seasonalOwnsWallpaper ? "Unavailable while a seasonal or Dark rest wallpaper is on \u2014 choose Normal under Seasonal theme and Dark rest first." : "Set the authentic Win8.1 desktop wallpaper (reversible).", s.Win81Wallpaper, delegate(bool on)
 			{
 				if (SeasonalTheme.OwnsDesktopWallpaper)
 				{
@@ -2656,6 +2891,8 @@ public sealed class PcSettingsWindow : Window
 			Motion.Mode = Motion.Parse(v);
 			SettingsStore.Update(delegate(AppSettings x) { x.MotionMode = v; });
 		}));
+		MotionMode userMotion = Motion.Parse(s.MotionMode);
+		RestNote(panel, DarkRest.IsOn && DarkRest.CalmMotion(s) && (userMotion == MotionMode.Authentic || userMotion == MotionMode.Fast), "Dark rest is playing animations as Reduced (Calmer animations); your choice here comes back with Normal.");
 
 		// ===== Behaviour =====
 		panel.Children.Add(SubHeader("Behaviour"));
@@ -3044,7 +3281,7 @@ public sealed class PcSettingsWindow : Window
 		{
 			btn.Tag = ((name == sub) ? "sel" : null);
 		}
-		_content.Child = NetPage(sub);
+		ShowPage(() => NetPage(sub));
 	}
 
 	private UIElement NetPage(string sub)
@@ -3410,7 +3647,7 @@ public sealed class PcSettingsWindow : Window
 		}));
 		panel.Children.Add(RowLink("Notifications", "App notifications, lock screen, sounds", delegate
 		{
-			_content.Child = NotificationsPage();
+			ShowPage(NotificationsPage);
 		}));
 		panel.Children.Add(RowLink("App sizes", "See how much space your apps are using", delegate
 		{
@@ -3443,7 +3680,7 @@ public sealed class PcSettingsWindow : Window
 		};
 		System.Windows.Controls.Button back = LinkButton("‹ Search and apps", delegate
 		{
-			_content.Child = SearchAndAppsPage();
+			ShowPage(SearchAndAppsPage);
 		});
 		back.Margin = new Thickness(0.0, 0.0, 0.0, 10.0);
 		panel.Children.Add(back);
@@ -3556,7 +3793,7 @@ public sealed class PcSettingsWindow : Window
 		};
 		tiles.Children.Add(SettingTile("Lock screen", 59317, delegate
 		{
-			_content.Child = LockScreenPage();
+			ShowPage(LockScreenPage);
 		}));
 		tiles.Children.Add(SettingTile("Account picture", 57661, delegate
 		{
@@ -3572,7 +3809,7 @@ public sealed class PcSettingsWindow : Window
 		panel.Children.Add(SectionTitle("Devices & display"));
 		panel.Children.Add(RowLink("Display", "Resolution, orientation, multiple displays", delegate
 		{
-			_content.Child = DisplayPage();
+			ShowPage(DisplayPage);
 		}));
 		panel.Children.Add(RowLink("Bluetooth & devices", "Add and manage printers, mice, and more", delegate
 		{
@@ -3580,11 +3817,11 @@ public sealed class PcSettingsWindow : Window
 		}));
 		panel.Children.Add(RowLink("Power & sleep", "Screen and sleep timeouts", delegate
 		{
-			_content.Child = PowerSleepPage();
+			ShowPage(PowerSleepPage);
 		}));
 		panel.Children.Add(RowLink("PC info", "PC name, edition, processor, memory", delegate
 		{
-			_content.Child = PcInfoPage();
+			ShowPage(PcInfoPage);
 		}));
 		panel.Children.Add(SectionTitle("Personalization"));
 		panel.Children.Add(RowLink("Background", "Choose your desktop background and fit", delegate
@@ -3639,7 +3876,7 @@ public sealed class PcSettingsWindow : Window
 	{
 		return SettingTile("Start screen", WindowsFlag(58.0, System.Windows.Media.Colors.White), delegate
 		{
-			_content.Child = StartScreenPage();
+			ShowPage(StartScreenPage);
 		});
 	}
 
@@ -3651,7 +3888,7 @@ public sealed class PcSettingsWindow : Window
 		};
 		System.Windows.Controls.Button back = LinkButton("‹ PC & devices", delegate
 		{
-			_content.Child = PcAndDevicesPage();
+			ShowPage(PcAndDevicesPage);
 		});
 		back.Margin = new Thickness(0.0, 0.0, 0.0, 10.0);
 		panel.Children.Add(back);
@@ -3737,7 +3974,7 @@ public sealed class PcSettingsWindow : Window
 		};
 		System.Windows.Controls.Button back = LinkButton("‹ PC & devices", delegate
 		{
-			_content.Child = PcAndDevicesPage();
+			ShowPage(PcAndDevicesPage);
 		});
 		back.Margin = new Thickness(0.0, 0.0, 0.0, 10.0);
 		panel.Children.Add(back);
@@ -3797,7 +4034,7 @@ public sealed class PcSettingsWindow : Window
 		Border track = new Border
 		{
 			Height = 4.0,
-			Background = new SolidColorBrush(System.Windows.Media.Color.FromRgb(204, 204, 204)),
+			Background = TrackBrush,
 			VerticalAlignment = VerticalAlignment.Center
 		};
 		Border fill = new Border
@@ -3886,7 +4123,7 @@ public sealed class PcSettingsWindow : Window
 		};
 		System.Windows.Controls.Button back = LinkButton("‹ PC & devices", delegate
 		{
-			_content.Child = PcAndDevicesPage();
+			ShowPage(PcAndDevicesPage);
 		});
 		back.Margin = new Thickness(0.0, 0.0, 0.0, 10.0);
 		panel.Children.Add(back);
@@ -3998,7 +4235,7 @@ public sealed class PcSettingsWindow : Window
 		};
 		System.Windows.Controls.Button back = LinkButton("‹ PC & devices", delegate
 		{
-			_content.Child = PcAndDevicesPage();
+			ShowPage(PcAndDevicesPage);
 		});
 		back.Margin = new Thickness(0.0, 0.0, 0.0, 10.0);
 		panel.Children.Add(back);
@@ -4102,21 +4339,23 @@ public sealed class PcSettingsWindow : Window
 		{
 			Width = width,
 			Height = 32.0,
-			Background = System.Windows.Media.Brushes.White,
-			BorderBrush = Freeze(4286216826u),
+			Background = FieldBg,
+			BorderBrush = FieldBorder,
 			BorderThickness = new Thickness(1.0),
 			Cursor = System.Windows.Input.Cursors.Hand,
 			Child = inner,
 			HorizontalAlignment = System.Windows.HorizontalAlignment.Left
 		};
+		System.Windows.Media.Brush rowBg = FieldBg;
+		System.Windows.Media.Brush rowHover = ListHover;
 		StackPanel list = new StackPanel
 		{
-			Background = System.Windows.Media.Brushes.White
+			Background = rowBg
 		};
 		Border listWrap = new Border
 		{
-			Background = System.Windows.Media.Brushes.White,
-			BorderBrush = Freeze(4286216826u),
+			Background = rowBg,
+			BorderBrush = FieldBorder,
 			BorderThickness = new Thickness(1.0),
 			Width = width,
 			Child = list,
@@ -4143,7 +4382,7 @@ public sealed class PcSettingsWindow : Window
 			Border row = new Border
 			{
 				Height = 32.0,
-				Background = System.Windows.Media.Brushes.White,
+				Background = rowBg,
 				Cursor = System.Windows.Input.Cursors.Hand,
 				Child = new TextBlock
 				{
@@ -4157,11 +4396,11 @@ public sealed class PcSettingsWindow : Window
 			};
 			row.MouseEnter += delegate
 			{
-				row.Background = Freeze(4293585642u);
+				row.Background = rowHover;
 			};
 			row.MouseLeave += delegate
 			{
-				row.Background = System.Windows.Media.Brushes.White;
+				row.Background = rowBg;
 			};
 			row.MouseLeftButtonUp += delegate
 			{
@@ -4200,7 +4439,7 @@ public sealed class PcSettingsWindow : Window
 		};
 		System.Windows.Controls.Button back = LinkButton("‹ PC & devices", delegate
 		{
-			_content.Child = PcAndDevicesPage();
+			ShowPage(PcAndDevicesPage);
 		});
 		back.Margin = new Thickness(0.0, 0.0, 0.0, 10.0);
 		panel.Children.Add(back);
@@ -4814,7 +5053,8 @@ public sealed class PcSettingsWindow : Window
 			}, "Toggle switch");
 		SolidColorBrush accent = new SolidColorBrush(SettingsPane.AccentToneColor(0.5));
 		System.Windows.Media.Brush outline = Freeze(4289703855u);
-		System.Windows.Media.Brush knobBrush = Freeze(4279900698u);
+		System.Windows.Media.Brush knobBrush = KnobBrush;
+		System.Windows.Media.Brush offBg = FieldBg;
 		TextBlock state = new TextBlock
 		{
 			Text = (on ? "On" : "Off"),
@@ -4827,7 +5067,7 @@ public sealed class PcSettingsWindow : Window
 		};
 		Border inner = new Border
 		{
-			Background = (on ? accent : System.Windows.Media.Brushes.White)
+			Background = (on ? accent : offBg)
 		};
 		Border track = new Border
 		{
@@ -4835,7 +5075,7 @@ public sealed class PcSettingsWindow : Window
 			Height = 18.0,
 			BorderThickness = new Thickness(1.0),
 			BorderBrush = outline,
-			Background = System.Windows.Media.Brushes.White,
+			Background = offBg,
 			Padding = new Thickness(1.0),
 			Child = inner,
 			VerticalAlignment = VerticalAlignment.Center
@@ -4868,7 +5108,7 @@ public sealed class PcSettingsWindow : Window
 		{
 			cur = !cur;
 			state.Text = (cur ? "On" : "Off");
-			inner.Background = (cur ? accent : System.Windows.Media.Brushes.White);
+			inner.Background = (cur ? accent : offBg);
 			knob.HorizontalAlignment = (cur ? System.Windows.HorizontalAlignment.Right : System.Windows.HorizontalAlignment.Left);
 			try
 			{
@@ -5083,6 +5323,7 @@ public sealed class PcSettingsWindow : Window
 		// the virtual desktop, but Show() prevents false-white screenshots that could hide a visual regression.
 		Width = w;
 		Height = h;
+		ApplyRestSkin();
 		if (!IsVisible)
 		{
 			Show();
@@ -5091,23 +5332,23 @@ public sealed class PcSettingsWindow : Window
 		{
 		case "Display":
 			Nav("PC & devices");
-			_content.Child = DisplayPage();
+			ShowPage(DisplayPage);
 			break;
 		case "PC info":
 			Nav("PC & devices");
-			_content.Child = PcInfoPage();
+			ShowPage(PcInfoPage);
 			break;
 		case "Power & sleep":
 			Nav("PC & devices");
-			_content.Child = PowerSleepPage();
+			ShowPage(PowerSleepPage);
 			break;
 		case "Lock screen":
 			Nav("PC & devices");
-			_content.Child = LockScreenPage();
+			ShowPage(LockScreenPage);
 			break;
 		case "Notifications":
 			Nav("Search and apps");
-			_content.Child = NotificationsPage();
+			ShowPage(NotificationsPage);
 			break;
 		case "Ease of Access":
 			DrillIntoEoa();
@@ -5145,7 +5386,20 @@ public sealed class PcSettingsWindow : Window
 	{
 		if ((category == "Start screen" ? StartScreenPage() : BuildPage(category)) is ScrollViewer scr)   // fresh, UNPARENTED element renders correctly offscreen
 		{
-			scr.Background = System.Windows.Media.Brushes.White;
+			scr.Background = RightBg;
+			// The page renders unparented: give it this window's implicit control styles and, in Dark rest, its dark
+			// token override, so it looks as it does in the window.
+			foreach (object key in base.Resources.Keys)
+			{
+				if (key is Type)
+				{
+					scr.Resources[key] = base.Resources[key];
+				}
+			}
+			if (DarkRest.Visuals)
+			{
+				WriteRestResources(scr.Resources, TryFindResource("Metro81.ToggleSwitch") as Style);
+			}
 			scr.VerticalScrollBarVisibility = ScrollBarVisibility.Disabled;
 			scr.HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled;
 			scr.Width = w;

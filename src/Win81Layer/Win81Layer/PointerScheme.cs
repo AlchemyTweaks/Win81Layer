@@ -457,9 +457,10 @@ internal sealed class PointerEngine
 		if (target.Kind == PointerKind.Alchemy)
 		{
 			keep.Add(target.Palette);
-			if (target.Mode == AlchemyPalettes.Auto)
+			string other = target.Mode == AlchemyPalettes.Auto ? AlchemyPalettes.OtherTone(target.Palette) : "";
+			if (other.Length > 0)
 			{
-				keep.Add(AlchemyPalettes.OtherTone(target.Palette));
+				keep.Add(other);
 			}
 		}
 		Cleanup(keep);
@@ -1239,7 +1240,15 @@ internal static class PointerScheme
 		{
 			AlchemyPalette? p = AlchemyPalettes.Find(st.AppliedPalette);
 			string tone = p?.Tone ?? AlchemyPalettes.Dark;
-			string season = p == null || p.Season.Length == 0 ? "" : " in " + char.ToUpperInvariant(p.Season[0]) + p.Season.Substring(1) + " colours";
+			bool restSet = p != null && p.Season == AlchemyPalettes.RestSeason;
+			if ((st.Mode == AlchemyPalettes.Light || st.Mode == AlchemyPalettes.Auto) && tone == AlchemyPalettes.Dark && (restSet || DarkRest.IsOn))
+			{
+				// Dark rest keeps the pointers dark whatever the light/dark choice says.
+				text = "Alchemy dark pointers are on while Dark rest is on" + (restSet ? ", in muted colours" : "") + ". "
+					+ (st.Mode == AlchemyPalettes.Auto ? "Afterwards they follow light/dark mode again." : "Normal brings back your light pointers.");
+				break;
+			}
+			string season = p == null || p.Season.Length == 0 ? "" : (restSet ? " in Dark rest colours" : " in " + char.ToUpperInvariant(p.Season[0]) + p.Season.Substring(1) + " colours");
 			text = st.Mode == AlchemyPalettes.Auto
 				? $"Alchemy auto is on: {tone} pointers{season} now, they follow light/dark mode."
 				: $"Alchemy {tone} pointers are on{(season.Length > 0 ? "," + season : "")}.";
@@ -1421,7 +1430,7 @@ internal sealed class RealPointerWorld : IPointerWorld
 		return d;
 	}
 
-	private static RegValue? ReadValue(RegistryKey key, string name)
+	internal static RegValue? ReadValue(RegistryKey key, string name)
 	{
 		RegistryValueKind kind = key.GetValueKind(name);
 		object? raw = key.GetValue(name, null, RegistryValueOptions.DoNotExpandEnvironmentNames);
@@ -1466,7 +1475,7 @@ internal sealed class RealPointerWorld : IPointerWorld
 		WriteOne(key, name, value == null ? null : new RegValue { Name = name, Kind = value.Kind, Data = value.Data });
 	}
 
-	private static void WriteOne(RegistryKey key, string name, RegValue? value)
+	internal static void WriteOne(RegistryKey key, string name, RegValue? value)
 	{
 		string? existing = key.GetValueNames().FirstOrDefault(n => string.Equals(n, name, StringComparison.OrdinalIgnoreCase));
 		if (value == null)

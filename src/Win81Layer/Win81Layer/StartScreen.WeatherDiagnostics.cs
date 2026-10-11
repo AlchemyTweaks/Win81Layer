@@ -23,7 +23,7 @@ public partial class StartScreen
 		Dictionary<TileSize, BitmapSource> logos = new();
 		Dictionary<string, bool> checks = new();
 		Dictionary<TileSize, long> renderMs = new();
-		MotionMode previousMotion = Motion.Mode;
+		MotionMode previousMotion = Motion.UserMode;
 		Motion.Mode = MotionMode.Fast;
 		ScrollViewer viewport = new() { HorizontalScrollBarVisibility = ScrollBarVisibility.Hidden, VerticalScrollBarVisibility = ScrollBarVisibility.Disabled };
 		Window window = new() { Width = 350, Height = 350, Left = -8000, Top = -8000, ShowActivated = false, ShowInTaskbar = false, WindowStyle = WindowStyle.None, Content = viewport };

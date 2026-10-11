@@ -708,7 +708,9 @@ internal static class CursorDiagnostics
 		["halloween-dark"] = (0xFF8A2Au, 0xDEE6F2u),
 		["halloween-light"] = (0xAA4405u, 0x26160Cu),
 		["christmas-dark"] = (0xFF5C70u, 0xDEE6F2u),
-		["christmas-light"] = (0xC51332u, 0x2C1115u)
+		["christmas-light"] = (0xC51332u, 0x2C1115u),
+		// not on the website: the palette's own colours
+		["rest-dark"] = (0x8FA3B8u, 0xE0E5EBu)
 	};
 
 	private static void GeometryChecks()
@@ -1172,6 +1174,33 @@ internal static class CursorDiagnostics
 		}
 		Metrics["WorkingDistinctPixelsMin32"] = spinMin;
 		Check("working-stands-out-from-normal-at-32", spinBad.Count == 0, spinBad.Count == 0 ? "every frame, every set: >= 25 pixels differ from Normal at >= 3:1 on the set's background (min " + string.Join(", ", spinMin.Select(kv => kv.Key + "=" + kv.Value)) + ")" : string.Join(" ; ", spinBad));
+
+		// The Dark rest busy pointer has no strong hue, so its moving arc must stand out from the grey ring it runs on by
+		// brightness alone: around the ring's middle circle at 32 px, the brightest point (the arc's head) against the
+		// darkest (bare ring) is at least 1.8:1 on the set's background, in every frame.
+		{
+			AlchemyPalette rest = AlchemyPalettes.Find("rest-dark")!;
+			double worst = double.MaxValue;
+			for (int f = 0; f < AlchemyCursorArt.AnimFrames; f++)
+			{
+				double[] c = Composite(AlchemyCursorArt.RenderBgra(CursorRole.Wait, rest, 32, f), 32, BgDark);
+				double hi = 0.0;
+				double lo = double.MaxValue;
+				for (int deg = 0; deg < 360; deg++)
+				{
+					double a = deg * Math.PI / 180.0;
+					int x = (int)Math.Floor(16.0 + 8.38625 * Math.Cos(a));
+					int y = (int)Math.Floor(16.0 + 8.38625 * Math.Sin(a));
+					int k = (y * 32 + x) * 3;
+					double l = Luminance(c[k], c[k + 1], c[k + 2]);
+					hi = Math.Max(hi, l);
+					lo = Math.Min(lo, l);
+				}
+				worst = Math.Min(worst, ContrastRatio(hi, lo));
+			}
+			Metrics["RestBusyArcVsRingMin32"] = Math.Round(worst, 2);
+			Check("rest-busy-arc-stands-out-at-32", worst >= 1.8, $"arc head vs bare ring, worst frame {worst:F2}:1");
+		}
 
 		// Every pointer stays findable on white, black and mid grey: at 32 px at least 20 pixels reach 3:1 against each,
 		// in every set (animated pointers: every frame).
@@ -1920,6 +1949,9 @@ internal static class CursorDiagnostics
 			Want("auto+light-mode+christmas", T(Auto, false, "christmas"), "christmas-light");
 			Want("light+christmas (dark mode)", T(Light, true, "christmas"), "christmas-light");
 			Want("auto+dark-mode+halloween", T(Auto, true, "HALLOWEEN"), "halloween-dark");
+			Want("rest+light", T(Light, true, "rest"), "rest-dark");
+			Want("rest+auto+light-mode", T(Auto, false, "rest"), "rest-dark");
+			Want("rest+toggle-off", T(Light, false, "rest", seasonalOn: false), "dark");
 			if (T(Win81, true, "halloween").Kind != PointerKind.Win81 || T(Off, true, "christmas").Kind != PointerKind.Windows)
 			{
 				bad.Add("non-Alchemy choices ignore the season");
@@ -1940,7 +1972,7 @@ internal static class CursorDiagnostics
 			{
 				bad.Add($"engine season switch hall={hall} back={back}");
 			}
-			Check("engine-c-seasonal-palettes", bad.Count == 0, bad.Count == 0 ? "halloween-dark, christmas-dark, dark, dark (toggle off), christmas-light, normal brings blue back" : string.Join(" ; ", bad));
+			Check("engine-c-seasonal-palettes", bad.Count == 0, bad.Count == 0 ? "halloween-dark, christmas-dark, dark, dark (toggle off), christmas-light, rest-dark for light and auto, dark (rest, toggle off), normal brings blue back" : string.Join(" ; ", bad));
 		}
 
 		// d. Older build's snapshot with its Windows 8.1 pointers on.

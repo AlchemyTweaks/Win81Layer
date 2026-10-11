@@ -19,7 +19,7 @@ namespace Win81Layer;
 // --seasonaltest [outDir]: offscreen QA of the seasonal presets. Read-only by construction: settings and state writes
 // throw, the desktop wallpaper setters refuse to run, and renders use diagnostics overrides instead of real writes.
 // The transaction logic is driven against an in-memory fake world, including a crash at every write.
-internal static class SeasonalDiagnostics
+internal static partial class SeasonalDiagnostics
 {
 	private static readonly List<(string Name, bool Pass, string Detail)> Checks = new List<(string, bool, string)>();
 
@@ -65,7 +65,10 @@ internal static class SeasonalDiagnostics
 		{
 			SafetyChecks(outDir);
 			EngineChecks();
+			RestEngineChecks();
+			RestPureChecks(real);
 			ArtChecks(outDir);
+			RestArtChecks(outDir);
 			LiveChecks(outDir, real);
 		}
 		catch (Exception ex)
@@ -77,22 +80,30 @@ internal static class SeasonalDiagnostics
 			SettingsStore.DiagnosticsOverride = null;
 			TaskbarTheme.DiagnosticsWallpaperPath = null;
 			SeasonalTheme.DiagnosticsOwnsWallpaper = null;
+			SeasonalTheme.DiagnosticsOwnsWindowsTheme = null;
 			SeasonalTheme.DiagnosticsOriginal = null;
+			Motion.CalmOverride = false;
 			TaskbarTheme.Invalidate();
 		}
 		Baseline after = Baseline.Capture();
 		Check("no-settings-write", before.Hashes == after.Hashes, before.Hashes == after.Hashes ? "" : $"before={before.Hashes} after={after.Hashes}");
 		Check("no-wallpaper-change", before.Wallpaper == after.Wallpaper && before.Registry == after.Registry, $"before={before.Wallpaper} after={after.Wallpaper}");
 		Check("no-seasonal-folder-files", before.SeasonalFolder == after.SeasonalFolder, $"before={before.SeasonalFolder} after={after.SeasonalFolder}");
+		Check("no-theme-change", before.Theme == after.Theme && before.Theme.Length > 0, $"before={before.Theme} after={after.Theme}");
 		string[] pngs = Directory.GetFiles(outDir, "*.png");
-		string[] expected = new string[25]
+		string[] expected = new string[45]
 		{
 			"wallpaper-halloween.png", "wallpaper-christmas.png", "wallpaper-christmas-1280x1024.png", "wallpaper-halloween-1280x1024.png", "patterns.png", "designs-thumbs.png",
 			"start-halloween.png", "start-christmas.png", "personalize-halloween.png", "ambient-bats.png", "ambient-snow.png", "actioncenter-halloween.png", "actioncenter-christmas.png",
 			"taskbar-halloween.png", "taskbar-christmas.png", "win7glass-halloween.png", "win7glass-christmas.png", "pcsettings-seasonal-halloween.png", "personalize-christmas.png",
-			"pcsettings-startscreen-christmas.png", "start-normal.png", "wallpaper-halloween-2560x1080.png", "start-before.png", "actioncenter-normal.png", "taskbar-normal.png"
+			"pcsettings-startscreen-christmas.png", "start-normal.png", "wallpaper-halloween-2560x1080.png", "start-before.png", "actioncenter-normal.png", "taskbar-normal.png",
+			"wallpaper-rest.png", "wallpaper-rest-1280x1024.png", "pattern-dusk.png", "start-rest.png", "start-rest-apps.png", "personalize-rest.png", "taskbar-rest.png",
+			"flyout-clock-rest.png", "flyout-volume-rest.png", "flyout-network-rest.png", "actioncenter-rest.png", "searchpane-rest.png", "settingspane-rest.png", "charms-rest.png",
+			"toast-rest.png", "osd-rest.png", "switcher-rest.png", "win7start-rest.png", "pcsettings-rest-launcher.png", "pcsettings-rest-devices.png"
 		};
-		List<string> missing = expected.Where(n => !File.Exists(Path.Combine(outDir, n)) || new FileInfo(Path.Combine(outDir, n)).Length <= 10240).ToList();
+		// The toast and the OSD are small cards.
+		HashSet<string> small = new HashSet<string>(StringComparer.Ordinal) { "toast-rest.png", "osd-rest.png" };
+		List<string> missing = expected.Where(n => !File.Exists(Path.Combine(outDir, n)) || new FileInfo(Path.Combine(outDir, n)).Length <= (small.Contains(n) ? 1024 : 10240)).ToList();
 		Check("renders-present", missing.Count == 0, missing.Count == 0 ? $"{expected.Length} renders" : "missing or small: " + string.Join(", ", missing));
 		Metrics["Renders"] = pngs.Select(Path.GetFileName).ToArray();
 
@@ -131,8 +142,9 @@ internal static class SeasonalDiagnostics
 		{
 			SeasonalResult a = SeasonalTheme.ApplyBlocking(SeasonalTheme.Halloween);
 			SeasonalResult b = SeasonalTheme.ApplyAsync(SeasonalTheme.Normal).Result;
-			refused = !a.Success && !b.Success && a.Message == "Read-only diagnostics: no changes made." && b.Message == a.Message;
-			detail = a.Message + " | " + b.Message;
+			SeasonalResult c = SeasonalTheme.ApplyBlocking(SeasonalTheme.Rest);
+			refused = !a.Success && !b.Success && !c.Success && a.Message == "Read-only diagnostics: no changes made." && b.Message == a.Message && c.Message == a.Message;
+			detail = a.Message + " | " + b.Message + " | " + c.Message;
 		}
 		catch (Exception ex)
 		{
@@ -162,6 +174,25 @@ internal static class SeasonalDiagnostics
 			restoreGuarded = true;
 		}
 		Check("wallpaper-setters-guarded", guarded && restoreGuarded, guarded ? "" : detail);
+		bool setGuarded = false;
+		try
+		{
+			WindowsThemeMode.SetDark();
+		}
+		catch (InvalidOperationException)
+		{
+			setGuarded = true;
+		}
+		bool restoreThemeGuarded = false;
+		try
+		{
+			WindowsThemeMode.Restore(new WindowsThemeSnapshot());
+		}
+		catch (InvalidOperationException)
+		{
+			restoreThemeGuarded = true;
+		}
+		Check("theme-setters-guarded", setGuarded && restoreThemeGuarded, $"setDark={setGuarded} restore={restoreThemeGuarded}");
 	}
 
 	// ===================================================================== engine (fake world)
@@ -202,6 +233,17 @@ internal static class SeasonalDiagnostics
 		public bool SettingsUnreadable;
 
 		public bool FailSetWallpaper;
+
+		// Windows light/dark mode: apps light (DWORD 1), the system value missing. Failure injection as above.
+		public RegValue? Apps = Dw(WindowsThemeMode.AppsName, "1");
+
+		public RegValue? Sys;
+
+		public bool ThemeUnreadable;
+
+		public bool FailSetDark;
+
+		public bool FailRestoreTheme;
 
 		public readonly HashSet<string> Files = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
@@ -391,6 +433,59 @@ internal static class SeasonalDiagnostics
 				&& !string.Equals(keep?.Wallpaper?.AppliedPath, f, StringComparison.OrdinalIgnoreCase));
 		}
 
+		public WindowsThemeSnapshot ReadWindowsTheme()
+		{
+			if (ThemeUnreadable)
+			{
+				throw new SeasonalReadException("Could not read the Windows light/dark mode, so nothing was changed.");
+			}
+			return new WindowsThemeSnapshot { AppsUseLightTheme = Apps?.Clone(), SystemUsesLightTheme = Sys?.Clone() };
+		}
+
+		public bool SetWindowsDark()
+		{
+			if (FailSetDark)
+			{
+				return false;
+			}
+			Apps = Dw(WindowsThemeMode.AppsName, "0");
+			Sys = Dw(WindowsThemeMode.SystemName, "0");
+			Landed();
+			return true;
+		}
+
+		// The same per-value rule as the real restore (WindowsThemeMode.Plan).
+		public string RestoreWindowsTheme(WindowsThemeSnapshot original)
+		{
+			if (FailRestoreTheme)
+			{
+				Landed();
+				return "failed:simulated";
+			}
+			int written = 0;
+			int kept = 0;
+			if (WindowsThemeMode.Plan(original.AppsUseLightTheme, Apps, ref written, ref kept))
+			{
+				Apps = original.AppsUseLightTheme?.Clone();
+			}
+			if (WindowsThemeMode.Plan(original.SystemUsesLightTheme, Sys, ref written, ref kept))
+			{
+				Sys = original.SystemUsesLightTheme?.Clone();
+			}
+			Landed();
+			return WindowsThemeMode.Outcome(written, kept);
+		}
+
+		public string ThemeText()
+		{
+			return "apps=" + Short(Apps) + "|sys=" + Short(Sys);
+		}
+
+		private static string Short(RegValue? v)
+		{
+			return v == null ? "absent" : v.Kind + ":" + v.Data;
+		}
+
 		private void Landed()
 		{
 			Writes++;
@@ -403,7 +498,7 @@ internal static class SeasonalDiagnostics
 		public string World()
 		{
 			AppSettings s = Peek();
-			return $"bg={s.StartBgMode}|{s.StartBgCustomPath}|{s.StartBgColor}|{s.StartPattern}|{s.StartAccentColor}|active={s.SeasonalActive}|wp={string.Join(",", Monitors.Select(m => m.MonitorId + "=" + m.Path))}|pos={Position}|style={Style}|color={BgColor:X6}";
+			return $"bg={s.StartBgMode}|{s.StartBgCustomPath}|{s.StartBgColor}|{s.StartPattern}|{s.StartAccentColor}|active={s.SeasonalActive}|wp={string.Join(",", Monitors.Select(m => m.MonitorId + "=" + m.Path))}|pos={Position}|style={Style}|color={BgColor:X6}|{ThemeText()}";
 		}
 
 		public string OriginalJson(bool blankApplied)
@@ -420,12 +515,26 @@ internal static class SeasonalDiagnostics
 
 	private static FakeSeasonalWorld Halloweened(out SeasonalEngine engine)
 	{
+		return From(SeasonalTheme.Halloween, out engine);
+	}
+
+	// A fresh world with sourceId applied ("" = Normal), an hour later and with the write counter reset.
+	private static FakeSeasonalWorld From(string sourceId, out SeasonalEngine engine)
+	{
 		FakeSeasonalWorld w = new FakeSeasonalWorld();
 		engine = SeasonalTheme.CreateEngine(w);
-		engine.Apply(SeasonalTheme.Halloween);
-		w.Now = w.Now.AddHours(1);
-		w.Writes = 0;
+		if (SeasonalTheme.NormalizeId(sourceId).Length > 0)
+		{
+			engine.Apply(sourceId);
+			w.Now = w.Now.AddHours(1);
+			w.Writes = 0;
+		}
 		return w;
+	}
+
+	private static RegValue Dw(string name, string data)
+	{
+		return new RegValue(name, RegistryValueKind.DWord, data);
 	}
 
 	private static void EngineChecks()
@@ -473,9 +582,9 @@ internal static class SeasonalDiagnostics
 			Check("switch-keeps-original", ok, $"same={origAfterHalloween == origAfterChristmas} captured={o.CapturedUtc == captured} clean={clean} christmasOn={christmasOn} final={w.World()}");
 		}
 		// crash at every write, then recover
-		CrashRecovery("normal-to-halloween", fromHalloween: false, SeasonalTheme.Halloween);
-		CrashRecovery("halloween-to-christmas", fromHalloween: true, SeasonalTheme.Christmas);
-		CrashRecovery("halloween-to-normal", fromHalloween: true, SeasonalTheme.Normal);
+		CrashRecovery("normal-to-halloween", "", SeasonalTheme.Halloween);
+		CrashRecovery("halloween-to-christmas", SeasonalTheme.Halloween, SeasonalTheme.Christmas);
+		CrashRecovery("halloween-to-normal", SeasonalTheme.Halloween, SeasonalTheme.Normal);
 		// the user's newer wallpaper wins
 		{
 			FakeSeasonalWorld w = Halloweened(out SeasonalEngine e);
@@ -686,19 +795,12 @@ internal static class SeasonalDiagnostics
 		}
 	}
 
-	private static void CrashRecovery(string name, bool fromHalloween, string target)
+	// Crashes the change from sourceId ("" = Normal) to target at every write, then recovers: an apply that did not
+	// commit rolls back to the source (with the same restore point), anything else ends at the target.
+	private static void CrashRecovery(string name, string sourceId, string target)
 	{
-		FakeSeasonalWorld probe;
-		SeasonalEngine e;
-		if (fromHalloween)
-		{
-			probe = Halloweened(out e);
-		}
-		else
-		{
-			probe = new FakeSeasonalWorld();
-			e = SeasonalTheme.CreateEngine(probe);
-		}
+		bool fromSeason = SeasonalTheme.NormalizeId(sourceId).Length > 0;
+		FakeSeasonalWorld probe = From(sourceId, out SeasonalEngine e);
 		string sourceWorld = probe.World();
 		string sourceOriginal = probe.OriginalJson(blankApplied: false);
 		e.Apply(target);
@@ -707,15 +809,7 @@ internal static class SeasonalDiagnostics
 		List<string> failures = new List<string>();
 		for (int n = 1; n <= total; n++)
 		{
-			FakeSeasonalWorld w;
-			if (fromHalloween)
-			{
-				w = Halloweened(out _);
-			}
-			else
-			{
-				w = new FakeSeasonalWorld();
-			}
+			FakeSeasonalWorld w = From(sourceId, out _);
 			w.CrashAfter = n;
 			bool crashed = false;
 			try
@@ -734,7 +828,7 @@ internal static class SeasonalDiagnostics
 			string expect = toTarget ? targetWorld : sourceWorld;
 			SeasonalStateFile st = w.LoadState();
 			bool ok = crashed && w.World() == expect && st.Phase == SeasonalTheme.PhaseIdle;
-			if (ok && !toTarget && fromHalloween)
+			if (ok && !toTarget && fromSeason)
 			{
 				ok = w.OriginalJson(blankApplied: false) == sourceOriginal;
 			}
@@ -743,7 +837,9 @@ internal static class SeasonalDiagnostics
 				failures.Add($"n={n} crashed={crashed} phase={phase} got={w.World()} want={expect} state={st.Phase}");
 			}
 		}
-		Check("crash-recovery-" + name, failures.Count == 0 && total >= 3, failures.Count == 0 ? $"{total} crash points" : string.Join(" ; ", failures));
+		// A change that involves Dark rest also writes Windows light/dark, so it has at least one more write.
+		int minimum = SeasonalTheme.IsRest(SeasonalTheme.NormalizeId(sourceId)) || SeasonalTheme.IsRest(SeasonalTheme.NormalizeId(target)) ? 4 : 3;
+		Check("crash-recovery-" + name, failures.Count == 0 && total >= minimum, failures.Count == 0 ? $"{total} crash points" : string.Join(" ; ", failures));
 		Metrics["CrashPoints-" + name] = total;
 	}
 
@@ -1094,7 +1190,7 @@ internal static class SeasonalDiagnostics
 			start.QaRenderSeason(Path.Combine(outDir, "start-before.png"), 1920.0, 1080.0, withAmbient: true);
 			bool beforeSettled = start.QaBackgroundSettled;
 
-			foreach (SeasonPreset p in SeasonalTheme.Presets)
+			foreach (SeasonPreset p in SeasonalTheme.Seasons)
 			{
 				Color accent = SeasonalArt.Hex(p.Accent);
 				string wallpaper = Path.Combine(outDir, $"wallpaper-{p.Art}.png");
@@ -1182,6 +1278,8 @@ internal static class SeasonalDiagnostics
 				}
 				pc.Close();
 			}
+			// Dark rest: every surface in its dark variant, and Normal before and after it pixel-identical.
+			RestChecks(outDir, start, real);
 			// Normal again: the user's own look must come back exactly as it was rendered before any season.
 			SettingsStore.DiagnosticsOverride = NormalSettings(real);
 			SeasonalTheme.DiagnosticsOwnsWallpaper = false;
@@ -1209,14 +1307,14 @@ internal static class SeasonalDiagnostics
 		}
 		Metrics["Palettes"] = palettes;
 		Metrics["ActionCenterSeason"] = acSeason;
-		Check("actioncenter-keeps-season", acSeasonOk && acSeason.Count == SeasonalTheme.Presets.Length, string.Join(" ; ", acSeason.Select(kv => kv.Key + "=" + kv.Value)));
+		Check("actioncenter-keeps-season", acSeasonOk && acSeason.Count == SeasonalTheme.Seasons.Length, string.Join(" ; ", acSeason.Select(kv => kv.Key + "=" + kv.Value)));
 		Check("accent-flows", accentFail.Count == 0, string.Join(" ; ", accentFail));
 		Check("taskbar-overlay", overlayFail.Count == 0, string.Join(" ; ", overlayFail));
 	}
 
 	private static void AmbientChecks(string outDir, StartScreen start, AppSettings real)
 	{
-		foreach (SeasonPreset p in SeasonalTheme.Presets)
+		foreach (SeasonPreset p in SeasonalTheme.Seasons)
 		{
 			Color accent = SeasonalArt.Hex(p.Accent);
 			Border host = new Border
@@ -1250,7 +1348,7 @@ internal static class SeasonalDiagnostics
 			Check("ambient-stop-releases-" + p.Ambient, hidden.Clocks == 0 && !retired && layer.Children.Count == 0, $"clocks={hidden.Clocks} retired={retired}");
 		}
 		// The Start screen releases its layer when it hides.
-		SettingsStore.DiagnosticsOverride = SeasonSettings(real, SeasonalTheme.Presets[1], "Wallpaper");
+		SettingsStore.DiagnosticsOverride = SeasonSettings(real, SeasonalTheme.Seasons[1], "Wallpaper");
 		start.QaRenderSeason(Path.Combine(outDir, "start-ambient-probe.png"), 1366.0, 768.0, withAmbient: true);
 		bool attached = start.QaBgLayerHasChild && start.QaAmbient?.IsShown == true;
 		start.QaHideForAmbientCheck();
@@ -1349,6 +1447,9 @@ internal static class SeasonalDiagnostics
 
 		public string SeasonalFolder = "";
 
+		// The raw Windows light/dark values (kind and data, or absent).
+		public string Theme = "";
+
 		public static Baseline Capture()
 		{
 			Baseline b = new Baseline();
@@ -1372,6 +1473,14 @@ internal static class SeasonalDiagnostics
 			catch (Exception ex)
 			{
 				b.Wallpaper = "error:" + ex.Message;
+			}
+			try
+			{
+				b.Theme = WindowsThemeMode.Read().Describe();
+			}
+			catch (Exception ex)
+			{
+				b.Theme = "error:" + ex.Message;
 			}
 			b.SeasonalFolder = Directory.Exists(SeasonalArt.SeasonalDir)
 				? string.Join(";", Directory.GetFiles(SeasonalArt.SeasonalDir).OrderBy(f => f).Select(f => Path.GetFileName(f) + ":" + new FileInfo(f).Length + ":" + File.GetLastWriteTimeUtc(f).Ticks))

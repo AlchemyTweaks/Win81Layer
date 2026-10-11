@@ -41,6 +41,9 @@ public sealed class AppListItem : Button, IDisposable
 
 	private double _textPixelsPerDip;
 
+	// The ink the name was laid out with (the Start screen's "Start.Ink": white, or the softer Dark rest ink).
+	private Brush _textInk;
+
 	public AppListItem(AppEntry entry, Brush hoverBrush, Brush accentBrush)
 	{
 		_entry = entry;
@@ -111,9 +114,14 @@ public sealed class AppListItem : Button, IDisposable
 			// An app whose icon never resolved draws its initial instead of an empty slot.
 			IconResolver.DrawLetter(drawingContext, iconTile, _entry.Name, IconResolver.AccentFor(_entry.Name));
 		}
+		// Dark rest dims the icon tile a little, like the Start tiles (the resource exists only while it is on).
+		if (TryFindResource("Start.TileScrim") is Brush scrim)
+		{
+			drawingContext.DrawRectangle(scrim, null, iconTile);
+		}
 
 		double pixelsPerDip = VisualTreeHelper.GetDpi(this).PixelsPerDip;
-		EnsureText(pixelsPerDip);
+		EnsureText(pixelsPerDip, TryFindResource("Start.Ink") as Brush ?? WhiteBrush);
 		if (_nameText != null)
 		{
 			// Sit the name slightly ABOVE centre so a wrapped 2nd line has room to drop below (per user request).
@@ -131,15 +139,16 @@ public sealed class AppListItem : Button, IDisposable
 		}
 	}
 
-	private void EnsureText(double pixelsPerDip)
+	private void EnsureText(double pixelsPerDip, Brush ink)
 	{
-		if (_nameText != null && Math.Abs(_textPixelsPerDip - pixelsPerDip) < 0.01)
+		if (_nameText != null && Math.Abs(_textPixelsPerDip - pixelsPerDip) < 0.01 && ReferenceEquals(ink, _textInk))
 		{
 			return;
 		}
 		_textPixelsPerDip = pixelsPerDip;
+		_textInk = ink;
 		_nameText = new FormattedText(_entry.Name, CultureInfo.CurrentUICulture, FlowDirection.LeftToRight,
-			NameTypeface, 14.0, WhiteBrush, pixelsPerDip)
+			NameTypeface, 14.0, ink, pixelsPerDip)
 		{
 			MaxTextWidth = 150.0,
 			MaxLineCount = 2,

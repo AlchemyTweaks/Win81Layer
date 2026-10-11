@@ -966,7 +966,8 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 			// Win7-Aero shell skin: translucent smoked-glass taskbar (wallpaper shows through). Uses a plain alpha
 			// WPF brush, NOT WCA acrylic — the acrylic backdrop leaks a stuck DWM region that outlives the process.
 			AcrylicGlass.Clear(tbHwnd);
-			base.Background = new SolidColorBrush(System.Windows.Media.Color.FromArgb(184, 22, 22, 28));
+			// Dark rest keeps its calm slate here too.
+			base.Background = DarkRest.Visuals ? TaskbarTheme.CurrentBackground() : new SolidColorBrush(System.Windows.Media.Color.FromArgb(184, 22, 22, 28));
 		}
 		else
 		{
@@ -992,7 +993,9 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		}
 		try
 		{
-			System.Windows.Media.Color bright = Brighten(StartAccent.Color());
+			// Dark rest: the flyouts' selection tone, not a near-white brightened accent (the volume slider fill and the
+			// foreground button's line would otherwise be the brightest things on the dark taskbar).
+			System.Windows.Media.Color bright = DarkRest.Visuals ? DarkRestPalette.TaskbarAccent : Brighten(StartAccent.Color());
 			SolidColorBrush acc = new SolidColorBrush(bright);
 			((Freezable)acc).Freeze();
 			SolidColorBrush dim = new SolidColorBrush(System.Windows.Media.Color.FromArgb(180, bright.R, bright.G, bright.B));
@@ -1041,6 +1044,12 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		ApplySoundFlyoutTheme();
 		ApplyNetworkFlyoutTheme();
 		ApplyStartButtonTheme();
+		// The flyouts' scrollbars: quiet blue-grey while Dark rest is on, the normal dark rail otherwise.
+		DarkRestPalette.RemoveRestResources(base.Resources);
+		if (DarkRest.Visuals)
+		{
+			DarkRestPalette.WriteScrollBrushes(base.Resources);
+		}
 	}
 
 	private void ApplyStartButtonTheme()
@@ -1111,6 +1120,7 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 
 	private void ApplyClockCalendarTheme()
 	{
+		s_restTones = DarkRest.Visuals;
 		try
 		{
 			AppSettings settings = SettingsStore.Load();
@@ -1150,6 +1160,7 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 
 	private void ApplySoundFlyoutTheme()
 	{
+		s_restTones = DarkRest.Visuals;
 		try
 		{
 			AppSettings settings = SettingsStore.Load();
@@ -1173,6 +1184,7 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 			base.Resources["TB.SoundFooter"] = Fz(SoundTone(accent, 0.0, 0.0, 0.16));
 			base.Resources["TB.SoundBorder"] = Fz(SoundTone(accent, 0.0, 0.42, 0.48));
 			base.Resources["TB.SoundLink"] = Fz(SoundTone(accent, -0.01, 0.55, 0.68));
+			ApplySoundTileTones();
 		}
 		catch (Exception ex)
 		{
@@ -1180,8 +1192,48 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		}
 	}
 
+	// The device, app and action tiles of the volume flyout keep their fixed Metro colours; Dark rest mutes them the
+	// way it mutes the Action Center tiles. The XAML brushes are kept so they can be put back exactly.
+	private static readonly string[] SoundTileKeys = new string[10]
+	{
+		"TB.SoundOutputDefault", "TB.SoundOutputOther", "TB.SoundInputDefault", "TB.SoundInputOther", "TB.SoundApp", "TB.SoundSystemApp",
+		"TB.SoundPlaybackTile", "TB.SoundRecordingTile", "TB.SoundSoundsTile", "TB.SoundSettingsTile"
+	};
+
+	private Dictionary<string, object> _soundTileDefaults;
+
+	private void ApplySoundTileTones()
+	{
+		if (s_restTones)
+		{
+			if (_soundTileDefaults == null)
+			{
+				_soundTileDefaults = new Dictionary<string, object>(StringComparer.Ordinal);
+				foreach (string key in SoundTileKeys)
+				{
+					_soundTileDefaults[key] = base.Resources[key];
+				}
+			}
+			foreach (string key in SoundTileKeys)
+			{
+				if (_soundTileDefaults[key] is SolidColorBrush b)
+				{
+					base.Resources[key] = Fz(DarkRestPalette.Mute(b.Color));
+				}
+			}
+		}
+		else if (_soundTileDefaults != null)
+		{
+			foreach (KeyValuePair<string, object> pair in _soundTileDefaults)
+			{
+				base.Resources[pair.Key] = pair.Value;
+			}
+		}
+	}
+
 	private void ApplyNetworkFlyoutTheme()
 	{
+		s_restTones = DarkRest.Visuals;
 		try
 		{
 			AppSettings settings = SettingsStore.Load();
@@ -1222,9 +1274,25 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		base.Resources["TB.NetworkTroubleshootTile"] = Fz(SoundTone(accent, 0.09, 0.58, 0.48));
 	}
 
+	// Set at the start of each flyout theme pass: Dark rest tones the clock, volume and network flyouts down.
+	private static bool s_restTones;
+
 	private static System.Windows.Media.Color SoundTone(System.Windows.Media.Color seed, double hueShift, double saturationFloor, double lightness)
 	{
+		if (s_restTones)
+		{
+			// Dark rest: no saturation floor and at most 0.20, and the dark tones a quarter darker, so nothing glows.
+			saturationFloor = 0.0;
+			if (lightness < 0.40)
+			{
+				lightness *= 0.75;
+			}
+		}
 		ColorMath.RgbToHsl((double)seed.R / 255.0, (double)seed.G / 255.0, (double)seed.B / 255.0, out double h, out double s, out _);
+		if (s_restTones)
+		{
+			s = Math.Min(s, 0.20);
+		}
 		if (s < 0.06)
 		{
 			if (saturationFloor >= 0.4)
@@ -2867,7 +2935,7 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		try
 		{
 			AppSettings s = SettingsStore.Load();
-			string sig = $"{s.TaskbarColorMode}|{s.TaskbarTransparent}|{s.StartAccentColor}|{s.StartBgColor}|{s.StartPattern}|{s.StartBgMode}|{s.StartBgCustomPath}|{s.SeasonalActive}|{TaskbarTheme.WallpaperPath()}";
+			string sig = $"{s.TaskbarColorMode}|{s.TaskbarTransparent}|{s.StartAccentColor}|{s.StartBgColor}|{s.StartPattern}|{s.StartBgMode}|{s.StartBgCustomPath}|{s.SeasonalActive}|{SystemParameters.HighContrast}|{TaskbarTheme.WallpaperPath()}";
 			if (!string.Equals(sig, _lastThemeSig, StringComparison.Ordinal))
 			{
 				bool first = _lastThemeSig == null;
@@ -7721,6 +7789,12 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		{
 			ApplyNetworkFlyoutTheme();
 		}
+	}
+
+	// QA: a brush the taskbar's flyout themes wrote (for example "TB.ClockHeader").
+	internal System.Windows.Media.Brush QaResource(string key)
+	{
+		return base.Resources.Contains(key) ? base.Resources[key] as System.Windows.Media.Brush : null;
 	}
 
 	public ClockCalendarQaMetrics QaRenderClockCalendar(string clockPath, DateTime sample, double widthDiu = 340.0, double heightDiu = 500.0)

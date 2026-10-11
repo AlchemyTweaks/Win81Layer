@@ -102,6 +102,8 @@ internal static class SeasonalTrayDiagnostics
 			File.Delete(old);
 		}
 		string before = OutsideStamp();
+		// The live shell keeps its own seasonal-tray.json once the feature is in use; only a file this run creates is a failure.
+		bool liveStoreBefore = File.Exists(Path.Combine(DataRoot, "seasonal-tray.json"));
 		_real = SettingsStore.Load();
 		List<string> log = new List<string>();
 		SeasonalAppIcons.QaLog = log;
@@ -175,7 +177,7 @@ internal static class SeasonalTrayDiagnostics
 			SeasonalAppIcons.QaLog = null;
 		}
 		string after = OutsideStamp();
-		Check("readonly-data-folder", before == after && !File.Exists(Path.Combine(DataRoot, "seasonal-tray.json")), before == after ? "settings, state and data folder unchanged; no seasonal-tray.json" : $"before={before} after={after}");
+		Check("readonly-data-folder", before == after && (liveStoreBefore || !File.Exists(Path.Combine(DataRoot, "seasonal-tray.json"))), before == after ? "settings, state and data folder unchanged; no seasonal-tray.json" : $"before={before} after={after}");
 		Metrics["Renders"] = Directory.GetFiles(outDir, "traystate-*.png").Select(Path.GetFileName).OrderBy(n => n).ToArray();
 
 		bool passed = Checks.All(c => c.Pass);

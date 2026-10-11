@@ -42,6 +42,12 @@ internal static class AlchemyPalettes
 
 	public const string Auto = "auto";
 
+	// The Dark rest set: the dark tone with a muted blue-grey accent and a softer, less blue ring, used for every mode
+	// while Dark rest is on. The ring stays light enough (3:1 on mid grey) that the thin resize pointers stay findable.
+	// Its spinner is a light blue-grey rather than the accent: the muted accent alone sits too close to the grey busy
+	// ring in brightness, and the set has no strong hue to make the moving arc stand out.
+	public const string RestSeason = "rest";
+
 	// Dark tone = white ring (for dark backgrounds and dark mode), light tone = dark ring. The seasonal sets keep the
 	// structure and swap the accent (and the light ring) for the season's colours. The dots and rings are exactly the
 	// website's seasonal cursors, so the pointer matches the site; that is why Christmas on the dark tone is the site's
@@ -49,14 +55,15 @@ internal static class AlchemyPalettes
 	// holly green so the set reads as Christmas, the other sets spin in their accent.
 	// Halo strength: black at 0.62 gives about 6:1 on white and 3.3:1 on mid grey and stays invisible on dark
 	// backgrounds; white at 0.85 does the same for the light tone on black and mid grey.
-	public static readonly AlchemyPalette[] All = new AlchemyPalette[6]
+	public static readonly AlchemyPalette[] All = new AlchemyPalette[7]
 	{
 		new AlchemyPalette("dark", Dark, "", 0x2F9DFFu, 0xDEE6F2u, 225, 46, 0x000000u, 0.62, 0x0A0F18u, 0x2F9DFFu),
 		new AlchemyPalette("light", Light, "", 0x0A6AC2u, 0x0F192Bu, 209, 40, 0xFFFFFFu, 0.85, 0xFFFFFFu, 0x0A6AC2u),
 		new AlchemyPalette("halloween-dark", Dark, "halloween", 0xFF8A2Au, 0xDEE6F2u, 225, 46, 0x000000u, 0.62, 0x0A0F18u, 0xFF8A2Au),
 		new AlchemyPalette("halloween-light", Light, "halloween", 0xAA4405u, 0x26160Cu, 209, 40, 0xFFFFFFu, 0.85, 0xFFFFFFu, 0xAA4405u),
 		new AlchemyPalette("christmas-dark", Dark, "christmas", 0xFF5C70u, 0xDEE6F2u, 225, 46, 0x000000u, 0.62, 0x0A0F18u, 0x34B36Fu),
-		new AlchemyPalette("christmas-light", Light, "christmas", 0xC51332u, 0x2C1115u, 209, 40, 0xFFFFFFu, 0.85, 0xFFFFFFu, 0x17693Fu)
+		new AlchemyPalette("christmas-light", Light, "christmas", 0xC51332u, 0x2C1115u, 209, 40, 0xFFFFFFu, 0.85, 0xFFFFFFu, 0x17693Fu),
+		new AlchemyPalette("rest-dark", Dark, RestSeason, 0x8FA3B8u, 0xE0E5EBu, 225, 40, 0x000000u, 0.62, 0x0A0F18u, 0xC9D1DBu)
 	};
 
 	public static AlchemyPalette? Find(string? id)
@@ -87,7 +94,7 @@ internal static class AlchemyPalettes
 		return (t == Dark || t == Light || t == Auto) ? t : "";
 	}
 
-	// "", "halloween" or "christmas".
+	// "", "halloween", "christmas" or "rest".
 	public static string NormalizeSeason(string? season)
 	{
 		if (string.IsNullOrWhiteSpace(season))
@@ -95,7 +102,7 @@ internal static class AlchemyPalettes
 			return "";
 		}
 		string t = season.Trim().ToLowerInvariant();
-		return (t == "halloween" || t == "christmas") ? t : "";
+		return (t == "halloween" || t == "christmas" || t == RestSeason) ? t : "";
 	}
 
 	// The palette a pointer setting shows right now: the tone follows light/dark mode for "auto", and the season's
@@ -107,8 +114,13 @@ internal static class AlchemyPalettes
 		{
 			return "";
 		}
-		string tone = m == Auto ? (isDark ? Dark : Light) : m;
 		string s = NormalizeSeason(season);
+		if (s == RestSeason)
+		{
+			// Dark rest: dark pointers for every mode, in the muted set while seasonal pointer colours are allowed.
+			return seasonalOn ? "rest-dark" : Dark;
+		}
+		string tone = m == Auto ? (isDark ? Dark : Light) : m;
 		return (seasonalOn && s.Length > 0) ? s + "-" + tone : tone;
 	}
 
@@ -116,8 +128,9 @@ internal static class AlchemyPalettes
 	public static string OtherTone(string paletteId)
 	{
 		AlchemyPalette? p = Find(paletteId);
-		if (p == null)
+		if (p == null || p.Season == RestSeason)
 		{
+			// The Dark rest set has only the dark tone.
 			return "";
 		}
 		string other = p.Tone == Dark ? Light : Dark;

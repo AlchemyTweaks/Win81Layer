@@ -297,6 +297,11 @@ public sealed class SettingsPane : Window
 	internal static System.Windows.Media.Color AccentToneColor(double lightness)
 	{
 		System.Windows.Media.Color a = StartAccent.Color();
+		if (DarkRest.Visuals)
+		{
+			// Dark rest: the charm panes, the search pane, cards and PC Settings take a low-saturation, darker tone.
+			return DarkRestPalette.AccentTone(a, lightness);
+		}
 		var (h, s, _) = ToHsl(a);
 		return FromHsl(h, Math.Clamp(s, 0.46, 0.72), lightness);
 	}

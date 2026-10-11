@@ -121,6 +121,15 @@ public sealed class AppSettings
 	// surface (SeasonalAppIcons). Not profile-owned.
 	public bool SeasonalAppIcons { get; set; } = true;
 
+	// Dark rest options (SeasonalActive = "rest"): a calm drawn desktop wallpaper, calmer animations (Motion plays as
+	// Reduced, the Motion setting itself is not changed) and slightly dimmed Start tiles. Not profile-owned; kept
+	// across Normal.
+	public bool RestWallpaper { get; set; } = true;
+
+	public bool RestCalmMotion { get; set; } = true;
+
+	public bool RestDimTiles { get; set; } = true;
+
 	// Notification-area icons with a seasonal picture: "live" keeps the app's status visible (badges on the picture, the
 	// app's own icon during calls and other states, SeasonalTrayIcons); "original" always shows the app's own icon.
 	public string SeasonalTrayIcons { get; set; } = "live";

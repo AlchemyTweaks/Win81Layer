@@ -67,6 +67,18 @@ public static class SettingsStore
 	// in place, so reading the reference is safe; only the very first read loads under the lock.
 	internal static (string Season, bool AppIcons) PeekSeasonalAppIcons()
 	{
+		AppSettings s = Peek();
+		return (s.SeasonalActive ?? "", s.SeasonalAppIcons);
+	}
+
+	// The seasonal marker the same way (Dark rest asks for it on paint paths).
+	internal static string PeekSeasonalActive()
+	{
+		return Peek().SeasonalActive ?? "";
+	}
+
+	private static AppSettings Peek()
+	{
 		AppSettings? s = ReadOnlyDiagnostics ? DiagnosticsOverride : null;
 		s ??= System.Threading.Volatile.Read(ref _cache);
 		if (s == null)
@@ -76,7 +88,7 @@ public static class SettingsStore
 				s = _cache ?? LoadCore(force: false, 8, out _);
 			}
 		}
-		return (s.SeasonalActive ?? "", s.SeasonalAppIcons);
+		return s;
 	}
 
 	// True when notification-area icons always show the app's own icon (SeasonalTrayIcons = "original"). Lock-free like

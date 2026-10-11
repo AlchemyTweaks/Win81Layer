@@ -655,6 +655,7 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 				// let DesktopComposition serialize the slower registry/broadcast work off the UI thread.
 				TaskbarWindow.RaiseTaskbarColorChanged(invalidateWallpaper: false);
 				DesktopComposition.RefreshAccent();
+				ApplyRestResources(s);
 			}
 			catch
 			{
@@ -667,8 +668,51 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 		}
 	}
 
+	// Dark rest: softer Start text, a dark all-apps search box and (optionally) slightly dimmed tiles. With Normal (or
+	// under High Contrast) the XAML values come back exactly and nothing dims the tiles.
+	private void ApplyRestResources(AppSettings s)
+	{
+		bool rest = DarkRest.VisualsFor(s);
+		base.Resources["Start.Ink"] = rest ? DarkRestPalette.Ink : DarkRestPalette.NormalInk;
+		base.Resources["Start.InkSoft"] = rest ? DarkRestPalette.InkSoft : DarkRestPalette.NormalInkSoft;
+		base.Resources["Start.SearchField"] = rest ? DarkRestPalette.SearchField : DarkRestPalette.NormalSearchField;
+		base.Resources["Start.SearchBorder"] = rest ? DarkRestPalette.FieldBorder : DarkRestPalette.NormalSearchBorder;
+		base.Resources["Start.SearchInk"] = rest ? DarkRestPalette.SearchInk : DarkRestPalette.NormalSearchInk;
+		base.Resources["Start.SearchHint"] = rest ? DarkRestPalette.SearchHint : DarkRestPalette.NormalSearchHint;
+		base.Resources["Start.SearchGlyph"] = rest ? DarkRestPalette.SearchGlyph : DarkRestPalette.NormalSearchGlyph;
+		// Quiet blue-grey scrollbars (the board's bottom rail and the Personalize pane) instead of the bright grey ones.
+		DarkRestPalette.RemoveRestResources(base.Resources);
+		if (rest)
+		{
+			DarkRestPalette.WriteScrollBrushes(base.Resources);
+			DarkRestPalette.WriteScrollBarDarkStyle(base.Resources);
+		}
+		bool dim = rest && s.RestDimTiles;
+		if (dim)
+		{
+			base.Resources["Start.TileScrim"] = DarkRestPalette.TileScrim;
+		}
+		else
+		{
+			base.Resources.Remove("Start.TileScrim");
+		}
+		// The all-apps rows are drawn in code and read these resources when they render: repaint them on a change.
+		int restLook = (rest ? 1 : 0) | (dim ? 2 : 0);
+		if (restLook != _restLook)
+		{
+			_restLook = restLook;
+			foreach (System.Windows.Controls.Button row in _appButtons.Values)
+			{
+				row.InvalidateVisual();
+			}
+		}
+	}
+
+	private int _restLook;
+
 	// Attaches the seasonal effect only while it can be seen: a season with effects on, Start visible, the background
-	// layer shown and no semantic-zoom overlay covering it. Otherwise every animation and child is released.
+	// layer shown and no semantic-zoom overlay covering it. Otherwise every animation and child is released. Dark rest
+	// has no effect.
 	internal void SyncSeasonalAmbient()
 	{
 		try
@@ -676,6 +720,7 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 			AppSettings s = SettingsStore.FastSnapshot;
 			SeasonPreset? preset = SeasonalTheme.Find(s.SeasonalActive);
 			bool want = preset != null
+				&& preset.Ambient.Length > 0
 				&& s.SeasonalAmbient
 				&& base.IsVisible
 				&& BgLayer.Visibility == Visibility.Visible
@@ -775,7 +820,7 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 
 	// QA: the Start screen with the current (diagnostics) look and its seasonal effect drawn static, offscreen and
 	// without activation. Only used with the synthetic diagnostics board.
-	internal void QaRenderSeason(string outPath, double width, double height, bool withAmbient)
+	internal void QaRenderSeason(string outPath, double width, double height, bool withAmbient, bool allApps = false)
 	{
 		Width = width;
 		Height = height;
@@ -800,7 +845,7 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 			System.Threading.Thread.Sleep(10);
 		}
 		SeasonPreset? preset = SeasonalTheme.Find(SettingsStore.FastSnapshot.SeasonalActive);
-		if (withAmbient && preset != null)
+		if (withAmbient && preset != null && preset.Ambient.Length > 0)
 		{
 			_ambient ??= new SeasonalAmbientLayer();
 			BgLayer.Child = _ambient;
@@ -811,12 +856,27 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 			_ambient?.Hide();
 			BgLayer.Child = null;
 		}
+		if (allApps)
+		{
+			// The all-apps view with its search box, switched without animation and switched back after the render.
+			if (!_appsViewBuilt)
+			{
+				BuildAppsView();
+			}
+			SwitchView(showAllApps: true, animate: false);
+		}
 		FrameworkElement root = (FrameworkElement)Content;
 		root.Measure(new System.Windows.Size(width, height));
 		root.Arrange(new Rect(0.0, 0.0, width, height));
 		root.UpdateLayout();
 		RenderTargetBitmap bitmap = new RenderTargetBitmap((int)width, (int)height, 96.0, 96.0, PixelFormats.Pbgra32);
 		bitmap.Render(root);
+		if (allApps)
+		{
+			// the search field without its button, for the colour checks
+			QaLastSearchField = SearchGroup.TransformToAncestor(root).TransformBounds(new Rect(0.0, 0.0, Math.Max(0.0, SearchGroup.ActualWidth - 38.0), SearchGroup.ActualHeight));
+			SwitchView(showAllApps: false, animate: false);
+		}
 		PngBitmapEncoder encoder = new PngBitmapEncoder();
 		encoder.Frames.Add(BitmapFrame.Create(bitmap));
 		using FileStream stream = File.Create(outPath);
@@ -874,7 +934,25 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 
 	internal SeasonalAmbientLayer? QaAmbient => _ambient;
 
+	// QA: the Personalize season chips (count, and the id of the selected one, "" when none is selected).
+	internal (int Count, string Selected) QaSeasonChips()
+	{
+		string selected = "";
+		foreach (UIElement element in SeasonGrid.Children)
+		{
+			if (element is Border chip && chip.Tag is PersonalizeChoice choice && chip.Child is Grid grid
+				&& grid.Children.OfType<FrameworkElement>().Any(fe => fe.Tag as string == "sel" && fe.Visibility == Visibility.Visible))
+			{
+				selected = choice.Value;
+			}
+		}
+		return (SeasonGrid.Children.Count, selected);
+	}
+
 	internal bool QaBgLayerHasChild => BgLayer.Child != null;
+
+	// QA: where the all-apps search field was in the last all-apps render.
+	internal Rect QaLastSearchField { get; private set; }
 
 	internal bool QaBackgroundSettled => _bgAppliedToken == _bgToken;
 
@@ -1122,7 +1200,7 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 		}
 		if (!_seasonBusy)
 		{
-			SeasonNote.Text = season.Length == 0 ? "" : SeasonNormalHint();
+			SeasonNote.Text = season.Length == 0 ? "" : SeasonalTheme.NormalRestoresHint();
 			SeasonNote.Visibility = season.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
 		}
 		foreach (UIElement element in DesignGrid.Children)
@@ -1160,7 +1238,8 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 	private void BuildSeasonChips()
 	{
 		SeasonGrid.Children.Clear();
-		foreach ((string id, string label) in new (string, string)[3] { (SeasonalTheme.Normal, "Normal"), (SeasonalTheme.Halloween, "Halloween"), (SeasonalTheme.Christmas, "Christmas") })
+		// Four chips (Normal, Halloween, Christmas, Dark rest) of 76 x 48 with a 6 DIU gap fill the 338 DIU column.
+		foreach ((string id, string label) in SeasonalTheme.Choices)
 		{
 			SeasonPreset? preset = SeasonalTheme.Find(id);
 			Grid content = new Grid();
@@ -1228,20 +1307,21 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 				Visibility = Visibility.Collapsed,
 				Tag = "sel"
 			});
+			bool rest = SeasonalTheme.IsRest(id);
 			Border chip = new Border
 			{
-				Width = 80.0,
-				Height = 50.0,
-				Margin = new Thickness(0.0, 0.0, 7.0, 7.0),
+				Width = 76.0,
+				Height = 48.0,
+				Margin = new Thickness(0.0, 0.0, 6.0, 6.0),
 				Background = background,
 				BorderBrush = new SolidColorBrush(System.Windows.Media.Color.FromArgb(68, byte.MaxValue, byte.MaxValue, byte.MaxValue)),
 				BorderThickness = new Thickness(1.0),
 				Cursor = System.Windows.Input.Cursors.Hand,
-				ToolTip = (preset == null) ? "Normal: your own look" : label,
+				ToolTip = (preset == null) ? "Normal: your own look" : (rest ? SeasonalTheme.RestTooltip : label),
 				Child = content,
 				Tag = new PersonalizeChoice("season", id, "", Colors.White)
 			};
-			System.Windows.Automation.AutomationProperties.SetName(chip, "Seasonal theme: " + label);
+			System.Windows.Automation.AutomationProperties.SetName(chip, rest ? SeasonalTheme.RestTooltip : "Seasonal theme: " + label);
 			string captured = id;
 			chip.MouseLeftButtonDown += delegate
 			{
@@ -1263,13 +1343,6 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 				}
 			}
 		}
-	}
-
-	private static string SeasonNormalHint()
-	{
-		return SeasonalTheme.OwnsDesktopWallpaper
-			? "Normal puts back your own background, accent and desktop wallpaper."
-			: "Normal puts back your own background and accent colour.";
 	}
 
 	private async void OnSeasonChip(string id)
@@ -1313,7 +1386,7 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 		bool plain = result.Message == name + " is on." || result.Message == name + " is already on." || result.Message == "Normal look restored.";
 		if (!result.Success || !plain)
 		{
-			SeasonNote.Text = (active && result.Success) ? result.Message + " " + SeasonNormalHint() : result.Message;
+			SeasonNote.Text = (active && result.Success) ? result.Message + " " + SeasonalTheme.NormalRestoresHint() : result.Message;
 			SeasonNote.Visibility = Visibility.Visible;
 		}
 	}

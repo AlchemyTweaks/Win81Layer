@@ -68,6 +68,9 @@ public sealed class SearchPane : Window
 
 	private readonly TextBlock _watermark;
 
+	// The white search field (dark while Dark rest is on, see ApplyFieldPalette).
+	private readonly Border _boxOuter;
+
 	private Scope _scope = Scope.Everywhere;
 
 	private Popup? _scopePopup;
@@ -381,7 +384,7 @@ public sealed class SearchPane : Window
 		};
 		Grid.SetRow(scopeBtn, 1);
 		grid.Children.Add(scopeBtn);
-		Border boxOuter = new Border
+		Border boxOuter = _boxOuter = new Border
 		{
 			Background = System.Windows.Media.Brushes.White,
 			Height = 36.0,
@@ -496,6 +499,8 @@ public sealed class SearchPane : Window
 			HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled
 		};
 		try { if (System.Windows.Application.Current.TryFindResource("Metro81.ScrollBarDark") is Style sbDark) scroller.Resources[typeof(System.Windows.Controls.Primitives.ScrollBar)] = new Style(typeof(System.Windows.Controls.Primitives.ScrollBar), sbDark); } catch { }   // dark pane - the light pattern rail is for white surfaces
+		_resultsScroller = scroller;
+		_normalScrollBarStyle = scroller.Resources[typeof(System.Windows.Controls.Primitives.ScrollBar)] as Style;
 		_results = new StackPanel();
 		scroller.Content = new StackPanel
 		{
@@ -576,12 +581,41 @@ public sealed class SearchPane : Window
 				Keyboard.Focus(_box);
 			}
 		};
+		ApplyFieldPalette();
 	}
 
 	private static System.Windows.Media.Brush PaneBg()
 	{
 		return SettingsPane.PaneBg();
 	}
+
+	// The results list and its normal scrollbar style (Dark rest swaps in the quiet one).
+	private ScrollViewer _resultsScroller;
+
+	private Style _normalScrollBarStyle;
+
+	// The search field: white with black ink normally; while Dark rest is on, a dark field (darker than the pane, with
+	// the border every dark field shares) with soft ink, and a quiet results scrollbar.
+	private void ApplyFieldPalette()
+	{
+		bool rest = DarkRest.Visuals;
+		_boxOuter.Background = rest ? DarkRestPalette.FieldBox : System.Windows.Media.Brushes.White;
+		_boxOuter.BorderBrush = rest ? DarkRestPalette.FieldBorder : null;
+		_boxOuter.BorderThickness = rest ? DarkRestPalette.FieldBorderThickness : default;
+		if (_resultsScroller != null)
+		{
+			Style scroll = rest ? DarkRestPalette.ScrollBarStyle() ?? _normalScrollBarStyle : _normalScrollBarStyle;
+			if (scroll != null)
+			{
+				_resultsScroller.Resources[typeof(System.Windows.Controls.Primitives.ScrollBar)] = scroll;
+			}
+		}
+		_box.Foreground = rest ? DarkRestPalette.FieldInk : System.Windows.Media.Brushes.Black;
+		_box.CaretBrush = rest ? DarkRestPalette.FieldInk : System.Windows.Media.Brushes.Black;
+		_watermark.Foreground = rest ? DarkRestPalette.FieldHint : WatermarkNormal;
+	}
+
+	private static readonly System.Windows.Media.Brush WatermarkNormal = ColorMath.Frozen(System.Windows.Media.Color.FromArgb(153, 0, 0, 0));
 
 	private void QueueEntityLookup()
 	{
@@ -857,6 +891,7 @@ public sealed class SearchPane : Window
 			_appMenu = null;
 		}
 		_root.Background = PaneBg();
+		ApplyFieldPalette();
 		_searchBtn.Background = new SolidColorBrush(SettingsPane.AccentToneColor(0.46));
 		_box.Text = string.Empty;
 		_scope = Scope.Everywhere;
@@ -2180,6 +2215,8 @@ public sealed class SearchPane : Window
 		//IL_01fb: Unknown result type (might be due to invalid IL or missing references)
 		//IL_0228: Unknown result type (might be due to invalid IL or missing references)
 		_root.Background = PaneBg();
+		ApplyFieldPalette();
+		_searchBtn.Background = new SolidColorBrush(SettingsPane.AccentToneColor(0.46));
 		_box.Text = query;
 		Rebuild();
 		// Mirror the live TextChanged priority: the synchronous offline cards (calc/convert/date/base/color)

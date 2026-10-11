@@ -46,7 +46,7 @@ public static class StartBackgroundFactory
 
 	public static Brush Build(Color baseColor, Color accent, string pattern, double scale = 1.0)
 	{
-		if (SeasonalArt.IsSeasonalPattern(pattern))
+		if (SeasonalArt.IsPresetPattern(pattern))
 		{
 			return BuildSeasonal(baseColor, accent, pattern, scale);
 		}

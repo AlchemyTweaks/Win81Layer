@@ -3,6 +3,14 @@
   <FrameworkElement.Resources>
     <ResourceDictionary>
       <local:SeasonalIconConverter x:Key="SeasonalIconPick" />
+      <!-- Start text and all-apps search box. Dark rest swaps these in code (StartScreen.ApplyRestResources); these are the normal values. -->
+      <SolidColorBrush x:Key="Start.Ink" Color="#FFFFFFFF" />
+      <SolidColorBrush x:Key="Start.SearchField" Color="#FFFFFFFF" />
+      <SolidColorBrush x:Key="Start.SearchInk" Color="#FF1A1A1A" />
+      <SolidColorBrush x:Key="Start.SearchHint" Color="#FF767676" />
+      <SolidColorBrush x:Key="Start.SearchGlyph" Color="#FF000000" />
+      <SolidColorBrush x:Key="Start.SearchBorder" Color="#FF767676" />
+      <SolidColorBrush x:Key="Start.InkSoft" Color="#E6FFFFFF" />
       <Style x:Key="{x:Type ContextMenu}" TargetType="{x:Type ContextMenu}" BasedOn="{StaticResource MetroContextMenu}">
         <EventSetter Event="Closed" Handler="OnAnyContextMenuClosed" />
       </Style>
@@ -166,6 +174,8 @@
                   <Image Name="FolderFace" HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed" RenderOptions.BitmapScalingMode="HighQuality" Width="{Binding FolderFaceSize}" Height="{Binding FolderFaceSize}" local:TileFx.AnimatedSource="{Binding FolderIcon}" />
                   <Border Name="OverrideBg" Visibility="Collapsed" Background="{Binding Entry.OverrideBrush}" />
                   <Image Name="OverrideFace" HorizontalAlignment="Center" VerticalAlignment="Center" Stretch="Uniform" Visibility="Collapsed" RenderOptions.BitmapScalingMode="HighQuality" Source="{Binding Entry.Icon}" Width="{Binding OverrideFaceSize}" Height="{Binding OverrideFaceSize}" />
+                  <!-- Dark rest dims the tile fill and icon a little (Start.TileScrim is only set while it is on; otherwise nothing is drawn). The name is drawn above it, so it stays as readable as before. -->
+                  <Border Name="RestScrim" Background="{DynamicResource Start.TileScrim}" IsHitTestVisible="False" />
                   <TextBlock Name="TileName" Margin="12,0,12,9" VerticalAlignment="Bottom" TextTrimming="CharacterEllipsis" Text="{Binding Entry.Name}" />
                   <Grid Name="LiveFlipHost" Visibility="Collapsed" RenderTransformOrigin="0.5,0.5" Loaded="OnLiveContentLoaded" Unloaded="OnLiveContentUnloaded">
                     <UIElement.RenderTransform>
@@ -185,7 +195,11 @@
                     <UIElement.RenderTransform>
                       <ScaleTransform x:Name="WeatherFlip" ScaleY="1" />
                     </UIElement.RenderTransform>
-                    <local:MetroTilePresenter Name="WeatherFace" Visual="{Binding MetroVisual}" MotionEnabled="{Binding MetroMotionEnabled}" />
+                    <Grid>
+                      <local:MetroTilePresenter Name="WeatherFace" Visual="{Binding MetroVisual}" MotionEnabled="{Binding MetroMotionEnabled}" />
+                      <!-- the live face's full-bleed picture is dimmed like the tiles; the logo face's name is not -->
+                      <Border Background="{DynamicResource Start.TileScrim}" IsHitTestVisible="False" />
+                    </Grid>
                     <Grid Name="WeatherLogoFace" Visibility="Collapsed">
                       <TextBlock Name="WeatherLogoGlyph" FontFamily="Segoe MDL2 Assets" FontSize="46" Foreground="#FFFFFFFF" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,0,0,8" Text="{Binding LiveGlyph}" />
                       <Image Name="WeatherLogoImg" Visibility="Collapsed" Stretch="Uniform" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,0,0,8" Width="{Binding LiveIconSize}" Height="{Binding LiveIconSize}" RenderOptions.BitmapScalingMode="HighQuality" SnapsToDevicePixels="True" Source="{Binding LiveIcon}" />
@@ -194,6 +208,7 @@
                   </Grid>
                   <TextBlock FontFamily="Segoe UI Symbol" FontSize="26" Foreground="#F2FFFFFF" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,8,10,0" IsHitTestVisible="False" Text="{Binding LiveSymbol}" />
                   <Image Name="DesktopSmallFace" Stretch="UniformToFill" Visibility="Collapsed" RenderOptions.BitmapScalingMode="HighQuality" SnapsToDevicePixels="True" Source="{Binding DesktopSmallIcon}" />
+                  <Border Background="{DynamicResource Start.TileScrim}" IsHitTestVisible="False" Visibility="{Binding Visibility, ElementName=DesktopSmallFace}" />
                   <Border Name="HoverOverlay" Background="#20FFFFFF" Visibility="Collapsed" />
                   <Border Name="FocusBorder" BorderBrush="#FFFFFFFF" BorderThickness="2" Visibility="Collapsed" />
                   <Border Name="SelectBorder" BorderBrush="#FF2672EC" BorderThickness="3" Visibility="Collapsed" />
@@ -267,7 +282,7 @@
         </Style.Triggers>
       </Style>
       <Style x:Key="AppListButton" TargetType="{x:Type Button}">
-        <Setter Property="Foreground" Value="#FFFFFFFF" />
+        <Setter Property="Foreground" Value="{DynamicResource Start.Ink}" />
         <Setter Property="FontFamily" Value="Segoe UI" />
         <Setter Property="FontSize" Value="14" />
         <Setter Property="FrameworkElement.FocusVisualStyle" Value="{x:Null}" />
@@ -281,6 +296,7 @@
                       <Border Background="{Binding TileBrush}" />
                       <Border Name="ListOverrideBg" Visibility="Collapsed" Background="{Binding OverrideBrush}" />
                       <Image Name="ListIcon" Width="24" Height="24" HorizontalAlignment="Center" VerticalAlignment="Center" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality" SnapsToDevicePixels="True" Source="{Binding Icon}" />
+                      <Border Name="RestScrim" Background="{DynamicResource Start.TileScrim}" IsHitTestVisible="False" />
                     </Grid>
                     <TextBlock Margin="10,0,0,0" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Width="150" Text="{Binding Name}" />
                     <TextBlock Text="new" FontFamily="Segoe UI" FontSize="11" Foreground="#FF6CB8FF" VerticalAlignment="Center" Margin="6,0,0,0">
@@ -415,7 +431,7 @@
     </Border>
     <Grid Name="HeaderBar" Row="0" Margin="80,40,60,24">
       <StackPanel Orientation="Horizontal">
-        <TextBlock Name="HeaderText" Text="Start" FontFamily="Segoe UI Light" FontSize="42" Foreground="{StaticResource StartForeground}" />
+        <TextBlock Name="HeaderText" Text="Start" FontFamily="Segoe UI Light" FontSize="42" Foreground="{DynamicResource Start.Ink}" />
         <StackPanel Name="SortDropdown" Orientation="Horizontal" Margin="18,0,0,12" VerticalAlignment="Bottom" Background="#00FFFFFF" Cursor="Hand" Visibility="Collapsed" MouseLeftButtonDown="OnSortLabelClick">
           <TextBlock Name="SortLabel" Text="by name" FontFamily="Segoe UI" FontSize="14" Foreground="#99FFFFFF" />
           <TextBlock Text="" FontFamily="Segoe MDL2 Assets" FontSize="9" Foreground="#99FFFFFF" Margin="6,4,0,0" />
@@ -427,10 +443,10 @@
             <ColumnDefinition Width="*" />
             <ColumnDefinition Width="38" />
           </Grid.ColumnDefinitions>
-          <Border Grid.Column="0" Background="#FFFFFFFF" BorderThickness="2">
+          <Border Grid.Column="0" Background="{DynamicResource Start.SearchField}" BorderThickness="2">
             <Border.Style>
               <Style TargetType="{x:Type Border}">
-                <Setter Property="BorderBrush" Value="#767676" />
+                <Setter Property="BorderBrush" Value="{DynamicResource Start.SearchBorder}" />
                 <Style.Triggers>
                   <DataTrigger Binding="{Binding IsKeyboardFocusWithin, ElementName=SearchBox}" Value="True">
                     <Setter Property="BorderBrush" Value="{DynamicResource SearchAccent}" />
@@ -439,13 +455,13 @@
               </Style>
             </Border.Style>
             <Grid>
-              <TextBox Name="SearchBox" FontFamily="Segoe UI" FontSize="15" Background="#00FFFFFF" Foreground="#1A1A1A" CaretBrush="#1A1A1A" BorderThickness="0" Padding="10,0,30,0" VerticalContentAlignment="Center" TextChanged="OnSearchChanged" GotKeyboardFocus="OnSearchFocusChanged" LostKeyboardFocus="OnSearchFocusChanged" />
-              <TextBlock Name="SearchWatermark" Text="Search apps" IsHitTestVisible="False" Foreground="#767676" FontFamily="Segoe UI" FontSize="15" VerticalAlignment="Center" Margin="12,0,0,0" />
+              <TextBox Name="SearchBox" FontFamily="Segoe UI" FontSize="15" Background="#00FFFFFF" Foreground="{DynamicResource Start.SearchInk}" CaretBrush="{DynamicResource Start.SearchInk}" BorderThickness="0" Padding="10,0,30,0" VerticalContentAlignment="Center" TextChanged="OnSearchChanged" GotKeyboardFocus="OnSearchFocusChanged" LostKeyboardFocus="OnSearchFocusChanged" />
+              <TextBlock Name="SearchWatermark" Text="Search apps" IsHitTestVisible="False" Foreground="{DynamicResource Start.SearchHint}" FontFamily="Segoe UI" FontSize="15" VerticalAlignment="Center" Margin="12,0,0,0" />
               <Button Name="SearchClear" Cursor="Hand" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,4,0" Visibility="Collapsed" FocusVisualStyle="{x:Null}" Click="OnSearchClear">
                 <Control.Template>
                   <ControlTemplate TargetType="{x:Type Button}">
                     <Border Name="XBd" Width="24" Height="24" CornerRadius="0" Background="#00FFFFFF">
-                      <TextBlock Name="XGlyph" Text="" FontFamily="Segoe MDL2 Assets" FontSize="11" Foreground="#000000" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                      <TextBlock Name="XGlyph" Text="" FontFamily="Segoe MDL2 Assets" FontSize="11" Foreground="{DynamicResource Start.SearchGlyph}" HorizontalAlignment="Center" VerticalAlignment="Center" />
                     </Border>
                     <ControlTemplate.Triggers>
                       <Trigger Property="UIElement.IsMouseOver" Value="True">
@@ -475,7 +491,7 @@
           </Button>
         </Grid>
         <StackPanel Name="StartHeaderButtons" Orientation="Horizontal">
-          <TextBlock Name="UserNameText" FontFamily="Segoe UI" FontSize="18" Foreground="#FFFFFFFF" VerticalAlignment="Center" Margin="0,0,12,0" />
+          <TextBlock Name="UserNameText" FontFamily="Segoe UI" FontSize="18" Foreground="{DynamicResource Start.Ink}" VerticalAlignment="Center" Margin="0,0,12,0" />
           <Button Name="UserTile" Width="40" Height="40" Margin="0,0,8,0" Cursor="Hand" ToolTip="Account: Lock, Sign out, Settings" FocusVisualStyle="{x:Null}" Click="OnUserTileClick">
             <Control.Template>
               <ControlTemplate TargetType="{x:Type Button}">
@@ -491,13 +507,13 @@
             </Control.Template>
           </Button>
           <Button Name="AutoArrangeButton" Style="{StaticResource HeaderIconButton}" Margin="0,0,2,0" VerticalAlignment="Center" ToolTip="Auto-organize tiles" Click="OnAutoArrange">
-            <TextBlock Text="" FontFamily="Segoe MDL2 Assets" FontSize="17" Foreground="#E6FFFFFF" HorizontalAlignment="Center" VerticalAlignment="Center" />
+            <TextBlock Text="" FontFamily="Segoe MDL2 Assets" FontSize="17" Foreground="{DynamicResource Start.InkSoft}" HorizontalAlignment="Center" VerticalAlignment="Center" />
           </Button>
           <Button Name="PowerButton" Style="{StaticResource HeaderIconButton}" Margin="0,0,2,0" VerticalAlignment="Center" ToolTip="Power: Sleep, Shut down, Restart" Click="OnPowerClick">
-            <Path Data="M17.36,6.64 A9,9 0 1 1 4.64,6.64M11,1 L11,13" Stretch="None" Stroke="#FFFFFFFF" StrokeThickness="2" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" />
+            <Path Data="M17.36,6.64 A9,9 0 1 1 4.64,6.64M11,1 L11,13" Stretch="None" Stroke="{DynamicResource Start.Ink}" StrokeThickness="2" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" />
           </Button>
           <Button Name="SearchButton" Style="{StaticResource HeaderIconButton}" Margin="0,0,0,0" VerticalAlignment="Center" ToolTip="Search" Click="OnHeaderSearchClick">
-            <Path Data="M8,8 A7,7 0 1 1 22,8A7,7 0 1 1 8,8M10.05,12.95 L1.56,21.44" Stretch="None" Stroke="#FFFFFFFF" StrokeThickness="1.8" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" />
+            <Path Data="M8,8 A7,7 0 1 1 22,8A7,7 0 1 1 8,8M10.05,12.95 L1.56,21.44" Stretch="None" Stroke="{DynamicResource Start.Ink}" StrokeThickness="1.8" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" />
           </Button>
         </StackPanel>
       </StackPanel>

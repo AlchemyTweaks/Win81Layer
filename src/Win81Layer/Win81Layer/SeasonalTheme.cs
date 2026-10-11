@@ -34,10 +34,14 @@ internal sealed class SeasonalOriginal
 	// null = the launcher has not changed the desktop wallpaper.
 	public DesktopWallpaperSnapshot? Wallpaper { get; set; }
 
+	// null = the launcher has not changed Windows light/dark mode (only Dark rest does).
+	public WindowsThemeSnapshot? WindowsTheme { get; set; }
+
 	public SeasonalOriginal Clone()
 	{
 		SeasonalOriginal c = (SeasonalOriginal)MemberwiseClone();
 		c.Wallpaper = Wallpaper?.Clone();
+		c.WindowsTheme = WindowsTheme?.Clone();
 		return c;
 	}
 }
@@ -92,6 +96,8 @@ internal sealed class SeasonalStatus
 	public DateTime? SinceUtc { get; set; }
 
 	public bool OwnsWallpaper { get; set; }
+
+	public bool OwnsWindowsTheme { get; set; }
 
 	public string Phase { get; set; } = SeasonalTheme.PhaseIdle;
 
@@ -149,6 +155,15 @@ internal interface ISeasonalWorld
 	// Deletes seasonal pictures and wallpaper backups that no display shows and keep (the restore point) does not use.
 	void CleanupArt(SeasonalOriginal? keep);
 
+	// Windows light/dark mode (Dark rest only). Throws SeasonalReadException when it cannot be read.
+	WindowsThemeSnapshot ReadWindowsTheme();
+
+	// Sets apps and system to dark; true when both read back dark.
+	bool SetWindowsDark();
+
+	// Puts back what Dark rest changed: "restored", "kept-user", "partial", "unchanged" or "failed:<message>".
+	string RestoreWindowsTheme(WindowsThemeSnapshot original);
+
 	DateTime UtcNow { get; }
 }
 
@@ -163,7 +178,9 @@ internal sealed class SeasonalEngine
 		_w = world;
 	}
 
-	public SeasonalResult Apply(string id)
+	// keepTheme: an option of the active preset changed (its wallpaper option or picture), so its look is brought up to
+	// date without touching Windows light/dark mode. Only clicking a choice itself re-applies everything.
+	public SeasonalResult Apply(string id, bool keepTheme = false)
 	{
 		string target = SeasonalTheme.NormalizeId(id);
 		if (target.Length == 0)
@@ -172,7 +189,7 @@ internal sealed class SeasonalEngine
 		}
 		try
 		{
-			return ApplyTo(SeasonalTheme.Find(target)!);
+			return ApplyTo(SeasonalTheme.Find(target)!, keepTheme);
 		}
 		catch (SeasonalReadException ex)
 		{
@@ -181,7 +198,7 @@ internal sealed class SeasonalEngine
 		}
 	}
 
-	private SeasonalResult ApplyTo(SeasonPreset p)
+	private SeasonalResult ApplyTo(SeasonPreset p, bool keepTheme)
 	{
 		string target = p.Id;
 		SeasonalStateFile st = _w.LoadState();
@@ -196,9 +213,17 @@ internal sealed class SeasonalEngine
 		}
 		AppSettings s = _w.LoadSettings();
 		string cur = SeasonalTheme.NormalizeId(s.SeasonalActive);
+		if (keepTheme && target != cur)
+		{
+			// An option refresh for a preset that is no longer on (it was switched meanwhile): nothing to bring up to date.
+			return Result(true, cur, "Nothing to update: " + p.Name + " is not on.");
+		}
+		// Light/dark mode is left exactly as it is: neither re-darkened (the user may have chosen light meanwhile) nor
+		// merged into the restore point.
+		bool themeKept = keepTheme && SeasonalTheme.IsRest(target);
 		// Clicking the season that is on only does nothing when its whole look is still in place; after a tweak (another
 		// design or accent, or a desktop picture changed outside the launcher) it is applied again over the same restore point.
-		if (target == cur && st.Original != null && IsFullyOn(s, st.Original, p))
+		if (target == cur && st.Original != null && IsFullyOn(s, st.Original, p, themeKept))
 		{
 			bool swapped = EnsureWallpaperFile(st, p);
 			return Result(true, target, swapped ? p.Name + " desktop picture updated." : p.Name + " is already on.");
@@ -220,16 +245,23 @@ internal sealed class SeasonalEngine
 			// Normal is on, so these are the user's own values, even when they happen to equal a seasonal design.
 			orig = Stamp(FromSettings(s));
 		}
-		return ApplyCore(p, orig, cur, s.SeasonalWallpaper, st.ActiveSinceUtc, isRecovery: false);
+		return ApplyCore(p, orig, cur, s, st.ActiveSinceUtc, isRecovery: false, keepTheme: themeKept);
 	}
 
-	private bool IsFullyOn(AppSettings s, SeasonalOriginal orig, SeasonPreset p)
+	private bool IsFullyOn(AppSettings s, SeasonalOriginal orig, SeasonPreset p, bool themeKept)
 	{
 		if (!StartMatches(s, p))
 		{
 			return false;
 		}
-		if (!s.SeasonalWallpaper)
+		// Dark rest is only fully on while Windows is still dark (the user may have switched it back to light), unless
+		// only an option changed: light/dark mode is then not part of the look being brought up to date.
+		return WallpaperFullyOn(s, orig, p) && (themeKept || !SeasonalTheme.IsRest(p.Id) || _w.ReadWindowsTheme().IsDark);
+	}
+
+	private bool WallpaperFullyOn(AppSettings s, SeasonalOriginal orig, SeasonPreset p)
+	{
+		if (!SeasonalTheme.WantsWallpaper(s, p))
 		{
 			return orig.Wallpaper == null;
 		}
@@ -297,7 +329,7 @@ internal sealed class SeasonalEngine
 		{
 			return Result(true, "", "Normal look restored.");
 		}
-		bool seasonalLook = string.Equals(s.StartBgMode, "pattern", StringComparison.Ordinal) && SeasonalArt.IsSeasonalPattern(s.StartPattern);
+		bool seasonalLook = string.Equals(s.StartBgMode, "pattern", StringComparison.Ordinal) && SeasonalArt.IsPresetPattern(s.StartPattern);
 		SeasonalOriginal d = FromSettings(new AppSettings());
 		if (!_w.MutateSettings(delegate(AppSettings x)
 		{
@@ -324,7 +356,25 @@ internal sealed class SeasonalEngine
 		{
 			message += " The desktop wallpaper could not be put back automatically; choose your own picture in Windows Settings.";
 		}
-		Logger.Log($"Seasonal: restore without a restore point (defaults={seasonalLook}, seasonalWallpaperShowing={seasonalWallpaper})");
+		// Without the restore point the user's own light/dark choice is unknown, so Windows stays as it is.
+		bool stillDark = false;
+		if (SeasonalTheme.IsRest(cur))
+		{
+			try
+			{
+				stillDark = _w.ReadWindowsTheme().IsDark;
+			}
+			catch (Exception ex)
+			{
+				// Never blocks Normal; only the hint is left out.
+				Logger.Log("Seasonal: light/dark mode not readable for the hint: " + ex.Message);
+			}
+		}
+		if (stillDark)
+		{
+			message += " Windows is still in dark mode; switch it in Windows Settings > Personalization > Colours if you want light mode.";
+		}
+		Logger.Log($"Seasonal: restore without a restore point (defaults={seasonalLook}, seasonalWallpaperShowing={seasonalWallpaper}, stillDark={stillDark})");
 		return new SeasonalResult { Success = true, Season = "", Message = message, WallpaperOutcome = seasonalWallpaper ? "unknown" : "none" };
 	}
 
@@ -360,9 +410,11 @@ internal sealed class SeasonalEngine
 			else
 			{
 				SeasonPreset? source = SeasonalTheme.Find(st.Source);
+				// Rolling Dark rest back onto itself (an interrupted re-apply or option change) puts back its look and
+				// leaves light/dark mode as it is: it was already Dark rest's before the change started.
 				r = source == null
 					? RestoreCore(st.Original, st.Source)
-					: ApplyCore(source, st.Original.Clone(), st.Source, _w.LoadSettings().SeasonalWallpaper, st.ActiveSinceUtc, isRecovery: true);
+					: ApplyCore(source, st.Original.Clone(), st.Source, _w.LoadSettings(), st.ActiveSinceUtc, isRecovery: true, keepTheme: SameRest(source.Id, st.Target));
 			}
 		}
 		else if (phase == SeasonalTheme.PhaseRestoring)
@@ -395,7 +447,8 @@ internal sealed class SeasonalEngine
 				return RestoreCore(st.Original, "");
 			}
 			// The settings were replaced outside a seasonal change (for example by a launcher profile import). Keep
-			// them, put back only a desktop wallpaper the launcher still shows, and drop the restore point.
+			// them, put back only a desktop wallpaper the launcher still shows and the light/dark values Dark rest still
+			// holds, and drop the restore point.
 			string wallpaper = "none";
 			if (st.Original.Wallpaper != null)
 			{
@@ -405,9 +458,18 @@ internal sealed class SeasonalEngine
 					return Result(false, "", "Restoring did not finish; it will be retried when the launcher starts.");
 				}
 			}
-			MarkIdle(null, $"restore point dropped after an outside settings change (wallpaper={wallpaper})");
+			string theme = "none";
+			if (st.Original.WindowsTheme != null)
+			{
+				theme = _w.RestoreWindowsTheme(st.Original.WindowsTheme);
+				if (theme.StartsWith("failed", StringComparison.Ordinal))
+				{
+					return Result(false, "", "Restoring did not finish; it will be retried when the launcher starts.");
+				}
+			}
+			MarkIdle(null, $"restore point dropped after an outside settings change (wallpaper={wallpaper}, theme={theme})");
 			Cleanup(null);
-			Logger.Log($"Seasonal: settings changed outside the launcher while a season was on; they are kept (wallpaper={wallpaper}).");
+			Logger.Log($"Seasonal: settings changed outside the launcher while a season was on; they are kept (wallpaper={wallpaper}, theme={theme}).");
 			return new SeasonalResult { Success = true, Season = "", Message = "Normal look restored.", WallpaperOutcome = wallpaper };
 		}
 		if (active.Length > 0 && st.Original?.Wallpaper != null)
@@ -460,9 +522,15 @@ internal sealed class SeasonalEngine
 		return true;
 	}
 
-	private SeasonalResult ApplyCore(SeasonPreset p, SeasonalOriginal orig, string source, bool wantWallpaper, DateTime activeSince, bool isRecovery)
+	private static bool SameRest(string source, string target)
+	{
+		return SeasonalTheme.IsRest(source) && SeasonalTheme.IsRest(SeasonalTheme.NormalizeId(target));
+	}
+
+	private SeasonalResult ApplyCore(SeasonPreset p, SeasonalOriginal orig, string source, AppSettings prefs, DateTime activeSince, bool isRecovery, bool keepTheme = false)
 	{
 		Stopwatch sw = Stopwatch.StartNew();
+		bool wantWallpaper = SeasonalTheme.WantsWallpaper(prefs, p);
 		DesktopWallpaperSnapshot? before = orig.Wallpaper?.Clone();
 		string plan = "none";
 		string? note = null;
@@ -512,6 +580,37 @@ internal sealed class SeasonalEngine
 			}
 		}
 
+		// Windows light/dark mode: only Dark rest changes it. Its values are captured the first time Dark rest is applied
+		// (in the same pending write as everything else) and put back when any other choice replaces it. The seasons
+		// never read it, so their paths and writes stay exactly as they were.
+		// keepTheme (Dark rest staying on while one of its options changed): no read, no write, and the restore point's
+		// light/dark values stay exactly as they are.
+		string themePlan = "none";
+		if (keepTheme && SeasonalTheme.IsRest(p.Id))
+		{
+			themePlan = "kept";
+		}
+		else if (SeasonalTheme.IsRest(p.Id) || orig.WindowsTheme != null)
+		{
+			WindowsThemeSnapshot now = _w.ReadWindowsTheme();
+			if (SeasonalTheme.IsRest(p.Id))
+			{
+				if (orig.WindowsTheme == null)
+				{
+					orig.WindowsTheme = now.Clone();
+				}
+				else
+				{
+					MergeThemeUserChanges(orig.WindowsTheme, now);
+				}
+				themePlan = now.IsDark ? "already-dark" : "set-dark";
+			}
+			else
+			{
+				themePlan = "restore-drop";
+			}
+		}
+
 		SeasonalStateFile pending = new SeasonalStateFile
 		{
 			Phase = SeasonalTheme.PhaseApplying,
@@ -534,14 +633,14 @@ internal sealed class SeasonalEngine
 			x.SeasonalActive = p.Id;
 		}))
 		{
-			return Rollback(pending, p, "the settings could not be saved", wantWallpaper, isRecovery);
+			return Rollback(pending, p, "the settings could not be saved", prefs, isRecovery, keepTheme);
 		}
 		string wallpaperOutcome = wantWallpaper ? (skip != null ? "skipped:" + skip : (note != null ? "skipped:not-drawn" : "none")) : "off";
 		if (plan == "set")
 		{
 			if (!_w.SetWallpaper(path!))
 			{
-				return Rollback(pending, p, "the desktop wallpaper could not be set", wantWallpaper, isRecovery);
+				return Rollback(pending, p, "the desktop wallpaper could not be set", prefs, isRecovery, keepTheme);
 			}
 			orig.Wallpaper!.AppliedPath = path!;
 			wallpaperOutcome = "set";
@@ -551,10 +650,26 @@ internal sealed class SeasonalEngine
 			string restored = _w.RestoreWallpaper(orig.Wallpaper!);
 			if (restored.StartsWith("failed", StringComparison.Ordinal))
 			{
-				return Rollback(pending, p, "the desktop wallpaper could not be restored", wantWallpaper, isRecovery);
+				return Rollback(pending, p, "the desktop wallpaper could not be restored", prefs, isRecovery, keepTheme);
 			}
 			orig.Wallpaper = null;
 			wallpaperOutcome = "restored";
+		}
+		if (themePlan == "set-dark")
+		{
+			if (!_w.SetWindowsDark())
+			{
+				return Rollback(pending, p, "Windows light/dark mode could not be changed", prefs, isRecovery, keepTheme);
+			}
+		}
+		else if (themePlan == "restore-drop")
+		{
+			string restoredTheme = _w.RestoreWindowsTheme(orig.WindowsTheme!);
+			if (restoredTheme.StartsWith("failed", StringComparison.Ordinal))
+			{
+				return Rollback(pending, p, "Windows light/dark mode could not be restored", prefs, isRecovery, keepTheme);
+			}
+			orig.WindowsTheme = null;
 		}
 		bool switched = source != p.Id || activeSince == default;
 		SeasonalStateFile done = new SeasonalStateFile
@@ -569,7 +684,7 @@ internal sealed class SeasonalEngine
 			Logger.Log("Seasonal: final state write failed; the next start will roll back to the previous look.");
 		}
 		Cleanup(orig);
-		Logger.Log($"Seasonal: apply {p.Id} (source={source}, wallpaper={wallpaperOutcome}){(isRecovery ? " [recovery]" : "")} in {sw.ElapsedMilliseconds} ms");
+		Logger.Log($"Seasonal: apply {p.Id} (source={source}, wallpaper={wallpaperOutcome}, theme={themePlan}){(isRecovery ? " [recovery]" : "")} in {sw.ElapsedMilliseconds} ms");
 		string message = p.Name + " is on.";
 		if (skip != null)
 		{
@@ -582,7 +697,7 @@ internal sealed class SeasonalEngine
 		return new SeasonalResult { Success = true, Season = p.Id, Message = message, WallpaperOutcome = wallpaperOutcome };
 	}
 
-	private SeasonalResult Rollback(SeasonalStateFile pending, SeasonPreset p, string reason, bool wantWallpaper, bool isRecovery)
+	private SeasonalResult Rollback(SeasonalStateFile pending, SeasonPreset p, string reason, AppSettings prefs, bool isRecovery, bool keepTheme)
 	{
 		Logger.Log($"Seasonal: apply {p.Id} failed ({reason}); rolling back to '{pending.Source}'.");
 		if (isRecovery)
@@ -597,7 +712,9 @@ internal sealed class SeasonalEngine
 		}
 		else
 		{
-			back = ApplyCore(source, pending.Original!.Clone(), source.Id, wantWallpaper, pending.ActiveSinceUtc, isRecovery: true);
+			// The source's own wallpaper preference decides (Dark rest has its own option). Dark rest rolled back onto
+			// itself leaves light/dark mode alone when this change was not meant to touch it.
+			back = ApplyCore(source, pending.Original!.Clone(), source.Id, prefs, pending.ActiveSinceUtc, isRecovery: true, keepTheme: keepTheme && source.Id == p.Id);
 		}
 		string tail = back.Success ? " Your previous look was restored." : " Your previous look will be restored when the launcher starts.";
 		return new SeasonalResult { Success = false, Season = pending.Source, Message = "Could not apply " + p.Name + ": " + reason + "." + tail, WallpaperOutcome = back.WallpaperOutcome };
@@ -627,9 +744,20 @@ internal sealed class SeasonalEngine
 				return Result(false, "", "Restoring did not finish; it will be retried when the launcher starts.");
 			}
 		}
-		SeasonalResult marked = MarkIdle(null, $"restored (wallpaper={wallpaper})");
+		// Windows light/dark mode last: only the values Dark rest still holds go back.
+		string theme = "none";
+		if (orig.WindowsTheme != null)
+		{
+			theme = _w.RestoreWindowsTheme(orig.WindowsTheme);
+			if (theme.StartsWith("failed", StringComparison.Ordinal))
+			{
+				Logger.Log("Seasonal: restore left pending: light/dark " + theme);
+				return Result(false, "", "Restoring did not finish; it will be retried when the launcher starts.");
+			}
+		}
+		SeasonalResult marked = MarkIdle(null, $"restored (wallpaper={wallpaper}, theme={theme})");
 		Cleanup(null);
-		Logger.Log($"Seasonal: restore (source={source}, wallpaper={wallpaper})");
+		Logger.Log($"Seasonal: restore (source={source}, wallpaper={wallpaper}, theme={theme})");
 		string message = "Normal look restored.";
 		bool wasApplied = !string.IsNullOrEmpty(orig.Wallpaper?.AppliedPath);
 		if (wallpaper == "kept-user" && wasApplied)
@@ -639,6 +767,14 @@ internal sealed class SeasonalEngine
 		else if (wallpaper == "partial")
 		{
 			message += " Your desktop wallpaper was changed outside the launcher on some displays, so those were kept.";
+		}
+		if (theme == "kept-user")
+		{
+			message += " Windows light/dark mode was changed outside the launcher, so it was kept.";
+		}
+		else if (theme == "partial")
+		{
+			message += " Windows light/dark mode was partly changed outside the launcher; that part was kept.";
 		}
 		return new SeasonalResult { Success = marked.Success, Season = "", Message = message, WallpaperOutcome = wallpaper };
 	}
@@ -677,6 +813,22 @@ internal sealed class SeasonalEngine
 				Logger.Log("Seasonal: a display's wallpaper was changed outside the launcher; that picture becomes the one Normal restores.");
 				saved.Path = now.Path;
 			}
+		}
+	}
+
+	// Dark rest applied again: a light/dark value that no longer holds what Dark rest wrote was changed by the user
+	// meanwhile, and that choice becomes what Normal restores.
+	private static void MergeThemeUserChanges(WindowsThemeSnapshot orig, WindowsThemeSnapshot now)
+	{
+		if (!WindowsThemeSnapshot.IsOurs(now.AppsUseLightTheme) && !WindowsThemeSnapshot.Same(orig.AppsUseLightTheme, now.AppsUseLightTheme))
+		{
+			Logger.Log("Seasonal: apps light/dark was changed outside the launcher; that value becomes the one Normal restores.");
+			orig.AppsUseLightTheme = now.AppsUseLightTheme?.Clone();
+		}
+		if (!WindowsThemeSnapshot.IsOurs(now.SystemUsesLightTheme) && !WindowsThemeSnapshot.Same(orig.SystemUsesLightTheme, now.SystemUsesLightTheme))
+		{
+			Logger.Log("Seasonal: system light/dark was changed outside the launcher; that value becomes the one Normal restores.");
+			orig.SystemUsesLightTheme = now.SystemUsesLightTheme?.Clone();
 		}
 	}
 
@@ -741,7 +893,8 @@ internal sealed class SeasonalEngine
 }
 
 // Seasonal presets: Halloween and Christmas restyle the Start background, the accent everything else follows, and
-// (optionally) the desktop wallpaper. Normal restores exactly what the user had before the first seasonal change.
+// (optionally) the desktop wallpaper. Dark rest, the fourth choice, does the same with a calm dark look and also
+// switches Windows to dark mode. Normal restores exactly what the user had before the first change.
 internal static class SeasonalTheme
 {
 	public const string Normal = "normal";
@@ -750,17 +903,57 @@ internal static class SeasonalTheme
 
 	public const string Christmas = "christmas";
 
+	public const string Rest = "rest";
+
 	public const string PhaseIdle = "idle";
 
 	public const string PhaseApplying = "applying";
 
 	public const string PhaseRestoring = "restoring";
 
-	public static readonly SeasonPreset[] Presets = new SeasonPreset[2]
+	public static readonly SeasonPreset[] Presets = new SeasonPreset[3]
 	{
 		new SeasonPreset(Halloween, "Halloween", "pumpkins", "#FF22103A", "#FFE0620B", "bats", "halloween"),
-		new SeasonPreset(Christmas, "Christmas", "ornaments", "#FF0B3D2C", "#FFC8102E", "snow", "christmas")
+		new SeasonPreset(Christmas, "Christmas", "ornaments", "#FF0B3D2C", "#FFC8102E", "snow", "christmas"),
+		// No ambient effect and no seasonal icons; the accent is a muted blue-grey (HSL 207, 0.18, 0.38).
+		new SeasonPreset(Rest, "Dark rest", SeasonalArt.RestPattern, "#FF121519", "#FF4F6272", "", SeasonalArt.RestArt)
 	};
+
+	// The two real seasons (the presets with seasonal art, effects and icons).
+	public static readonly SeasonPreset[] Seasons = Presets.Where(p => !IsRest(p.Id)).ToArray();
+
+	// The picker, in order.
+	public static readonly (string Id, string Label)[] Choices = new (string, string)[4]
+	{
+		(Normal, "Normal"),
+		(Halloween, "Halloween"),
+		(Christmas, "Christmas"),
+		(Rest, "Dark rest")
+	};
+
+	public const string RestTooltip = "Dark rest: a calm, fully dark shell";
+
+	public static bool IsRest(string? id)
+	{
+		return string.Equals(id, Rest, StringComparison.Ordinal);
+	}
+
+	// Halloween or Christmas (not Normal, not Dark rest).
+	public static bool IsSeason(string? id)
+	{
+		return string.Equals(id, Halloween, StringComparison.Ordinal) || string.Equals(id, Christmas, StringComparison.Ordinal);
+	}
+
+	// Whether this preset also sets a desktop wallpaper: Dark rest has its own option.
+	public static bool WantsWallpaper(AppSettings s, SeasonPreset p)
+	{
+		return IsRest(p.Id) ? s.RestWallpaper : s.SeasonalWallpaper;
+	}
+
+	public static bool WantsWallpaper(AppSettings s, string? id)
+	{
+		return IsRest(NormalizeId(id)) ? s.RestWallpaper : s.SeasonalWallpaper;
+	}
 
 	private const string StateName = "seasonal";
 
@@ -818,6 +1011,10 @@ internal static class SeasonalTheme
 		{
 			return Christmas;
 		}
+		if (string.Equals(t, Rest, StringComparison.OrdinalIgnoreCase))
+		{
+			return Rest;
+		}
 		return "";
 	}
 
@@ -834,6 +1031,22 @@ internal static class SeasonalTheme
 			return _cacheUnreadable || _cache?.Original?.Wallpaper != null;
 		}
 	}
+
+	// True while the restore point holds the user's Windows light/dark values (Dark rest changed them). Cached, no IO.
+	public static bool OwnsWindowsTheme
+	{
+		get
+		{
+			if (SettingsStore.ReadOnlyDiagnostics && DiagnosticsOwnsWindowsTheme.HasValue)
+			{
+				return DiagnosticsOwnsWindowsTheme.Value;
+			}
+			return _cacheUnreadable || _cache?.Original?.WindowsTheme != null;
+		}
+	}
+
+	// QA hook, honoured only in read-only diagnostics.
+	internal static bool? DiagnosticsOwnsWindowsTheme { get; set; }
 
 	// The restore point as the UI last saw it (null when none), for previews of what Normal brings back. No IO.
 	public static SeasonalOriginal? CachedOriginal
@@ -939,14 +1152,15 @@ internal static class SeasonalTheme
 
 	public static bool IsBusy => _busy;
 
-	public static Task<SeasonalResult> ApplyAsync(string id)
+	// keepTheme: only an option of the active preset changed (see SeasonalEngine.Apply); Windows light/dark is left alone.
+	public static Task<SeasonalResult> ApplyAsync(string id, bool keepTheme = false)
 	{
 		TaskCompletionSource<SeasonalResult> tcs = new TaskCompletionSource<SeasonalResult>(TaskCreationOptions.RunContinuationsAsynchronously);
 		Thread worker = new Thread((ThreadStart)delegate
 		{
 			try
 			{
-				tcs.TrySetResult(ApplyBlocking(id));
+				tcs.TrySetResult(ApplyBlocking(id, keepTheme));
 			}
 			catch (Exception ex)
 			{
@@ -968,7 +1182,7 @@ internal static class SeasonalTheme
 	}
 
 	// Runs on the calling thread, which must be STA when a wallpaper may be drawn.
-	public static SeasonalResult ApplyBlocking(string id)
+	public static SeasonalResult ApplyBlocking(string id, bool keepTheme = false)
 	{
 		string target = NormalizeId(id);
 		if (SettingsStore.ReadOnlyDiagnostics)
@@ -983,7 +1197,7 @@ internal static class SeasonalTheme
 		{
 			_busy = true;
 			_busyTarget = target;
-			return RunLocked(engine => target.Length == 0 ? engine.Restore() : engine.Apply(target), target);
+			return RunLocked(engine => target.Length == 0 ? engine.Restore() : engine.Apply(target, keepTheme), target);
 		}
 		finally
 		{
@@ -1157,6 +1371,7 @@ internal static class SeasonalTheme
 			ActiveName = Find(active)?.Name ?? "Normal",
 			SinceUtc = active.Length > 0 && st.ActiveSinceUtc != default ? st.ActiveSinceUtc : null,
 			OwnsWallpaper = OwnsDesktopWallpaper,
+			OwnsWindowsTheme = OwnsWindowsTheme,
 			Phase = st.Phase,
 			Busy = _busy,
 			BusyTarget = _busyTarget,
@@ -1184,13 +1399,22 @@ internal static class SeasonalTheme
 			return "Normal is active.";
 		}
 		string since = status.SinceUtc.HasValue ? " since " + status.SinceUtc.Value.ToLocalTime().ToString("d MMM yyyy", System.Globalization.CultureInfo.InvariantCulture) : "";
-		return status.ActiveName + " is on" + since + ". " + RestoresText(status.OwnsWallpaper);
+		return status.ActiveName + " is on" + since + ". " + NormalRestoresText(status);
 	}
 
-	// "Normal restores your previous Start background, accent colour and desktop wallpaper, and your apps' usual icons."
-	public static string RestoresText(bool ownsWallpaper)
+	// "Normal restores your previous Start background, accent colour, desktop wallpaper and Windows light/dark mode."
+	// While seasonal app icons show, ", and your apps' usual icons" is added.
+	public static string NormalRestoresText(SeasonalStatus status)
 	{
-		string list = ownsWallpaper ? "Start background, accent colour and desktop wallpaper" : "Start background and accent colour";
+		List<string> parts = new List<string> { "Start background", "accent colour" };
+		if (status.OwnsWallpaper)
+		{
+			parts.Add("desktop wallpaper");
+		}
+		if (status.OwnsWindowsTheme)
+		{
+			parts.Add("Windows light/dark mode");
+		}
 		bool icons = false;
 		try
 		{
@@ -1199,7 +1423,37 @@ internal static class SeasonalTheme
 		catch
 		{
 		}
-		return "Normal restores your previous " + list + (icons ? ", and your apps' usual icons." : ".");
+		return "Normal restores your previous " + JoinAnd(parts) + (icons ? ", and your apps' usual icons." : ".");
+	}
+
+	// The short form under the Personalize chips: "Normal puts back your own background, accent colour, desktop
+	// wallpaper and light/dark mode."
+	public static string NormalRestoresHint()
+	{
+		List<string> parts = new List<string> { "background", "accent colour" };
+		if (OwnsDesktopWallpaper)
+		{
+			parts.Add("desktop wallpaper");
+		}
+		if (OwnsWindowsTheme)
+		{
+			parts.Add("light/dark mode");
+		}
+		return "Normal puts back your own " + JoinAnd(parts) + ".";
+	}
+
+	// "a", "a and b", "a, b and c".
+	internal static string JoinAnd(IReadOnlyList<string> parts)
+	{
+		if (parts.Count == 0)
+		{
+			return "";
+		}
+		if (parts.Count == 1)
+		{
+			return parts[0];
+		}
+		return string.Join(", ", parts.Take(parts.Count - 1)) + " and " + parts[parts.Count - 1];
 	}
 
 	// null when there is no restore point. unreadable is set when one exists but cannot be opened right now (for
@@ -1436,6 +1690,30 @@ internal sealed class RealSeasonalWorld : ISeasonalWorld
 	public bool FileExists(string path)
 	{
 		return File.Exists(path);
+	}
+
+	public WindowsThemeSnapshot ReadWindowsTheme()
+	{
+		return WindowsThemeMode.Read();
+	}
+
+	public bool SetWindowsDark()
+	{
+		try
+		{
+			return WindowsThemeMode.SetDark();
+		}
+		catch (Exception ex)
+		{
+			// Rolled back by the engine right away.
+			Logger.Log("Dark rest: Windows light/dark could not be set: " + ex.Message);
+			return false;
+		}
+	}
+
+	public string RestoreWindowsTheme(WindowsThemeSnapshot original)
+	{
+		return WindowsThemeMode.Restore(original);
 	}
 
 	public void CleanupArt(SeasonalOriginal? keep)

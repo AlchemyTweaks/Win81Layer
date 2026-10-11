@@ -90,7 +90,7 @@ public sealed class OsdWindow : Window
 				Width = 13.0,
 				Height = 24.0,
 				Margin = new Thickness(0.0, 0.0, 4.0, 0.0),
-				Background = EmptyBrush
+				Background = EmptyFor()
 			};
 			_segs[i] = s;
 			bar.Children.Add(s);
@@ -112,15 +112,9 @@ public sealed class OsdWindow : Window
 		row.Children.Add(iconSlot);
 		row.Children.Add(bar);
 		row.Children.Add(_value);
-		System.Windows.Media.Brush cardBg = PanelBrush;
-		if (ShellSkin.GlassOn)
-		{
-			System.Windows.Media.Color a = ShellSkin.AccentTone(0.16);
-			cardBg = new SolidColorBrush(System.Windows.Media.Color.FromArgb(0xE8, a.R, a.G, a.B));   // Win7-Aero smoked-accent OSD
-		}
 		base.Content = new Border
 		{
-			Background = cardBg,
+			Background = CardBackground(),
 			Padding = new Thickness(16.0, 11.0, 16.0, 11.0),
 			Child = row
 		};
@@ -135,7 +129,34 @@ public sealed class OsdWindow : Window
 		};
 	}
 
+	// The card colour, read on every show: the OSD window lives for the whole session, so a change of skin or of Dark
+	// rest shows on the next volume or brightness change.
+	private static System.Windows.Media.Brush CardBackground()
+	{
+		if (DarkRest.Visuals)
+		{
+			return DarkRestPalette.OsdCard;
+		}
+		if (ShellSkin.GlassOn)
+		{
+			System.Windows.Media.Color a = ShellSkin.AccentTone(0.16);
+			return new SolidColorBrush(System.Windows.Media.Color.FromArgb(0xE8, a.R, a.G, a.B));   // Win7-Aero smoked-accent OSD
+		}
+		return PanelBrush;
+	}
+
+	private static System.Windows.Media.Brush EmptyFor()
+	{
+		return DarkRest.Visuals ? DarkRestPalette.OsdEmpty : EmptyBrush;
+	}
+
 	public void ShowVolume(int pct, bool muted)
+	{
+		PrepareVolume(pct, muted);
+		ShowNow();
+	}
+
+	private void PrepareVolume(int pct, bool muted)
 	{
 		System.Windows.Media.ImageSource img = null;
 		try { img = Win81AssetResolver.VolumeImage(pct, muted, 32); } catch { }
@@ -152,16 +173,20 @@ public sealed class OsdWindow : Window
 			_icon.Visibility = Visibility.Visible;
 		}
 		SetLevel(pct, muted);
-		ShowNow();
 	}
 
 	public void ShowBrightness(int pct)
+	{
+		PrepareBrightness(pct);
+		ShowNow();
+	}
+
+	private void PrepareBrightness(int pct)
 	{
 		_iconImg.Visibility = Visibility.Collapsed;
 		_icon.Visibility = Visibility.Visible;
 		_icon.Text = G(59142);
 		SetLevel(pct, muted: false);
-		ShowNow();
 	}
 
 	private void SetLevel(int pct, bool muted)
@@ -169,15 +194,17 @@ public sealed class OsdWindow : Window
 		pct = Math.Clamp(pct, 0, 100);
 		int filled = (int)Math.Round((double)pct / 100.0 * 16.0);
 		SolidColorBrush fill = (muted ? Freeze(4285164138u) : new SolidColorBrush(SafeAccent()));
+		System.Windows.Media.Brush empty = EmptyFor();
 		for (int i = 0; i < 16; i++)
 		{
-			_segs[i].Background = ((i < filled) ? fill : EmptyBrush);
+			_segs[i].Background = ((i < filled) ? fill : empty);
 		}
 		_value.Text = pct.ToString();
 	}
 
 	private void ShowNow()
 	{
+		((Border)base.Content).Background = CardBackground();
 		if (!base.IsVisible)
 		{
 			base.Opacity = 0.0;
@@ -326,5 +353,31 @@ public sealed class OsdWindow : Window
 		}
 		_hide.Stop();
 		Hide();
+	}
+
+	// QA: the card exactly as the next show paints it, rendered without showing the window (nothing appears on screen).
+	internal void QaRenderCard(string outPath, bool brightness = false)
+	{
+		if (brightness)
+		{
+			PrepareBrightness(58);
+		}
+		else
+		{
+			PrepareVolume(67, muted: false);
+		}
+		Border card = (Border)base.Content;
+		card.Background = CardBackground();
+		card.Measure(new System.Windows.Size(double.PositiveInfinity, double.PositiveInfinity));
+		card.Arrange(new Rect(card.DesiredSize));
+		card.UpdateLayout();
+		int w = Math.Max(1, (int)Math.Ceiling(card.ActualWidth));
+		int h = Math.Max(1, (int)Math.Ceiling(card.ActualHeight));
+		RenderTargetBitmap rtb = new RenderTargetBitmap(w, h, 96.0, 96.0, PixelFormats.Pbgra32);
+		rtb.Render(card);
+		PngBitmapEncoder enc = new PngBitmapEncoder();
+		enc.Frames.Add(BitmapFrame.Create(rtb));
+		using FileStream fs = File.Create(outPath);
+		enc.Save(fs);
 	}
 }

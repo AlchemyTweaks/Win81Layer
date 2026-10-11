@@ -591,15 +591,23 @@ public partial class App : System.Windows.Application
 	{
 		try
 		{
+			// Dark rest switches Windows light/dark: menus, tooltips, Metro controls and the Win7 Start menu repaint now.
+			ShellTheme.Refresh();
 			SeasonalTheme.InvalidateCache();
+			DarkRest.Sync();
 			TaskbarTheme.Invalidate();
 			_startScreen?.RefreshBackground();
 			TaskbarWindow.RaiseTaskbarColorChanged(invalidateWallpaper: true);
 			Win81Window.RefreshAllAccents();
-			// The Alchemy pointers take the season's colours (or go back to blue with Normal).
-			PointerScheme.ReconcileAsync("season");
-			// Apps with a seasonal icon show it (or their own icon again with Normal).
+			// An open PC Settings window takes the Dark rest colours (or loses them) right away.
+			foreach (PcSettingsWindow pc in Windows.OfType<PcSettingsWindow>().ToList())
+			{
+				pc.SyncRestSkin();
+			}
+			// Apps with a seasonal icon show it (or their own icon again with Normal or Dark rest).
 			SeasonalAppIcons.Reconcile("season");
+			// The Alchemy pointers take the season's colours, the Dark rest style, or go back to blue with Normal.
+			PointerScheme.ReconcileAsync("season");
 			Logger.Log("Seasonal: live refresh applied (active=" + SettingsStore.FastSnapshot.SeasonalActive + ")");
 		}
 		catch (Exception ex)
@@ -2830,6 +2838,10 @@ public partial class App : System.Windows.Application
 		{
 			Motion.Mode = Motion.Parse("Reduced");
 		}
+		// Dark rest's calmer animations (the Motion setting itself is not changed), and its surfaces stepping aside at
+		// once when High Contrast is turned on.
+		DarkRest.Sync();
+		DarkRest.WatchHighContrast(ApplySeasonalLive);
 		if (!settings.FreeGridDefaultV1)
 		{
 			SettingsStore.Update(delegate(AppSettings appSettings)
@@ -3199,6 +3211,8 @@ public partial class App : System.Windows.Application
 					SeasonalTheme.InvalidateCache();   // a maintenance command may also have changed the seasonal restore point
 					DesktopComposition.ApplyPersistedModeTransition(refreshed.DesktopCompositionMode);
 					ApplyShellProfileLive(refreshed);
+					// A maintenance command (for example --seasonal-restore) may have changed the seasonal look.
+					ApplySeasonalLive();
 					Logger.Log("Shell profile refresh signal consumed by the managed shell.");
 				}
 				ShellSupervisor.Tick(_taskbar?.IsActive ?? false);
@@ -4134,8 +4148,8 @@ public partial class App : System.Windows.Application
 			}
 		};
 		personalization.DropDownItems.Add(wallpaperItem);
-		ToolStripMenuItem seasonalMenu = new ToolStripMenuItem("Seasonal theme");
-		foreach ((string seasonId, string seasonLabel) in new (string, string)[3] { (SeasonalTheme.Normal, "Normal"), (SeasonalTheme.Halloween, "Halloween"), (SeasonalTheme.Christmas, "Christmas") })
+		ToolStripMenuItem seasonalMenu = new ToolStripMenuItem("Seasonal theme / Dark rest");
+		foreach ((string seasonId, string seasonLabel) in SeasonalTheme.Choices)
 		{
 			string sid = seasonId;
 			ToolStripMenuItem seasonItem = new ToolStripMenuItem(seasonLabel)
@@ -4151,7 +4165,7 @@ public partial class App : System.Windows.Application
 					ApplySeasonalLive();
 					if (!r.Success)
 					{
-						ToastService.Show(null, "Seasonal theme", "Could not apply", r.Message);
+						ToastService.Show(null, SeasonalTheme.IsRest(sid) ? "Dark rest" : "Seasonal theme", "Could not apply", r.Message);
 					}
 				}
 				catch (Exception exSeason)
