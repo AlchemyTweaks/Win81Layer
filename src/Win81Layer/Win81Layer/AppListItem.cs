@@ -98,9 +98,13 @@ public sealed class AppListItem : Button, IDisposable
 		{
 			drawingContext.DrawRectangle(_entry.OverrideBrush, null, iconTile);
 		}
-		if (_entry.Icon != null)
+		// A seasonal icon is drawn from its frame for this row's exact pixel size, so it stays sharp.
+		ImageSource icon = _entry.SeasonalKey is string seasonalKey
+			? SeasonalAppIcons.Frame(seasonalKey, (int)Math.Round(24.0 * VisualTreeHelper.GetDpi(this).PixelsPerDip)) ?? _entry.Icon
+			: _entry.Icon;
+		if (icon != null)
 		{
-			DrawIcon(drawingContext, _entry.Icon, iconTile, _entry.IsOverrideIcon ? 32.0 : 24.0);
+			DrawIcon(drawingContext, icon, iconTile, _entry.IsOverrideIcon ? 32.0 : 24.0);
 		}
 		else
 		{

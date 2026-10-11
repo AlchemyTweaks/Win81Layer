@@ -999,6 +999,8 @@ public sealed partial class Win7StartMenu : Window
         _staticSubs++;
         StartScreen.AppsReloaded += OnAppsReloaded;
         _staticSubs++;
+        SeasonalAppIcons.Changed += OnSeasonalIconsChanged;
+        _staticSubs++;
         SystemEvents.DisplaySettingsChanged += OnDisplaySettingsChanged;
         _staticSubs++;
     }
@@ -1019,8 +1021,17 @@ public sealed partial class Win7StartMenu : Window
         _staticSubs--;
         StartScreen.AppsReloaded -= OnAppsReloaded;
         _staticSubs--;
+        SeasonalAppIcons.Changed -= OnSeasonalIconsChanged;
+        _staticSubs--;
         SystemEvents.DisplaySettingsChanged -= OnDisplaySettingsChanged;
         _staticSubs--;
+    }
+
+    // The season or the seasonal icon set changed: rows bind their icons again, exactly as after an inventory reload
+    // (All Programs is marked stale, an open view refreshes in place, a prewarmed menu prewarms again).
+    private void OnSeasonalIconsChanged()
+    {
+        OnAppsReloaded();
     }
 
     // A monitor was added, removed or changed resolution: an open menu would sit in the wrong place, so it closes at once.

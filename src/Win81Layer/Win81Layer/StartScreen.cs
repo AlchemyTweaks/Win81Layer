@@ -835,6 +835,43 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 		}
 	}
 
+	// QA (seasonal app icons): adds entries to the synthetic inventory, loads icons through the real loader path,
+	// releases idle icons, and runs the pin-time icon upgrade.
+	internal void QaInjectApps(IEnumerable<AppEntry> entries)
+	{
+		_apps.AddRange(entries);
+	}
+
+	internal void QaQueueIconBatch(List<(AppEntry Entry, ImageSource Icon, bool Over)> batch)
+	{
+		QueueIconBatch(batch);
+	}
+
+	internal void QaRefreshAppIcons()
+	{
+		RefreshAppIconsInstance();
+	}
+
+	internal int QaReleaseDeferredIcons()
+	{
+		return ReleaseDeferredIcons();
+	}
+
+	internal void QaUpgradeEntryIconForTile(AppEntry entry)
+	{
+		UpgradeEntryIconForTile(entry);
+	}
+
+	internal void QaAddTiles(IEnumerable<TileVm> tiles)
+	{
+		GroupVm group = new GroupVm { Name = "QA Seasonal" };
+		foreach (TileVm t in tiles)
+		{
+			group.Tiles.Add(t);
+		}
+		_groups.Add(group);
+	}
+
 	internal SeasonalAmbientLayer? QaAmbient => _ambient;
 
 	internal bool QaBgLayerHasChild => BgLayer.Child != null;
@@ -1876,16 +1913,59 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 			{
 				foreach ((AppEntry Entry, ImageSource Icon, bool Over, System.Windows.Media.Color? Dominant) item in ready)
 				{
-					item.Entry.IsOverrideIcon = item.Over;
-					item.Entry.OverrideBrush = item.Over ? AppIconOverrides.BrandBrush(item.Entry) : null;
+					AppEntry entry = item.Entry;
+					// While a seasonal icon applies, the loaded icon goes underneath it (SeasonalUnder) so the entry never
+					// shows its own icon for a moment; Normal later puts exactly these values back.
+					string seasonalKey = SeasonalAppIcons.KeyForEntry(entry);
+					if (seasonalKey != null && entry.SeasonalUnder == null)
+					{
+						entry.SeasonalUnder = new SeasonalUnder
+						{
+							Icon = entry.Icon,
+							TileBrush = entry.TileBrush,
+							IsOverrideIcon = entry.IsOverrideIcon,
+							OverrideBrush = entry.OverrideBrush
+						};
+					}
+					SeasonalUnder under = entry.SeasonalUnder;
+					System.Windows.Media.Brush overrideBrush = item.Over ? AppIconOverrides.BrandBrush(entry) : null;
 					// Never store a blank/white icon on an AppEntry (feeds Start tiles, all-apps and search) — a
 					// decoded-but-blank shell icon becomes the app's letter tile instead.
-					item.Entry.Icon = IconResolver.EnsureNonBlank(item.Icon, item.Entry.Name);
+					ImageSource icon = IconResolver.EnsureNonBlank(item.Icon, entry.Name);
+					SolidColorBrush dominantBrush = null;
 					if (!item.Over && item.Dominant.HasValue)
 					{
-						SolidColorBrush brush = new SolidColorBrush(item.Dominant.Value);
-						brush.Freeze();
-						item.Entry.TileBrush = brush;
+						dominantBrush = new SolidColorBrush(item.Dominant.Value);
+						dominantBrush.Freeze();
+					}
+					if (under != null)
+					{
+						under.IsOverrideIcon = item.Over;
+						under.OverrideBrush = overrideBrush;
+						under.Icon = icon;
+						if (dominantBrush != null)
+						{
+							under.TileBrush = dominantBrush;
+						}
+					}
+					else
+					{
+						entry.IsOverrideIcon = item.Over;
+						entry.OverrideBrush = overrideBrush;
+						entry.Icon = icon;
+						if (dominantBrush != null)
+						{
+							entry.TileBrush = dominantBrush;
+						}
+					}
+					if (seasonalKey != null)
+					{
+						SeasonalAppIcons.ApplyTo(entry, seasonalKey);
+					}
+					// No seasonal icon after all (the season ended, or its picture could not be read): show the loaded icon.
+					if (entry.SeasonalKey == null && entry.SeasonalUnder != null)
+					{
+						SeasonalAppIcons.RevertFrom(entry);
 					}
 				}
 			}, DispatcherPriority.Background, Array.Empty<object>());
@@ -2028,6 +2108,65 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 		}
 	}
 
+	// Puts the seasonal app icons on (or takes them off) every loaded entry: the inventory, the tiles and the members of
+	// folder tiles. An entry whose icon is not loaded yet gets its seasonal icon from the loader (QueueIconBatch).
+	public static void RefreshSeasonalIcons()
+	{
+		StartScreen s = Current;
+		if (s != null)
+		{
+			((DispatcherObject)s).Dispatcher.BeginInvoke((Action)s.RefreshSeasonalIconsInstance);
+		}
+	}
+
+	private void RefreshSeasonalIconsInstance()
+	{
+		HashSet<AppEntry> seen = new HashSet<AppEntry>(ReferenceEqualityComparer.Instance);
+		foreach (AppEntry e in _apps)
+		{
+			Apply(e);
+		}
+		foreach (GroupVm g in _groups)
+		{
+			foreach (TileVm t in g.Tiles)
+			{
+				if (t.Live == LiveKind.None)
+				{
+					Apply(t.Entry);
+				}
+				foreach (AppEntry m in t.Members)
+				{
+					Apply(m);
+				}
+			}
+		}
+
+		void Apply(AppEntry e)
+		{
+			if (e == null || !seen.Add(e))
+			{
+				return;
+			}
+			string key = SeasonalAppIcons.KeyForEntry(e);
+			if (key == null)
+			{
+				if (e.SeasonalKey != null || e.SeasonalUnder != null)
+				{
+					SeasonalAppIcons.RevertFrom(e);
+				}
+				return;
+			}
+			if (e.SeasonalKey != null && e.SeasonalKey != key)
+			{
+				SeasonalAppIcons.RevertFrom(e);
+			}
+			if (e.Icon != null || e.SeasonalUnder != null)
+			{
+				SeasonalAppIcons.ApplyTo(e, key);
+			}
+		}
+	}
+
 	// Re-applies the live tiles' brand colour + custom icon when the "Win8.1 app icons" toggle flips, so the built-in
 	// live tiles (Weather/Agenda/Mail/Clock) revert together with the app-icon overrides.
 	public static void RefreshLiveTiles()
@@ -2050,8 +2189,12 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 		bool useOverrides = SettingsStore.Current.Replace81AppIcons;
 		foreach (AppEntry e in _apps)
 		{
+			// An entry showing a seasonal icon keeps it; the 8.1 choice is made on what it shows underneath, so Normal
+			// later brings back the icon that matches the setting.
+			SeasonalUnder under = e.SeasonalUnder;
+			bool isOver = under?.IsOverrideIcon ?? e.IsOverrideIcon;
 			bool hasOver = AppIconOverrides.Has(e);
-			if (!hasOver && !e.IsOverrideIcon)
+			if (!hasOver && !isOver)
 			{
 				continue;
 			}
@@ -2060,19 +2203,40 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 				ImageSource over = AppIconOverrides.TryGet(e);
 				if (over != null)
 				{
-					e.IsOverrideIcon = true;
-					e.OverrideBrush = AppIconOverrides.BrandBrush(e);
-					e.Icon = over;
+					if (under != null)
+					{
+						under.IsOverrideIcon = true;
+						under.OverrideBrush = AppIconOverrides.BrandBrush(e);
+						under.Icon = over;
+					}
+					else
+					{
+						e.IsOverrideIcon = true;
+						e.OverrideBrush = AppIconOverrides.BrandBrush(e);
+						e.Icon = over;
+					}
 				}
 			}
-			else if (e.IsOverrideIcon)
+			else if (isOver)
 			{
-				e.IsOverrideIcon = false;
-				e.OverrideBrush = null;
 				ImageSource native = AppInventory.LoadIcon(e.LaunchPath);
-				if (native != null)
+				if (under != null)
 				{
-					e.Icon = native;
+					under.IsOverrideIcon = false;
+					under.OverrideBrush = null;
+					if (native != null)
+					{
+						under.Icon = native;
+					}
+				}
+				else
+				{
+					e.IsOverrideIcon = false;
+					e.OverrideBrush = null;
+					if (native != null)
+					{
+						e.Icon = native;
+					}
 				}
 			}
 		}
@@ -2159,6 +2323,20 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 		// Under real memory pressure, also drop the full-res wallpaper brush cache (the currently-shown brush stays
 		// referenced by BgLayer, so only non-active entries are freed; re-decoded on next wallpaper change).
 		_bgBrushCache.Clear();
+		int releasedIcons = ReleaseDeferredIcons();
+		if (releasedIcons > 0)
+		{
+			Logger.Log($"Apps idle hibernation: retained {_appButtons.Count} premeasured rows; released {releasedIcons} non-priority icons");
+			return true;
+		}
+		return false;
+	}
+
+	// Drops the icons of the entries that are neither tiles nor taskbar pins; the deferred loader reloads them when the
+	// apps view is next needed. A seasonal icon is taken off first, so the entry is released in its own state and the
+	// reload puts the seasonal icon back on.
+	private int ReleaseDeferredIcons()
+	{
 		int releasedIcons = 0;
 		lock (_deferredIconGate)
 		{
@@ -2177,8 +2355,9 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 						continue;
 					}
 					deferred.Add(entry);
-					if (entry.Icon != null)
+					if (entry.Icon != null || entry.SeasonalUnder != null)
 					{
+						SeasonalAppIcons.RevertFrom(entry);
 						entry.Icon = null;
 						entry.IsOverrideIcon = false;
 						entry.OverrideBrush = null;
@@ -2189,12 +2368,7 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 				_deferredIconLoadRequested = false;
 			}
 		}
-		if (releasedIcons > 0)
-		{
-			Logger.Log($"Apps idle hibernation: retained {_appButtons.Count} premeasured rows; released {releasedIcons} non-priority icons");
-			return true;
-		}
-		return false;
+		return releasedIcons;
 	}
 
 	public void ShowAppsList()
@@ -4679,7 +4853,7 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 		menu.Tag = appId ?? "";
 		if (JumpListApi.TryGetRecentCached(appId, 12, out List<JumpList.Item> cached))
 		{
-			Render(cached);
+			RenderRecent(menu, cached);
 			return;
 		}
 		menu.Items.Clear();
@@ -4690,27 +4864,33 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 			{
 				if (string.Equals(menu.Tag as string, appId ?? "", StringComparison.Ordinal))
 				{
-					Render(items);
+					RenderRecent(menu, items);
 				}
 			}, DispatcherPriority.Background);
 		});
+	}
 
-		void Render(List<JumpList.Item> items)
+	// The "Recent" submenu is text only: no app icon is drawn there.
+	private void RenderRecent(System.Windows.Controls.MenuItem menu, List<JumpList.Item> items)
+	{
+		menu.Items.Clear();
+		if (items.Count == 0)
 		{
-			menu.Items.Clear();
-			if (items.Count == 0)
-			{
-				menu.Items.Add(new System.Windows.Controls.MenuItem { Header = "No recent files", IsEnabled = false });
-				return;
-			}
-			foreach (JumpList.Item item in items)
-			{
-				string path = item.Path;
-				System.Windows.Controls.MenuItem recent = new System.Windows.Controls.MenuItem { Header = item.Name };
-				recent.Click += delegate { TaskbarContextMenu.QueueCommand(delegate { OpenRecent(path); }); };
-				menu.Items.Add(recent);
-			}
+			menu.Items.Add(new System.Windows.Controls.MenuItem { Header = "No recent files", IsEnabled = false });
+			return;
 		}
+		foreach (JumpList.Item item in items)
+		{
+			string path = item.Path;
+			System.Windows.Controls.MenuItem recent = new System.Windows.Controls.MenuItem { Header = item.Name };
+			recent.Click += delegate { TaskbarContextMenu.QueueCommand(delegate { OpenRecent(path); }); };
+			menu.Items.Add(recent);
+		}
+	}
+
+	internal void QaRenderRecent(System.Windows.Controls.MenuItem menu, List<JumpList.Item> items)
+	{
+		RenderRecent(menu, items);
 	}
 
 	private void OpenRecent(string path)
@@ -5387,7 +5567,10 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 		{
 			_priorityIconPaths.Add(entry.LaunchPath);
 		}
-		if (entry.IsOverrideIcon || entry.Icon is BitmapSource bitmap && Math.Max(bitmap.PixelWidth, bitmap.PixelHeight) >= 128)
+		// While a seasonal icon is shown, judge the entry's own icon underneath it: that is what Normal brings back.
+		SeasonalUnder under = entry.SeasonalUnder;
+		ImageSource own = under != null ? under.Icon : entry.Icon;
+		if ((under?.IsOverrideIcon ?? entry.IsOverrideIcon) || own is BitmapSource bitmap && Math.Max(bitmap.PixelWidth, bitmap.PixelHeight) >= 128)
 		{
 			return;
 		}
@@ -5434,6 +5617,10 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 					Icon = AppInventory.LoadIcon(exePath)
 				};
 				_apps.Add(entry);
+				if (entry.Icon != null && SeasonalAppIcons.KeyForEntry(entry) is string seasonalKey)
+				{
+					SeasonalAppIcons.ApplyTo(entry, seasonalKey);
+				}
 				RaiseAppsReloaded();
 			}
 			PinEntryToStart(entry);

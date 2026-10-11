@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Windows.Media;
 using System.Windows.Threading;
 using Windows.UI.Notifications;
 using Windows.UI.Notifications.Management;
@@ -98,9 +99,11 @@ public sealed class NotificationRouter : IDisposable
 				return;
 			}
 			string appName = "";
+			string aumid = "";
 			try
 			{
 				appName = notif.AppInfo?.DisplayInfo?.DisplayName ?? "";
+				aumid = notif.AppInfo?.AppUserModelId ?? "";
 			}
 			catch
 			{
@@ -113,13 +116,21 @@ public sealed class NotificationRouter : IDisposable
 					select t.Text) : "");
 				string time = notif.CreationTime.LocalDateTime.ToString("h:mm tt");
 				Logger.Log("[notif] '" + appName + "' → " + title);
-				ToastService.Show(null, string.IsNullOrEmpty(appName) ? "Notification" : appName, title, body, null, time);
+				ToastService.Show(SeasonalIconFor(aumid, appName), string.IsNullOrEmpty(appName) ? "Notification" : appName, title, body, null, time);
 			}
 		}
 		catch (Exception ex)
 		{
 			Logger.Log("[notif] render failed: " + ex.Message);
 		}
+	}
+
+	// Mirrored toasts carry no icon, except the seasonal app icon (the toast's 32 DIP image) while one applies.
+	internal static ImageSource SeasonalIconFor(string aumid, string appName)
+	{
+		return SeasonalAppIcons.KeyForNotification(aumid, appName) is string seasonalKey
+			? SeasonalAppIcons.Frame(seasonalKey, SeasonalAppIcons.Px(32.0))
+			: null;
 	}
 
 	public void Dispose()

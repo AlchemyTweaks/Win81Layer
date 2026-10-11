@@ -117,6 +117,10 @@ public sealed class AppSettings
 
 	public bool SeasonalAmbient { get; set; } = true;
 
+	// While a season is on, apps with a picture in <launcher folder>\seasonal\<season>-icons show it on every launcher
+	// surface (SeasonalAppIcons). Not profile-owned.
+	public bool SeasonalAppIcons { get; set; } = true;
+
 	public bool StartGridFilledV1 { get; set; }
 
 	public string MotionMode { get; set; } = "Authentic";

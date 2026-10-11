@@ -198,7 +198,10 @@ public sealed class SnapAssist : Window
 				VerticalAlignment = VerticalAlignment.Center,
 				Margin = new Thickness(8.0, 0.0, 8.0, 0.0)
 			};
-			ImageSource icon = WindowList.GetIcon(hwnd, preferLarge: false);
+			// A seasonal app icon first (exact 16 px frame), otherwise the window's own icon.
+			string seasonalKey = SeasonalAppIcons.KeyForWindow(hwnd, null, null);
+			ImageSource icon = (seasonalKey != null ? SeasonalAppIcons.Frame(seasonalKey, SeasonalAppIcons.Px(16.0)) : null)
+				?? WindowList.GetIcon(hwnd, preferLarge: false);
 			if (icon != null)
 			{
 				row.Children.Add(new System.Windows.Controls.Image

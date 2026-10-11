@@ -906,7 +906,10 @@ public sealed class AppSwitcher : Window
 			VerticalAlignment = VerticalAlignment.Center,
 			Margin = new Thickness(9.0, 0.0, 60.0, 0.0)
 		};
-		ImageSource icon = IconResolver.EnsureNonBlank(WindowList.GetIcon(hwnd, preferLarge: false), title);
+		// A seasonal app icon first (exact 16 px frame), otherwise the window's own icon.
+		string seasonalKey = SeasonalAppIcons.KeyForWindow(hwnd, exe, null);
+		ImageSource icon = (seasonalKey != null ? SeasonalAppIcons.Frame(seasonalKey, SeasonalAppIcons.Px(16.0)) : null)
+			?? IconResolver.EnsureNonBlank(WindowList.GetIcon(hwnd, preferLarge: false), title);
 		titleRow.Children.Add(new System.Windows.Controls.Image
 		{
 			Source = icon,

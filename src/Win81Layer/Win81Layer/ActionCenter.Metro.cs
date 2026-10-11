@@ -1227,7 +1227,7 @@ public sealed partial class ActionCenter
 				metadata.Add((notification.Id, app, title, body, aumid));
 			}
 			List<(uint id, string app, string title, string body, string aumid, ImageSource? icon)> rows = await Task.Run(() => metadata.Select(item =>
-				(item.id, item.app, item.title, item.body, item.aumid, ResolveNotifIcon(item.aumid))).ToList(), token);
+				(item.id, item.app, item.title, item.body, item.aumid, ResolveNotifIcon(item.aumid, item.app))).ToList(), token);
 			if (generation != _runtimeGeneration || token.IsCancellationRequested || !base.IsVisible) return;
 			ShowMetroNotifications(rows);
 		}

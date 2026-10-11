@@ -76,6 +76,17 @@ public static class AudioSessions
 		return list.OrderBy<AudioSessionVm, string>((AudioSessionVm s) => s.Name, StringComparer.CurrentCultureIgnoreCase).ToList();
 	}
 
+	// A session row's icon: the seasonal app icon at the row's 27 DIP while one applies, otherwise the program's own.
+	internal static ImageSource IconFor(string processName, string file)
+	{
+		if (SeasonalAppIcons.KeyForProcess(processName, file) is string seasonalKey
+			&& SeasonalAppIcons.Frame(seasonalKey, SeasonalAppIcons.Px(27.0)) is ImageSource art)
+		{
+			return art;
+		}
+		return file != null ? AppInventory.LoadIcon(file) : null;
+	}
+
 	private static (string, ImageSource?) Describe(int pid)
 	{
 		try
@@ -103,10 +114,9 @@ public static class AudioSessions
 				catch
 				{
 				}
-				ImageSource icon = AppInventory.LoadIcon(file);
-				return (name, icon);
+				return (name, IconFor(p.ProcessName, file));
 			}
-			return (name, null);
+			return (name, IconFor(p.ProcessName, null));
 		}
 		catch
 		{

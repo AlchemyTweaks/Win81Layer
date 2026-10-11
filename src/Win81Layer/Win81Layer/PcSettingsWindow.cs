@@ -1510,6 +1510,100 @@ public sealed class PcSettingsWindow : Window
 			RefreshPointerPreview();
 			FollowPointerChange(PointerScheme.ReconcileAsync("seasonal-toggle"));
 		}));
+		BuildSeasonalIconsRows(panel, s);
+	}
+
+	private TextBlock _seasonIconsStatus;
+
+	// Seasonal app icons: the toggle, which apps have icons for each season, and where to put more.
+	private void BuildSeasonalIconsRows(StackPanel panel, AppSettings s)
+	{
+		panel.Children.Add(ToggleRow("Seasonal app icons", "While Halloween or Christmas is on, apps that have a seasonal icon show it everywhere in the shell: Start, all apps, search, the taskbar and its previews, the notification area, the Windows 7 Start menu and the switcher. Normal brings their usual icons back at once. Windows' own shortcuts and File Explorer are not changed.", s.SeasonalAppIcons, delegate(bool on)
+		{
+			SettingsStore.Update(delegate(AppSettings x) { x.SeasonalAppIcons = on; });
+			SeasonalAppIcons.Reconcile("toggle");
+		}));
+		// Opening the page picks up icons added to the folder since the last look.
+		SeasonalAppIcons.Reconcile("settings");
+		_seasonIconsStatus = new TextBlock
+		{
+			Foreground = Text2,
+			FontFamily = new System.Windows.Media.FontFamily("Segoe UI"),
+			FontSize = 12.5,
+			TextWrapping = TextWrapping.Wrap,
+			MaxWidth = 760.0,
+			HorizontalAlignment = System.Windows.HorizontalAlignment.Left,
+			Margin = new Thickness(0.0, -8.0, 0.0, 4.0),
+			Text = SeasonalIconsStatusText()
+		};
+		panel.Children.Add(_seasonIconsStatus);
+		panel.Children.Add(RowLink("Add your own seasonal icons", SeasonalIconsHelpText, OpenSeasonalIconsFolder, wrap: true));
+	}
+
+	internal const string SeasonalIconsHelpText = "Put a PNG named after the app's program file in the seasonal\\halloween-icons or seasonal\\christmas-icons folder next to the launcher, for example discord.png for Discord.exe. For pixel-exact small icons, add copies with the size in the name, such as discord-16.png. At 100% scaling the shell draws 16, 18, 22, 24, 27, 32, 34 and 36 px; tiles are scaled from a picture of 256 px or more. New icons show the next time you open this page or change the season.";
+
+	// "Halloween icons: Chrome, Discord. Christmas icons: none yet."
+	internal static string SeasonalIconsStatusText()
+	{
+		StringBuilder sb = new StringBuilder();
+		foreach (SeasonPreset p in SeasonalTheme.Presets)
+		{
+			IReadOnlyList<string> keys = SeasonalAppIcons.KeysFor(p.Id);
+			if (sb.Length > 0)
+			{
+				sb.Append(' ');
+			}
+			sb.Append(p.Name).Append(" icons: ");
+			if (keys.Count == 0)
+			{
+				sb.Append("none yet.");
+				continue;
+			}
+			// Keys are file names in lower case; show them as names ("discord" -> "Discord").
+			sb.Append(string.Join(", ", keys.Take(8).Select((string k) => k.Length > 0 ? char.ToUpperInvariant(k[0]) + k.Substring(1) : k)));
+			if (keys.Count > 8)
+			{
+				sb.Append(" and ").Append(keys.Count - 8).Append(" more");
+			}
+			sb.Append('.');
+		}
+		return sb.ToString();
+	}
+
+	// Creates the seasonal icon folders when they are missing (folders only) and opens them in File Explorer.
+	private static void OpenSeasonalIconsFolder()
+	{
+		if (SettingsStore.ReadOnlyDiagnostics)
+		{
+			return;
+		}
+		string root = SeasonalAppIcons.RootDir;
+		try
+		{
+			foreach (SeasonPreset p in SeasonalTheme.Presets)
+			{
+				Directory.CreateDirectory(SeasonalAppIcons.FolderFor(p.Id));
+			}
+		}
+		catch (Exception ex)
+		{
+			Logger.Log("Seasonal icons: could not create the folders: " + ex.Message);
+			return;
+		}
+		ShellLaunch.Run(delegate
+		{
+			try
+			{
+				Process.Start(new ProcessStartInfo(root)
+				{
+					UseShellExecute = true
+				});
+			}
+			catch (Exception ex)
+			{
+				Logger.Log("Seasonal icons: could not open the folder: " + ex.Message);
+			}
+		});
 	}
 
 	private void ChooseSeasonPicture(SeasonPreset p)
@@ -1705,7 +1799,7 @@ public sealed class PcSettingsWindow : Window
 			}
 			else if (result.Success && status.ActiveId.Length > 0)
 			{
-				_seasonStatus.Text = result.Message + " Normal restores your previous Start background, accent colour" + (status.OwnsWallpaper ? " and desktop wallpaper." : ".");
+				_seasonStatus.Text = result.Message + " " + SeasonalTheme.RestoresText(status.OwnsWallpaper);
 			}
 			else
 			{
@@ -4312,7 +4406,8 @@ public sealed class PcSettingsWindow : Window
 		};
 	}
 
-	private FrameworkElement RowLink(string title, string desc, Action onClick)
+	// wrap: a longer description wraps at the page's text width instead of staying on one line.
+	private FrameworkElement RowLink(string title, string desc, Action onClick, bool wrap = false)
 	{
 		StackPanel sp = new StackPanel
 		{
@@ -4331,7 +4426,9 @@ public sealed class PcSettingsWindow : Window
 			Foreground = Text2,
 			FontFamily = new System.Windows.Media.FontFamily("Segoe UI"),
 			FontSize = 12.0,
-			Margin = new Thickness(0.0, 1.0, 0.0, 0.0)
+			Margin = new Thickness(0.0, 1.0, 0.0, 0.0),
+			TextWrapping = wrap ? TextWrapping.Wrap : TextWrapping.NoWrap,
+			MaxWidth = wrap ? 760.0 : double.PositiveInfinity
 		});
 		System.Windows.Controls.Button b = new System.Windows.Controls.Button
 		{

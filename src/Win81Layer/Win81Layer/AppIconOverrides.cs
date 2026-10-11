@@ -293,7 +293,7 @@ internal static class AppIconOverrides
 	}
 
 	// Width from the PNG IHDR header (0 if not a PNG). A WIC decoder for this would keep the file open until finalized.
-	private static int PngPixelWidth(string file)
+	internal static int PngPixelWidth(string file)
 	{
 		byte[] h = new byte[24];
 		using (FileStream fs = File.OpenRead(file))
@@ -309,7 +309,7 @@ internal static class AppIconOverrides
 	}
 
 	// Largest monitor scale (1.0 == 96 dpi), so a mixed-DPI setup decodes for its sharpest screen.
-	private static double MaxMonitorScale()
+	internal static double MaxMonitorScale()
 	{
 		double max = 1.0;
 		foreach (System.Windows.Forms.Screen s in System.Windows.Forms.Screen.AllScreens)

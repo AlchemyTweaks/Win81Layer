@@ -1476,6 +1476,17 @@ public sealed partial class Win7StartMenu
             NoteLetter(row, isLetter: false);
             return;
         }
+        // A seasonal app icon replaces the shell icon while a season shows one (exact size, synchronous).
+        if (W7Icons.SeasonalFor(a, box, px) is W7Icons.Entry se)
+        {
+            if (_iconWaiters.TryGetValue(W7Icons.Key(a.LaunchPath, box, px), out List<(W7Row Row, string Path, int Px)>? waiting))
+            {
+                waiting.RemoveAll(((W7Row Row, string Path, int Px) w) => ReferenceEquals(w.Row, row));
+            }
+            row.SetIcon(se.Img, se.Plated, se.Plate, null, alwaysPlate: false, _paletteIsDark);
+            NoteLetter(row, isLetter: false);
+            return;
+        }
         if (W7Icons.TryGet(a.LaunchPath, box, px, out W7Icons.Entry e))
         {
             row.SetIcon(e.Img, e.Plated, e.Plate, null, alwaysPlate: false, _paletteIsDark);

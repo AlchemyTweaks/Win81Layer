@@ -2,6 +2,7 @@
 <Window x:Class="Win81Layer.StartScreen" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:local="clr-namespace:Win81Layer" Title="Start" WindowStyle="None" ResizeMode="NoResize" ShowInTaskbar="False" AllowsTransparency="False" Background="#FF101010" Deactivated="OnDeactivated" PreviewKeyDown="OnPreviewKeyDown" PreviewTextInput="OnPreviewTextInput">
   <FrameworkElement.Resources>
     <ResourceDictionary>
+      <local:SeasonalIconConverter x:Key="SeasonalIconPick" />
       <Style x:Key="{x:Type ContextMenu}" TargetType="{x:Type ContextMenu}" BasedOn="{StaticResource MetroContextMenu}">
         <EventSetter Event="Closed" Handler="OnAnyContextMenuClosed" />
       </Style>
@@ -153,7 +154,15 @@
                   </TransformGroup>
                 </UIElement.RenderTransform>
                 <Grid>
-                  <Image Name="TileIcon" HorizontalAlignment="Center" VerticalAlignment="Center" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality" SnapsToDevicePixels="True" Source="{Binding Entry.Icon}" Width="{Binding IconSize}" Height="{Binding IconSize}" />
+                  <Image Name="TileIcon" HorizontalAlignment="Center" VerticalAlignment="Center" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality" SnapsToDevicePixels="True" Width="{Binding IconSize}" Height="{Binding IconSize}">
+                    <Image.Source>
+                      <MultiBinding Converter="{StaticResource SeasonalIconPick}">
+                        <Binding Path="Entry.Icon" />
+                        <Binding Path="Entry.SeasonalKey" />
+                        <Binding Path="IconSize" />
+                      </MultiBinding>
+                    </Image.Source>
+                  </Image>
                   <Image Name="FolderFace" HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed" RenderOptions.BitmapScalingMode="HighQuality" Width="{Binding FolderFaceSize}" Height="{Binding FolderFaceSize}" local:TileFx.AnimatedSource="{Binding FolderIcon}" />
                   <Border Name="OverrideBg" Visibility="Collapsed" Background="{Binding Entry.OverrideBrush}" />
                   <Image Name="OverrideFace" HorizontalAlignment="Center" VerticalAlignment="Center" Stretch="Uniform" Visibility="Collapsed" RenderOptions.BitmapScalingMode="HighQuality" Source="{Binding Entry.Icon}" Width="{Binding OverrideFaceSize}" Height="{Binding OverrideFaceSize}" />

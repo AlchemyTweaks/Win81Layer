@@ -945,7 +945,7 @@ public sealed partial class ActionCenter : Window
 				catch
 				{
 				}
-				rows.Add((n.Id, app, title, body, aumid, ResolveNotifIcon(aumid)));
+				rows.Add((n.Id, app, title, body, aumid, ResolveNotifIcon(aumid, app)));
 			}
 			((DispatcherObject)this).Dispatcher.Invoke((Action)delegate
 			{
@@ -961,8 +961,20 @@ public sealed partial class ActionCenter : Window
 		}
 	}
 
-	private static ImageSource? ResolveNotifIcon(string aumid)
+	// The card icon: the seasonal app icon (34 DIP card image) while one applies, then the 8.1 override, then the app's own.
+	internal static ImageSource ResolveNotifIcon(string aumid, string app = null)
 	{
+		try
+		{
+			if (SeasonalAppIcons.KeyForNotification(aumid, app) is string seasonalKey
+				&& SeasonalAppIcons.Frame(seasonalKey, SeasonalAppIcons.Px(34.0)) is ImageSource art)
+			{
+				return art;
+			}
+		}
+		catch
+		{
+		}
 		if (string.IsNullOrEmpty(aumid))
 		{
 			return null;

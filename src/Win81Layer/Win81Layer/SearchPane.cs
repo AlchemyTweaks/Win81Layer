@@ -1702,6 +1702,21 @@ public sealed class SearchPane : Window
 		};
 	}
 
+	// The entry's icon, or its seasonal icon at the exact size while one applies.
+	internal static void BindAppIcon(System.Windows.Controls.Image img, AppEntry a, double dip)
+	{
+		MultiBinding icon = new MultiBinding
+		{
+			Converter = SeasonalIconConverter.Instance,
+			ConverterParameter = dip,
+			// Show the app's letter tile until (or unless) its real icon resolves, never an empty slot.
+			TargetNullValue = IconResolver.LetterTile(a.Name, IconResolver.AccentFor(a.Name))
+		};
+		icon.Bindings.Add(new System.Windows.Data.Binding("Icon") { Source = a });
+		icon.Bindings.Add(new System.Windows.Data.Binding("SeasonalKey") { Source = a });
+		img.SetBinding(System.Windows.Controls.Image.SourceProperty, icon);
+	}
+
 	private System.Windows.Controls.Button AppRow(AppEntry a)
 	{
 		StackPanel sp = new StackPanel
@@ -1715,12 +1730,7 @@ public sealed class SearchPane : Window
 			VerticalAlignment = VerticalAlignment.Center
 		};
 		RenderOptions.SetBitmapScalingMode(img, BitmapScalingMode.HighQuality);
-		img.SetBinding(System.Windows.Controls.Image.SourceProperty, new System.Windows.Data.Binding("Icon")
-		{
-			Source = a,
-			// Show the app's letter tile until (or unless) its real icon resolves, never an empty slot.
-			TargetNullValue = IconResolver.LetterTile(a.Name, IconResolver.AccentFor(a.Name))
-		});
+		BindAppIcon(img, a, 24.0);
 		sp.Children.Add(img);
 		sp.Children.Add(new TextBlock
 		{

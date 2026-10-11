@@ -62,6 +62,23 @@ public static class SettingsStore
 		}
 	}
 
+	// The two values seasonal app icons need on every lookup, without cloning the whole settings object and without the
+	// lock (a render path must not wait behind a settings read on another thread). The cache is replaced, never changed
+	// in place, so reading the reference is safe; only the very first read loads under the lock.
+	internal static (string Season, bool AppIcons) PeekSeasonalAppIcons()
+	{
+		AppSettings? s = ReadOnlyDiagnostics ? DiagnosticsOverride : null;
+		s ??= System.Threading.Volatile.Read(ref _cache);
+		if (s == null)
+		{
+			lock (Gate)
+			{
+				s = _cache ?? LoadCore(force: false, 8, out _);
+			}
+		}
+		return (s.SeasonalActive ?? "", s.SeasonalAppIcons);
+	}
+
 	public static void PrimeCacheOffThread(int maxAttempts = 120)
 	{
 		lock (Gate)

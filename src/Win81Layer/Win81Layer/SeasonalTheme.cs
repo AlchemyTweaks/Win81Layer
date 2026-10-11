@@ -1184,7 +1184,22 @@ internal static class SeasonalTheme
 			return "Normal is active.";
 		}
 		string since = status.SinceUtc.HasValue ? " since " + status.SinceUtc.Value.ToLocalTime().ToString("d MMM yyyy", System.Globalization.CultureInfo.InvariantCulture) : "";
-		return status.ActiveName + " is on" + since + ". Normal restores your previous Start background, accent colour" + (status.OwnsWallpaper ? " and desktop wallpaper." : ".");
+		return status.ActiveName + " is on" + since + ". " + RestoresText(status.OwnsWallpaper);
+	}
+
+	// "Normal restores your previous Start background, accent colour and desktop wallpaper, and your apps' usual icons."
+	public static string RestoresText(bool ownsWallpaper)
+	{
+		string list = ownsWallpaper ? "Start background, accent colour and desktop wallpaper" : "Start background and accent colour";
+		bool icons = false;
+		try
+		{
+			icons = SeasonalAppIcons.IsActive;
+		}
+		catch
+		{
+		}
+		return "Normal restores your previous " + list + (icons ? ", and your apps' usual icons." : ".");
 	}
 
 	// null when there is no restore point. unreadable is set when one exists but cannot be opened right now (for

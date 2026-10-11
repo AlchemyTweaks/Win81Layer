@@ -135,6 +135,53 @@ internal static class W7Icons
         return made;
     }
 
+    // Seasonal app icons (SeasonalAppIcons) at exact size, on the UI thread: the art comes pre-sized, so no worker is
+    // needed. The plate rules stay, so an icon that would vanish on a pane still gets its plate. The season's version is
+    // part of the key, and entries of an older version are dropped, so a changed folder never shows an old picture.
+    private static int _seasonalVersion = -1;
+
+    internal static Entry? GetOrAddSeasonal(string seasonalKey, int box, int px)
+    {
+        int version = SeasonalAppIcons.Version;
+        string key = "seasonal:" + version + ":" + seasonalKey + "|" + box + "|" + px;
+        lock (Gate)
+        {
+            if (_seasonalVersion != version)
+            {
+                _seasonalVersion = version;
+                foreach (string old in new List<string>(Cache.Keys))
+                {
+                    if (old.StartsWith("seasonal:", StringComparison.Ordinal))
+                    {
+                        Cache.Remove(old);
+                    }
+                }
+            }
+            if (Cache.TryGetValue(key, out Entry e))
+            {
+                return e;
+            }
+        }
+        if (SeasonalAppIcons.Frame(seasonalKey, px) is not BitmapSource img)
+        {
+            return null;
+        }
+        IconPlate plate = Classify(img);
+        ImageSource? plated = plate != IconPlate.None ? SeasonalAppIcons.Frame(seasonalKey, PlatedPx(box, px)) : null;
+        Entry made = new Entry(img, plate, IsLetter: false, plated, Environment.TickCount64);
+        lock (Gate)
+        {
+            Cache[key] = made;
+        }
+        return made;
+    }
+
+    // The seasonal icon a program row shows for an entry, or null when it shows its own icon.
+    internal static Entry? SeasonalFor(AppEntry a, int box, int px)
+    {
+        return SeasonalAppIcons.KeyForEntry(a) is string seasonalKey ? GetOrAddSeasonal(seasonalKey, box, px) : null;
+    }
+
     // A letter tile on the UI thread, for entries that have no shell icon at all (a glyph entry whose glyph was released).
     // It depends only on the name and size, so it is cached for good.
     internal static Entry Letter(string name, int px)

@@ -17,6 +17,8 @@ public sealed class AppEntry : INotifyPropertyChanged
 
 	private bool _isSelected;
 
+	private string _seasonalKey;
+
 	public required string Name { get; init; }
 
 	public required string LaunchPath { get; init; }
@@ -94,6 +96,27 @@ public sealed class AppEntry : INotifyPropertyChanged
 			PropertyChanged?.Invoke(this, new PropertyChangedEventArgs("OverrideBrush"));
 		}
 	}
+
+	// The seasonal app icon shown instead of the entry's own (SeasonalAppIcons), or null.
+	public string SeasonalKey
+	{
+		get
+		{
+			return _seasonalKey;
+		}
+		set
+		{
+			if (_seasonalKey != value)
+			{
+				_seasonalKey = value;
+				PropertyChanged?.Invoke(this, new PropertyChangedEventArgs("SeasonalKey"));
+			}
+		}
+	}
+
+	// What the entry showed before its seasonal icon; Normal puts exactly this back. Loaders that finish while a
+	// seasonal icon is shown write here.
+	internal SeasonalUnder SeasonalUnder;
 
 	public bool IsSelected
 	{

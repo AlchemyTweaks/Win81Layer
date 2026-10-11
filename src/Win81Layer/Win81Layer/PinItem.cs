@@ -18,6 +18,9 @@ public abstract class PinItem : INotifyPropertyChanged
 
 	public List<nint> RunningHwnds { get; } = new List<nint>();
 
+	// The seasonal app icon this button shows (SeasonalAppIcons), or null.
+	public string SeasonalKey { get; set; }
+
 	public ImageSource? Icon
 	{
 		get

@@ -598,6 +598,8 @@ public partial class App : System.Windows.Application
 			Win81Window.RefreshAllAccents();
 			// The Alchemy pointers take the season's colours (or go back to blue with Normal).
 			PointerScheme.ReconcileAsync("season");
+			// Apps with a seasonal icon show it (or their own icon again with Normal).
+			SeasonalAppIcons.Reconcile("season");
 			Logger.Log("Seasonal: live refresh applied (active=" + SettingsStore.FastSnapshot.SeasonalActive + ")");
 		}
 		catch (Exception ex)
@@ -1353,6 +1355,15 @@ public partial class App : System.Windows.Application
 			SettingsStore.ReadOnlyDiagnostics = true;
 			PersistenceDiagnostics.SuppressAutomaticPostBootVerification = true;
 			SeasonalDiagnostics.Begin(this, e.Args);
+			return;
+		}
+		if (e.Args.Contains("--seasonaliconstest"))
+		{
+			// Offscreen QA of the seasonal app icons. Read-only: settings writes throw, the icons come from a generated
+			// fixture folder, and results are written into the given folder only.
+			SettingsStore.ReadOnlyDiagnostics = true;
+			PersistenceDiagnostics.SuppressAutomaticPostBootVerification = true;
+			SeasonalAppIconsDiagnostics.Begin(this, e.Args);
 			return;
 		}
 		if (e.Args.Contains("--cursortest"))

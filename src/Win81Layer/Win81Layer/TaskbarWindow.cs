@@ -226,7 +226,7 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 
 	private Window? _menuHost;
 
-	private static readonly string[] SharedHostExes = new string[8] { "applicationframehost.exe", "mmc.exe", "rundll32.exe", "dllhost.exe", "pythonw.exe", "python.exe", "javaw.exe", "java.exe" };
+	internal static readonly string[] SharedHostExes = new string[8] { "applicationframehost.exe", "mmc.exe", "rundll32.exe", "dllhost.exe", "pythonw.exe", "python.exe", "javaw.exe", "java.exe" };
 
 	private bool _trayTelemetryBusy;
 
@@ -577,6 +577,7 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		PinnedHost.ItemsSource = _visiblePinItems;
 		RebuildPins();
 		PinsChanged += RebuildPins;
+		SeasonalIconsChanged += OnSeasonalIconsChanged;
 		PerfModeChanged += ApplyPerfMode;
 		AutoHideChanged += ApplyAutoHide;
 		TaskbarColorChanged += ApplyTaskbarColor;
@@ -862,6 +863,7 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		// A size change re-lays-out the tray; re-assert crisp rendering (pixel snap + HighQuality scaling) once the new
 		// containers exist so icons stay sharp at Small / Normal / Large.
 		Dispatcher.BeginInvoke(DispatcherPriority.Loaded, new Action(PolishTrayIconRendering));
+		RefreshSeasonalIconSizes(_allTiles, _groups, _tasks);
 	}
 
 	// Physical tray frame (TaskbarMetrics.TrayIconPx) and app-icon box currently applied to this bar.
@@ -904,7 +906,7 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 			{
 				if (vm.RawImage != null)
 				{
-					vm.Image = TrayIconFit.Fit(vm.RawImage, appPx);
+					vm.Image = TrayImageFor(vm, appPx);
 				}
 			}
 		}
@@ -1305,9 +1307,10 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 			foreach (PinnedApp p in _pins)
 			{
 				ImageSource icon = null;
+				string seasonalKey = null;
 				try
 				{
-					icon = CachedPinIcon(p);
+					icon = CachedPinIcon(p, out seasonalKey);
 				}
 				catch (Exception ex)
 				{
@@ -1321,7 +1324,8 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 					ExePath = p.ExePath,
 					IconPath = p.IconPath,
 					AumidExplicit = p.Aumid,
-					Icon = icon
+					Icon = icon,
+					SeasonalKey = seasonalKey
 				};
 				_allTiles.Add(tile);
 				if (!string.IsNullOrEmpty(p.ExePath))
@@ -1479,8 +1483,20 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		}
 	}
 
-	private static ImageSource? CachedPinIcon(PinnedApp p)
+	private static ImageSource CachedPinIcon(PinnedApp p, out string seasonalKey)
 	{
+		// A seasonal icon comes first, at the exact taskbar icon size and as supplied (no recolouring or letter tile).
+		// It is not cached here: SeasonalAppIcons keeps its own frames, and Normal needs the real icon back at once.
+		seasonalKey = SeasonalAppIcons.KeyForPin(p);
+		if (seasonalKey != null)
+		{
+			ImageSource art = SeasonalAppIcons.Frame(seasonalKey, SeasonalAppIcons.Px(TaskbarMetrics.IconSize));
+			if (art != null)
+			{
+				return art;
+			}
+			seasonalKey = null;
+		}
 		string key = p.IconPath + "|" + p.ExePath + "|" + p.LaunchPath;
 		if (_pinIconCache.TryGetValue(key, out ImageSource cached))
 		{
@@ -1499,6 +1515,123 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 	{
 		_pinIconCache.Clear();
 		PinsChanged?.Invoke();
+	}
+
+	// Rebuilds the pinned buttons for a seasonal change WITHOUT dropping the icon cache: seasonal frames never enter it
+	// (CachedPinIcon returns them first), so every other pin gets back exactly the icon object it showed before.
+	internal static void RebuildPinsForSeasonal()
+	{
+		PinsChanged?.Invoke();
+	}
+
+	// QA: whether a pin's native icon is cached (by the same key CachedPinIcon uses).
+	internal static ImageSource QaCachedPinIcon(PinnedApp p)
+	{
+		return _pinIconCache.TryGetValue(p.IconPath + "|" + p.ExePath + "|" + p.LaunchPath, out ImageSource cached) ? cached : null;
+	}
+
+	// QA: the icon a pin gets, and its seasonal key.
+	internal static ImageSource QaPinIcon(PinnedApp p, out string seasonalKey)
+	{
+		return CachedPinIcon(p, out seasonalKey);
+	}
+
+	private static event Action SeasonalIconsChanged;
+
+	// The season or the seasonal icon set changed: running buttons and notification-area icons that show a seasonal
+	// picture, or get one now, pick their icons again. (Pins are rebuilt by RebuildPinsForSeasonal.)
+	public static void RaiseSeasonalIconsChanged()
+	{
+		SeasonalIconsChanged?.Invoke();
+	}
+
+	private void OnSeasonalIconsChanged()
+	{
+		if (!((DispatcherObject)this).Dispatcher.CheckAccess())
+		{
+			((DispatcherObject)this).Dispatcher.BeginInvoke((Action)OnSeasonalIconsChanged);
+			return;
+		}
+		if (_stopped)
+		{
+			return;
+		}
+		foreach (TaskWindow tw in _tasks.ToList())
+		{
+			ResolveIconAsync(tw, tw.Hwnd, replace: true);
+		}
+		RefreshTrayImages();
+	}
+
+	// Seasonal icons are pre-sized, so a taskbar size change picks the frame for the new size (pins, groups that hold a
+	// seasonal pin, running buttons).
+	internal static void RefreshSeasonalIconSizes(IEnumerable<PinnedTile> tiles, IEnumerable<GroupTile> groups, IEnumerable<TaskWindow> tasks)
+	{
+		if (!SeasonalAppIcons.IsActive)
+		{
+			return;
+		}
+		int px = SeasonalAppIcons.Px(TaskbarMetrics.IconSize);
+		foreach (PinnedTile t in tiles)
+		{
+			if (t.SeasonalKey != null && SeasonalAppIcons.Frame(t.SeasonalKey, px) is ImageSource art)
+			{
+				t.Icon = art;
+			}
+		}
+		foreach (GroupTile g in groups)
+		{
+			if (g.Members.Any((PinnedTile m) => m.SeasonalKey != null))
+			{
+				g.Icon = GroupIcon(g);
+			}
+		}
+		foreach (TaskWindow tw in tasks)
+		{
+			if (tw.SeasonalKey != null && SeasonalAppIcons.Frame(tw.SeasonalKey, px) is ImageSource art)
+			{
+				tw.Icon = art;
+			}
+		}
+	}
+
+	// The icon a thumbnail preview shows: the seasonal frame at the preview's 16 DIP while the button shows one.
+	internal static ImageSource PreviewIcon(object dataContext, ImageSource icon)
+	{
+		string key = dataContext switch
+		{
+			TaskWindow tw => tw.SeasonalKey,
+			PinItem pi => pi.SeasonalKey,
+			_ => null
+		};
+		return (key != null ? SeasonalAppIcons.Frame(key, SeasonalAppIcons.Px(16.0)) : null) ?? icon;
+	}
+
+	// The image a notification-area icon shows at px: its seasonal icon while one applies (the launcher's own icon, the
+	// audio switcher and the system buttons never take one), otherwise the app's own image fitted to the box.
+	internal static ImageSource TrayImageFor(TrayAppIcon vm, int px)
+	{
+		string key = (vm.IsOwn || vm.IsAudioSwitcher || vm.HasHost) ? null : SeasonalAppIcons.KeyForProcess(vm.StableKey, vm.ExecutablePath);
+		ImageSource art = key != null ? SeasonalAppIcons.Frame(key, px) : null;
+		vm.SeasonalKey = art != null ? key : null;
+		return art ?? (vm.RawImage != null ? TrayIconFit.Fit(vm.RawImage, px) : null);
+	}
+
+	// After a season change: only icons that showed a seasonal picture, or get one now, are fitted again.
+	private void RefreshTrayImages()
+	{
+		foreach (TrayAppIcon vm in _appIcons.Concat(_overflowIcons))
+		{
+			if (vm.RawImage == null || vm.HasHost)
+			{
+				continue;
+			}
+			if (vm.SeasonalKey == null && (vm.IsOwn || vm.IsAudioSwitcher || SeasonalAppIcons.KeyForProcess(vm.StableKey, vm.ExecutablePath) == null))
+			{
+				continue;
+			}
+			vm.Image = TrayImageFor(vm, _trayAppPx);
+		}
 	}
 
 	private static ImageSource? PinIcon(PinnedApp p)
@@ -2086,6 +2219,7 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		}
 		_menuHost = null;
 		PinsChanged -= RebuildPins;
+		SeasonalIconsChanged -= OnSeasonalIconsChanged;
 		PerfModeChanged -= ApplyPerfMode;
 		AutoHideChanged -= ApplyAutoHide;
 		TaskbarColorChanged -= ApplyTaskbarColor;
@@ -3749,18 +3883,24 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		ReflowAppStrip();
 	}
 
-	private void ResolveIconAsync(TaskWindow tw, nint hwnd)
+	// replace: pick the icon again even though the button has one (the season changed); never blocked by a resolve
+	// that is still running, and its result always wins over that one.
+	private void ResolveIconAsync(TaskWindow tw, nint hwnd, bool replace = false)
 	{
-		if (hwnd == IntPtr.Zero || !_iconResolving.Add(hwnd))
+		if (hwnd == IntPtr.Zero || (!replace && !_iconResolving.Add(hwnd)))
 		{
 			return;
 		}
 		if (hwnd == PcSettingsWindow.LiveHwnd)
 		{
-			_iconResolving.Remove(hwnd);
+			if (!replace)
+			{
+				_iconResolving.Remove(hwnd);
+			}
 			try
 			{
 				tw.Icon = PcSettingsWindow.BuildGearIcon();
+				tw.SeasonalKey = null;
 				return;
 			}
 			catch
@@ -3768,68 +3908,109 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 				return;
 			}
 		}
+		int seasonalVersion = SeasonalAppIcons.Version;
+		// A season change only needs to touch buttons that show a seasonal icon now or will show one. A first resolve
+		// still in flight may have been made for the previous state, so that window is always resolved again.
+		bool keepUnlessSeasonal = replace && tw.SeasonalKey == null && tw.Icon != null && !_iconResolving.Contains(hwnd);
 		Task.Run(delegate
 		{
 			ImageSource icon = null;
+			string exePath = null;
+			string windowAppId = null;
+			string seasonalKey = null;
 			try
 			{
-				if (SettingsStore.Current.Replace81AppIcons)
+				exePath = WindowList.GetExePath(hwnd);
+				windowAppId = AppInventory.GetWindowAppId(hwnd);
+			}
+			catch
+			{
+			}
+			try
+			{
+				// A seasonal icon comes first, at the exact taskbar icon size and as supplied.
+				seasonalKey = SeasonalAppIcons.KeyForWindow(hwnd, exePath ?? "", windowAppId ?? "");
+				if (seasonalKey != null)
 				{
-					string windowAppId = AppInventory.GetWindowAppId(hwnd);
-					if (!string.IsNullOrEmpty(windowAppId))
+					icon = SeasonalAppIcons.Frame(seasonalKey, SeasonalAppIcons.Px(TaskbarMetrics.IconSize));
+					if (icon == null)
+					{
+						seasonalKey = null;
+					}
+				}
+			}
+			catch
+			{
+				seasonalKey = null;
+			}
+			if (keepUnlessSeasonal && icon == null)
+			{
+				return;   // its own icon before and after: nothing to do
+			}
+			if (icon == null)
+			{
+				try
+				{
+					if (SettingsStore.Current.Replace81AppIcons && !string.IsNullOrEmpty(windowAppId))
 					{
 						icon = AppIconOverrides.ResolveByAumid(windowAppId);
 					}
 				}
-			}
-			catch
-			{
-			}
-			try
-			{
-				string exePath = WindowList.GetExePath(hwnd);
-				// Desktop apps (Firefox/devenv/Code) tag no window AUMID, so resolve the 8.1 override by exe name BEFORE the
-				// native LoadIcon fallback — otherwise a running window keeps its native taskbar icon.
-				if (icon == null && SettingsStore.Current.Replace81AppIcons)
+				catch
 				{
-					icon = AppIconOverrides.ResolveByExe(exePath);
 				}
-				if (icon == null && IsExplorerHost(exePath))
+				try
 				{
-					// explorer-hosted shell app (e.g. Control Panel): use the shell item's own icon by its AUMID.
-					string winAppId2 = AppInventory.GetWindowAppId(hwnd);
-					if (!string.IsNullOrEmpty(winAppId2) && !winAppId2.Equals(ExplorerAumid, StringComparison.OrdinalIgnoreCase))
+					// Desktop apps (Firefox/devenv/Code) tag no window AUMID, so resolve the 8.1 override by exe name BEFORE the
+					// native LoadIcon fallback — otherwise a running window keeps its native taskbar icon.
+					if (icon == null && SettingsStore.Current.Replace81AppIcons)
 					{
-						icon = AppInventory.LoadIcon("shell:AppsFolder\\" + winAppId2);
+						icon = AppIconOverrides.ResolveByExe(exePath);
 					}
-					else if (SettingsStore.Current.Replace81AppIcons)
+					if (icon == null && IsExplorerHost(exePath))
 					{
-						// A genuine File Explorer window (Explorer AUMID, or none) — apply the 8.1 File Explorer override
-						// so explorer.exe windows get the icon too (Win+E / folders opened outside the pin).
-						icon = AppIconOverrides.ResolveByAumid(ExplorerAumid);
+						// explorer-hosted shell app (e.g. Control Panel): use the shell item's own icon by its AUMID.
+						if (!string.IsNullOrEmpty(windowAppId) && !windowAppId.Equals(ExplorerAumid, StringComparison.OrdinalIgnoreCase))
+						{
+							icon = AppInventory.LoadIcon("shell:AppsFolder\\" + windowAppId);
+						}
+						else if (SettingsStore.Current.Replace81AppIcons)
+						{
+							// A genuine File Explorer window (Explorer AUMID, or none) — apply the 8.1 File Explorer override
+							// so explorer.exe windows get the icon too (Win+E / folders opened outside the pin).
+							icon = AppIconOverrides.ResolveByAumid(ExplorerAumid);
+						}
+					}
+					else if (icon == null && !string.IsNullOrEmpty(exePath) && !IsSharedHostExe(exePath))
+					{
+						icon = AppInventory.LoadIcon(exePath);
 					}
 				}
-				else if (icon == null && !string.IsNullOrEmpty(exePath) && !IsSharedHostExe(exePath))
+				catch
 				{
-					icon = AppInventory.LoadIcon(exePath);
 				}
+				if (icon == null)
+				{
+					icon = WindowList.GetIcon(hwnd);
+				}
+				// Guarantee a real, non-blank icon so a running window whose icon resolves to a blank/white handle (common
+				// for Electron/Chromium apps like Gather) shows its title initial instead of a white circle.
+				icon = IconResolver.EnsureNonBlank(AppInventory.EnsureVisibleOnDark(icon), tw.Title);
 			}
-			catch
-			{
-			}
-			if (icon == null)
-			{
-				icon = WindowList.GetIcon(hwnd);
-			}
-			// Guarantee a real, non-blank icon so a running window whose icon resolves to a blank/white handle (common
-			// for Electron/Chromium apps like Gather) shows its title initial instead of a white circle.
-			icon = IconResolver.EnsureNonBlank(AppInventory.EnsureVisibleOnDark(icon), tw.Title);
 			((DispatcherObject)this).Dispatcher.BeginInvoke((Delegate)(Action)delegate
 			{
-				_iconResolving.Remove(hwnd);
-				if (tw.Icon == null)
+				if (!replace)
+				{
+					_iconResolving.Remove(hwnd);
+				}
+				else if (seasonalVersion != SeasonalAppIcons.Version)
+				{
+					return;   // a newer season change asked again; its result wins
+				}
+				if (tw.Icon == null || replace)
 				{
 					tw.Icon = icon;
+					tw.SeasonalKey = seasonalKey;
 				}
 			}, Array.Empty<object>());
 		});
@@ -4586,6 +4767,7 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 			}
 			vm.CallbackMessage = info.CallbackMessage;
 			vm.IsAudioSwitcher = audioSwitcher;
+			vm.IsOwn = ownerPid == _ownPid;
 			vm.Version = info.Version;
 			vm.Hidden = info.Hidden; vm.ExecutablePath = info.ExecutablePath;
 			vm.Tooltip = (string.IsNullOrEmpty(info.Tooltip) ? "" : info.Tooltip);
@@ -4610,7 +4792,8 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 				}
 				// Resample ONCE to this bar's app-icon box (exact physical px, drawn 1:1) so app icons match the system tray
 				// icons' visible size at Small / Medium / Large; ApplyTrayIconMetrics re-fits from RawImage on a size change.
-				vm.Image = TrayIconFit.Fit(vm.RawImage, _trayAppPx);
+				// While a seasonal icon applies, its frame for the box is shown instead (RawImage stays the app's own).
+				vm.Image = TrayImageFor(vm, _trayAppPx);
 			}
 			if (!over)
 			{
@@ -7682,6 +7865,7 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		{
 			return;
 		}
+		icon = PreviewIcon(_hoverTarget.DataContext, icon);
 		List<(nint, ImageSource, string)> items = (from h in hwnds
 			select (Hwnd: h, Icon: icon, Title: WindowList.GetTitle(h)) into x
 			where !string.IsNullOrWhiteSpace(x.Title)
@@ -8279,6 +8463,12 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		});
 	}
 
+	internal static void QaInsertJumpListItems(System.Windows.Controls.ContextMenu menu, List<JumpList.Item> recent)
+	{
+		InsertJumpListItems(menu, recent, menu.Items.Count);
+	}
+
+	// The jump list is text only: no app icon is drawn there.
 	private static void InsertJumpListItems(System.Windows.Controls.ContextMenu menu, List<JumpList.Item> recent, int insertAt)
 	{
 		if (recent.Count == 0)
