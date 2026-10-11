@@ -785,6 +785,7 @@ public sealed class PcSettingsWindow : Window
 			_foregroundHook = IntPtr.Zero;
 		}
 		_foregroundProc = null;
+		_pointerPreviewCache.Clear();
 		base.OnClosed(e);
 	}
 
@@ -1503,6 +1504,12 @@ public sealed class PcSettingsWindow : Window
 			SettingsStore.Update(delegate(AppSettings x) { x.SeasonalAmbient = on; });
 			HostApp?.ApplySeasonalLive();
 		}));
+		panel.Children.Add(ToggleRow("Seasonal pointer colours", "While Halloween or Christmas is on, the Alchemy pointers take the season's colours like the website: orange for Halloween, red with a green spinner for Christmas. They go back to blue with Normal. Choose an Alchemy pointer style under Appearance > Pointers.", s.AlchemyCursorsSeasonal, delegate(bool on)
+		{
+			SettingsStore.Update(delegate(AppSettings x) { x.AlchemyCursorsSeasonal = on; });
+			RefreshPointerPreview();
+			FollowPointerChange(PointerScheme.ReconcileAsync("seasonal-toggle"));
+		}));
 	}
 
 	private void ChooseSeasonPicture(SeasonPreset p)
@@ -1678,6 +1685,8 @@ public sealed class PcSettingsWindow : Window
 		HostApp?.ApplySeasonalLive();
 		ReskinShell();
 		RebuildSeasonTiles();
+		RefreshPointerPreview();
+		FollowPointerChange(PointerScheme.Pending);
 		string activeAfter = SeasonalTheme.NormalizeId(SettingsStore.FastSnapshot.SeasonalActive);
 		if (result.Success && activeAfter.Length > 0 && SettingsStore.FastSnapshot.SeasonalWallpaper != wallpaperPrefBefore)
 		{
@@ -1703,6 +1712,336 @@ public sealed class PcSettingsWindow : Window
 				_seasonStatus.Text = result.Message;
 			}
 		}
+	}
+
+	// ===== Pointers (Appearance) =====
+
+	private TextBlock _pointerStatus;
+
+	private WrapPanel _pointerPreview;
+
+	// Preview frames of this window only; dropped when the window closes, so a closed PC Settings keeps no images.
+	private readonly Dictionary<string, BitmapSource> _pointerPreviewCache = new Dictionary<string, BitmapSource>(StringComparer.Ordinal);
+
+	private static readonly string[] PointerRoleNames = new string[17]
+	{
+		"Normal select", "Help select", "Working in background", "Busy", "Precision select", "Text select", "Handwriting", "Unavailable",
+		"Vertical resize", "Horizontal resize", "Diagonal resize 1", "Diagonal resize 2", "Move", "Alternate select", "Link select",
+		"Location select", "Person select"
+	};
+
+	// One choice for every pointer role: Windows' own, the Windows 8.1 set or the Alchemy set in a tone. Every choice
+	// applies at once and Windows default always brings back the user's own pointers.
+	private void BuildPointerSection(StackPanel panel, AppSettings s)
+	{
+		panel.Children.Add(SubLabel("Pointers"));
+		FrameworkElement dropdown = null;
+		dropdown = Win81Dropdown("Pointers", PointerScheme.ChoiceLabels, PointerScheme.ChoiceIndex(s), async delegate(int i)
+		{
+			try
+			{
+				SettingsStore.Update(delegate(AppSettings x) { PointerScheme.SetChoice(x, i); });
+				if (_pointerStatus != null)
+				{
+					_pointerStatus.Text = i >= 2 ? "Preparing the Alchemy pointers…" : "Changing pointers…";
+				}
+				if (dropdown != null)
+				{
+					dropdown.IsEnabled = false;
+				}
+				RefreshPointerPreview();
+				PointerResult r = await PointerScheme.ApplyAsync("settings");
+				RefreshPointerStatus(r);
+			}
+			catch (Exception ex)
+			{
+				Logger.Log("Pointers: settings change failed: " + ex.Message);
+				RefreshPointerStatus(null);
+			}
+			finally
+			{
+				if (dropdown != null)
+				{
+					dropdown.IsEnabled = true;
+				}
+			}
+		}, 330.0);
+		panel.Children.Add(dropdown);
+		panel.Children.Add(new TextBlock
+		{
+			Text = "Alchemy pointers replace every Windows pointer: normal, link, help, text, precision, handwriting, unavailable, move, the four resize pointers, alternate, location, person, and animated busy and working pointers. Windows has no separate pointer for pressing; while something starts you see the animated working pointer. While Halloween or Christmas is on they can take the season's colours. Windows default puts back exactly the pointers you had before.",
+			Foreground = Text2,
+			FontFamily = new System.Windows.Media.FontFamily("Segoe UI"),
+			FontSize = 12.0,
+			TextWrapping = TextWrapping.Wrap,
+			MaxWidth = 760.0,
+			HorizontalAlignment = System.Windows.HorizontalAlignment.Left,
+			Margin = new Thickness(0.0, 2.0, 0.0, 8.0)
+		});
+		// Two even rows of nine and eight tiles.
+		_pointerPreview = new WrapPanel
+		{
+			MaxWidth = 9 * 50.0,
+			HorizontalAlignment = System.Windows.HorizontalAlignment.Left,
+			Margin = new Thickness(0.0, 2.0, 0.0, 2.0)
+		};
+		panel.Children.Add(_pointerPreview);
+		_pointerStatus = new TextBlock
+		{
+			Foreground = Text2,
+			FontFamily = new System.Windows.Media.FontFamily("Segoe UI"),
+			FontSize = 12.5,
+			TextWrapping = TextWrapping.Wrap,
+			MaxWidth = 760.0,
+			HorizontalAlignment = System.Windows.HorizontalAlignment.Left,
+			Margin = new Thickness(0.0, 6.0, 0.0, 10.0)
+		};
+		panel.Children.Add(_pointerStatus);
+		FollowPointerEvents(_pointerStatus);
+		RefreshPointerPreview();
+		RefreshPointerStatus(null);
+	}
+
+	// While the section is on screen: a light/dark flip redraws the preview in the other tone (Alchemy auto follows
+	// it), and every finished pointer change, wherever it started, updates the status line.
+	private void FollowPointerEvents(FrameworkElement section)
+	{
+		bool subscribed = false;
+		void OnTheme(object sender, EventArgs e)
+		{
+			Dispatcher.BeginInvoke((Action)delegate
+			{
+				if (_pointerStatus == section)
+				{
+					RefreshPointerPreview();
+					RefreshPointerStatus(null);
+				}
+			});
+		}
+		void OnPointerState()
+		{
+			Dispatcher.BeginInvoke((Action)delegate
+			{
+				if (_pointerStatus == section)
+				{
+					RefreshPointerStatus(null);
+				}
+			});
+		}
+		section.Loaded += delegate
+		{
+			if (!subscribed)
+			{
+				subscribed = true;
+				ShellTheme.Changed += OnTheme;
+				PointerScheme.StateChanged += OnPointerState;
+			}
+		};
+		section.Unloaded += delegate
+		{
+			if (subscribed)
+			{
+				subscribed = false;
+				ShellTheme.Changed -= OnTheme;
+				PointerScheme.StateChanged -= OnPointerState;
+			}
+		};
+	}
+
+	private void RefreshPointerStatus(PointerResult r)
+	{
+		if (_pointerStatus == null)
+		{
+			return;
+		}
+		PointerStatus status = PointerScheme.Describe();
+		_pointerStatus.Text = (r != null && !r.Success && !status.Busy) ? r.Message : PointerScheme.StatusText(status);
+	}
+
+	// Shows the status once a change started elsewhere (a season, the seasonal toggle) has finished.
+	private async void FollowPointerChange(Task change)
+	{
+		try
+		{
+			if (change != null && !change.IsCompleted)
+			{
+				if (_pointerStatus != null)
+				{
+					_pointerStatus.Text = PointerScheme.StatusText(PointerScheme.Describe());
+				}
+				await change;
+			}
+		}
+		catch (Exception ex)
+		{
+			Logger.Log("Pointers: follow-up failed: " + ex.Message);
+		}
+		RefreshPointerStatus(null);
+	}
+
+	// The 17 pointers of the palette the setting shows now, drawn in memory (no files). Hidden unless Alchemy is chosen.
+	private void RefreshPointerPreview()
+	{
+		WrapPanel host = _pointerPreview;
+		if (host == null)
+		{
+			return;
+		}
+		host.Children.Clear();
+		AppSettings s = SettingsStore.FastSnapshot;
+		string paletteId = AlchemyPalettes.Resolve(s.AlchemyCursors, ShellTheme.IsDark, s.SeasonalActive, s.AlchemyCursorsSeasonal);
+		AlchemyPalette palette = AlchemyPalettes.Find(paletteId);
+		host.Visibility = palette == null ? Visibility.Collapsed : Visibility.Visible;
+		if (palette == null)
+		{
+			return;
+		}
+		int px = PointerPreviewSize();
+		for (int i = 0; i < AlchemyCursorArt.Roles.Length; i++)
+		{
+			host.Children.Add(PointerTile(AlchemyCursorArt.Roles[i], PointerRoleNames[i], palette, px));
+		}
+	}
+
+	private int PointerPreviewSize()
+	{
+		double scale = 1.0;
+		try
+		{
+			scale = VisualTreeHelper.GetDpi(this).DpiScaleX;
+		}
+		catch
+		{
+		}
+		double want = 32.0 * scale;
+		return AlchemyCursorArt.Sizes.OrderBy(v => Math.Abs(v - want)).First();
+	}
+
+	private BitmapSource PointerFrame(CursorRole role, AlchemyPalette palette, int px, int frame)
+	{
+		string key = palette.Id + "|" + role + "|" + px + "|" + frame;
+		if (_pointerPreviewCache.TryGetValue(key, out BitmapSource hit))
+		{
+			return hit;
+		}
+		byte[] bgra = AlchemyCursorArt.RenderBgra(role, palette, px, frame);
+		BitmapSource bmp = BitmapSource.Create(px, px, 96.0, 96.0, PixelFormats.Bgra32, null, bgra, px * 4);
+		bmp.Freeze();
+		if (_pointerPreviewCache.Count > 200)
+		{
+			_pointerPreviewCache.Clear();
+		}
+		_pointerPreviewCache[key] = bmp;
+		return bmp;
+	}
+
+	private FrameworkElement PointerTile(CursorRole role, string name, AlchemyPalette palette, int px)
+	{
+		const int still = 6;
+		System.Windows.Controls.Image img = new System.Windows.Controls.Image
+		{
+			Width = 32.0,
+			Height = 32.0,
+			Stretch = Stretch.Uniform,
+			HorizontalAlignment = System.Windows.HorizontalAlignment.Center,
+			VerticalAlignment = VerticalAlignment.Center,
+			Source = PointerFrame(role, palette, px, AlchemyCursorArt.IsAnimated(role) ? still : 0)
+		};
+		RenderOptions.SetBitmapScalingMode(img, BitmapScalingMode.HighQuality);
+		Border tile = new Border
+		{
+			Width = 44.0,
+			Height = 44.0,
+			BorderThickness = new Thickness(1.0),
+			Background = palette.Tone == AlchemyPalettes.Dark ? Freeze(4280163870u) : Freeze(4294177779u),
+			Margin = new Thickness(0.0, 0.0, 6.0, 6.0),
+			ToolTip = name,
+			Child = img
+		};
+		tile.SetResourceReference(Border.BorderBrushProperty, "Metro81.Border");
+		System.Windows.Automation.AutomationProperties.SetName(tile, name);
+		if (AlchemyCursorArt.IsAnimated(role))
+		{
+			// Animates only while hovered; the timer stops on leave and unload, so an open page costs nothing.
+			DispatcherTimer timer = null;
+			int frame = still;
+			void Stop()
+			{
+				timer?.Stop();
+				timer = null;
+				frame = still;
+				img.Source = PointerFrame(role, palette, px, still);
+			}
+			tile.MouseEnter += delegate
+			{
+				if (timer != null)
+				{
+					return;
+				}
+				timer = new DispatcherTimer(DispatcherPriority.Render)
+				{
+					Interval = TimeSpan.FromMilliseconds(33.0)
+				};
+				timer.Tick += delegate
+				{
+					frame = (frame + 1) % AlchemyCursorArt.AnimFrames;
+					img.Source = PointerFrame(role, palette, px, frame);
+				};
+				timer.Start();
+			};
+			tile.MouseLeave += delegate { Stop(); };
+			tile.Unloaded += delegate { Stop(); };
+		}
+		return tile;
+	}
+
+	// QA: the Appearance pointer section and the seasonal section rendered offscreen on white.
+	internal void QaRenderPointers(string outPath, double w = 900.0)
+	{
+		StackPanel panel = new StackPanel
+		{
+			Margin = new Thickness(40.0, 30.0, 40.0, 24.0),
+			MaxWidth = 760.0,
+			HorizontalAlignment = System.Windows.HorizontalAlignment.Left
+		};
+		panel.Children.Add(SubHeader("Appearance"));
+		BuildPointerSection(panel, SettingsStore.FastSnapshot);
+		QaRenderPanel(panel, outPath, w);
+	}
+
+	internal void QaRenderSeasonalPointers(string outPath, double w = 900.0)
+	{
+		StackPanel panel = new StackPanel
+		{
+			Margin = new Thickness(40.0, 30.0, 40.0, 24.0),
+			MaxWidth = 760.0,
+			HorizontalAlignment = System.Windows.HorizontalAlignment.Left
+		};
+		AppSettings s = SettingsStore.FastSnapshot;
+		BuildSeasonalSection(panel, s);
+		panel.Children.Add(SubHeader("Appearance"));
+		BuildPointerSection(panel, s);
+		QaRenderPanel(panel, outPath, w);
+	}
+
+	private static void QaRenderPanel(FrameworkElement panel, string outPath, double w)
+	{
+		Border host = new Border
+		{
+			Background = System.Windows.Media.Brushes.White,
+			Width = w,
+			Child = panel
+		};
+		host.Measure(new System.Windows.Size(w, double.PositiveInfinity));
+		double h = Math.Min(8000.0, Math.Max(200.0, host.DesiredSize.Height));
+		host.Arrange(new Rect(0.0, 0.0, w, h));
+		host.UpdateLayout();
+		RenderTargetBitmap rtb = new RenderTargetBitmap((int)w, (int)h, 96.0, 96.0, PixelFormats.Pbgra32);
+		rtb.Render(host);
+		PngBitmapEncoder enc = new PngBitmapEncoder();
+		enc.Frames.Add(BitmapFrame.Create(rtb));
+		using FileStream fs = File.Create(outPath);
+		enc.Save(fs);
 	}
 
 	private void ReskinShell()
@@ -2146,11 +2485,7 @@ public sealed class PcSettingsWindow : Window
 			SettingsStore.Update(delegate(AppSettings x) { x.UseWin81Sounds = on; });
 			if (on) { SoundScheme.Apply(); } else { SoundScheme.Revert(); }
 		}));
-		panel.Children.Add(ToggleRow("Win8.1 cursors", "Apply the authentic Windows 8.1 pointer scheme (fully reversible).", s.UseWin81Cursors, delegate(bool on)
-		{
-			SettingsStore.Update(delegate(AppSettings x) { x.UseWin81Cursors = on; });
-			if (on) { CursorScheme.Apply(); } else { CursorScheme.Revert(); }
-		}));
+		BuildPointerSection(panel, s);
 		if (WallpaperModule.AssetAvailable)
 		{
 			// While the seasonal wallpaper is on, the Win8.1 wallpaper snapshot would capture the seasonal picture.
@@ -3583,7 +3918,7 @@ public sealed class PcSettingsWindow : Window
 		};
 	}
 
-	private FrameworkElement Win81Dropdown(string accessibleName, string[] options, int selectedIndex, Action<int> onChange)
+	private FrameworkElement Win81Dropdown(string accessibleName, string[] options, int selectedIndex, Action<int> onChange, double width = 260.0)
 	{
 		if (!ShellSkin.GlassOn)
 		{
@@ -3592,7 +3927,7 @@ public sealed class PcSettingsWindow : Window
 				try { onChange(index); }
 				catch (Exception ex) { Logger.Log("Dropdown: " + ex.Message); }
 			}, accessibleName);
-			combo.Width = 260;
+			combo.Width = width;
 			combo.MaxDropDownHeight = 340;
 			combo.HorizontalAlignment = System.Windows.HorizontalAlignment.Left;
 			combo.Margin = new Thickness(0, 6, 0, 6);
@@ -3626,7 +3961,7 @@ public sealed class PcSettingsWindow : Window
 		inner.Children.Add(valueText);
 		Border box = new Border
 		{
-			Width = 260.0,
+			Width = width,
 			Height = 32.0,
 			Background = System.Windows.Media.Brushes.White,
 			BorderBrush = Freeze(4286216826u),
@@ -3644,7 +3979,7 @@ public sealed class PcSettingsWindow : Window
 			Background = System.Windows.Media.Brushes.White,
 			BorderBrush = Freeze(4286216826u),
 			BorderThickness = new Thickness(1.0),
-			Width = 260.0,
+			Width = width,
 			Child = list,
 			Effect = new DropShadowEffect
 			{

@@ -596,6 +596,8 @@ public partial class App : System.Windows.Application
 			_startScreen?.RefreshBackground();
 			TaskbarWindow.RaiseTaskbarColorChanged(invalidateWallpaper: true);
 			Win81Window.RefreshAllAccents();
+			// The Alchemy pointers take the season's colours (or go back to blue with Normal).
+			PointerScheme.ReconcileAsync("season");
 			Logger.Log("Seasonal: live refresh applied (active=" + SettingsStore.FastSnapshot.SeasonalActive + ")");
 		}
 		catch (Exception ex)
@@ -1351,6 +1353,15 @@ public partial class App : System.Windows.Application
 			SettingsStore.ReadOnlyDiagnostics = true;
 			PersistenceDiagnostics.SuppressAutomaticPostBootVerification = true;
 			SeasonalDiagnostics.Begin(this, e.Args);
+			return;
+		}
+		if (e.Args.Contains("--cursortest"))
+		{
+			// Offscreen QA of the Alchemy pointers. Read-only: the pointer engine is driven against an in-memory
+			// registry, files are drawn into the given folder only, and every real registry or state write throws.
+			SettingsStore.ReadOnlyDiagnostics = true;
+			PersistenceDiagnostics.SuppressAutomaticPostBootVerification = true;
+			CursorDiagnostics.Begin(this, e.Args);
 			return;
 		}
 		// A shell started BY the supervisor is "managed" Ã¢â‚¬â€ it must NOT spawn its own watchdog (the supervisor is the
@@ -2315,9 +2326,30 @@ public partial class App : System.Windows.Application
 		}
 		if (e.Args.Contains("--applycursors"))
 		{
-			CursorScheme.Apply();
-			SettingsStore.Update(delegate(AppSettings appSettings) { appSettings.UseWin81Cursors = CursorScheme.IsApplied; });
-			Shutdown();
+			SettingsStore.Update(delegate(AppSettings appSettings) { PointerScheme.SetChoice(appSettings, 1); });
+			PointerResult applied = PointerScheme.ApplyBlocking("command line");
+			ShellProfileChangeSignal.Set();
+			Logger.Log("--applycursors: " + applied.Message);
+			Shutdown(applied.Success ? 0 : 1);
+			return;
+		}
+		int applyPointersIndex = Array.IndexOf(e.Args, "--applypointers");
+		if (applyPointersIndex >= 0)
+		{
+			// --applypointers windows|win81|dark|light|auto
+			string choice = applyPointersIndex + 1 < e.Args.Length ? e.Args[applyPointersIndex + 1].Trim().ToLowerInvariant() : "";
+			int index = Array.IndexOf(new string[5] { "windows", "win81", "dark", "light", "auto" }, choice);
+			if (index < 0)
+			{
+				Logger.Log("--applypointers needs windows, win81, dark, light or auto.");
+				Shutdown(2);
+				return;
+			}
+			SettingsStore.Update(delegate(AppSettings appSettings) { PointerScheme.SetChoice(appSettings, index); });
+			PointerResult applied = PointerScheme.ApplyBlocking("command line");
+			ShellProfileChangeSignal.Set();
+			Logger.Log("--applypointers " + choice + ": " + applied.Message);
+			Shutdown(applied.Success ? 0 : 1);
 			return;
 		}
 		if (e.Args.Contains("--clocktest"))
@@ -2827,8 +2859,11 @@ public partial class App : System.Windows.Application
 		{
 			SeedWin81CursorAssets();   // ensure the bundled aero cursors exist where CursorScheme.Resolve() looks
 			CursorScheme.EnsureSchemeInstalled();
-			if (settings.UseWin81Cursors) CursorScheme.Apply(); else CursorScheme.Revert();
+			// Finishes an interrupted pointer change and puts on the chosen pointers; writes nothing when they are on.
+			PointerScheme.InitializeAndReconcile();
 		});
+		// Alchemy "auto" follows light/dark mode; the handler ignores every other setting.
+		ShellTheme.Changed += PointerScheme.OnThemeChanged;
 		TaskbarWorkArea.RecoverFromUncleanExit();
 		Task.Run((Action)DwmBlurGlassBridge.EnsureOnDemandAutostartPolicy);
 		((DispatcherObject)this).Dispatcher.BeginInvoke((Delegate)new Action(DesktopComposition.Resume), (DispatcherPriority)4, Array.Empty<object>());
@@ -3945,26 +3980,52 @@ public partial class App : System.Windows.Application
 			}
 		};
 		menu.Items.Add(soundsItem);
-		ToolStripMenuItem cursorsItem = new ToolStripMenuItem("Win8.1 cursors")
+		ToolStripMenuItem pointersMenu = new ToolStripMenuItem("Pointers")
 		{
-			Checked = settings.UseWin81Cursors,
-			CheckOnClick = true,
-			ToolTipText = "Apply the authentic Windows 8.1 pointer scheme (fully reversible; also selectable in Mouse Properties)."
+			ToolTipText = "Windows 8.1 or Alchemy pointers for every pointer role, fully reversible: Windows default puts back the pointers you had before."
 		};
-		cursorsItem.CheckedChanged += delegate
+		for (int pointerIndex = 0; pointerIndex < PointerScheme.ChoiceLabels.Length; pointerIndex++)
 		{
-			bool on = cursorsItem.Checked;
-			SettingsStore.Update(delegate(AppSettings appSettings) { appSettings.UseWin81Cursors = on; });
-			if (on)
+			int choice = pointerIndex;
+			ToolStripMenuItem pointerItem = new ToolStripMenuItem(PointerScheme.ChoiceLabels[choice])
 			{
-				CursorScheme.Apply();
-			}
-			else
+				Tag = choice
+			};
+			pointerItem.Click += async delegate
 			{
-				CursorScheme.Revert();
+				pointersMenu.Enabled = false;
+				try
+				{
+					SettingsStore.Update(delegate(AppSettings appSettings) { PointerScheme.SetChoice(appSettings, choice); });
+					PointerResult r = await PointerScheme.ApplyAsync("tray");
+					if (!r.Success)
+					{
+						ToastService.Show(null, "Pointers", "Could not change pointers", r.Message);
+					}
+				}
+				catch (Exception exPointers)
+				{
+					Logger.Log("Pointers: tray change failed: " + exPointers.Message);
+				}
+				finally
+				{
+					pointersMenu.Enabled = true;
+				}
+			};
+			pointersMenu.DropDownItems.Add(pointerItem);
+		}
+		pointersMenu.DropDownOpening += delegate
+		{
+			int current = PointerScheme.ChoiceIndex(SettingsStore.FastSnapshot);
+			foreach (ToolStripItem item in pointersMenu.DropDownItems)
+			{
+				if (item is ToolStripMenuItem mi)
+				{
+					mi.Checked = mi.Tag is int t && t == current;
+				}
 			}
 		};
-		menu.Items.Add(cursorsItem);
+		menu.Items.Add(pointersMenu);
 		colorMenu = new ToolStripMenuItem("Taskbar color");
 		colorMenu.DropDownItems.Add(ColorItem("From desktop wallpaper", "Wallpaper"));
 		colorMenu.DropDownItems.Add(ColorItem("Match Start screen", "Start"));

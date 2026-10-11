@@ -39,6 +39,7 @@ internal sealed class ShellProfileOwnedSettings
 	public bool Replace81AppIcons { get; set; }
 	public bool UseWin81Sounds { get; set; }
 	public bool UseWin81Cursors { get; set; }
+	public string AlchemyCursors { get; set; } = "";
 	public bool SuspendNativeStart { get; set; }
 	public bool TaskbarEnabled { get; set; }
 	public bool DominantMode { get; set; }
@@ -83,6 +84,7 @@ internal sealed class ShellProfileOwnedSettings
 			Replace81AppIcons = source.Replace81AppIcons,
 			UseWin81Sounds = source.UseWin81Sounds,
 			UseWin81Cursors = source.UseWin81Cursors,
+			AlchemyCursors = source.AlchemyCursors ?? "",
 			SuspendNativeStart = source.SuspendNativeStart,
 			TaskbarEnabled = source.TaskbarEnabled,
 			DominantMode = source.DominantMode,
@@ -124,6 +126,7 @@ internal sealed class ShellProfileOwnedSettings
 		target.Replace81AppIcons = Replace81AppIcons;
 		target.UseWin81Sounds = UseWin81Sounds;
 		target.UseWin81Cursors = UseWin81Cursors;
+		target.AlchemyCursors = AlchemyCursors ?? "";
 		target.SuspendNativeStart = SuspendNativeStart;
 		target.TaskbarEnabled = TaskbarEnabled;
 		target.DominantMode = DominantMode;
@@ -622,15 +625,15 @@ internal static class ShellProfileManager
 
 		try
 		{
-			if (after.UseWin81Cursors) CursorScheme.Apply(); else CursorScheme.Revert();
-			if (CursorScheme.IsApplied != after.UseWin81Cursors)
+			PointerResult pointers = PointerScheme.ApplyBlocking(after, "profile");
+			if (!PointerScheme.MatchesEffective(after))
 			{
-				errors.Add("Cursor scheme state did not verify.");
+				errors.Add("Pointer scheme state did not verify." + (pointers.Success ? "" : " " + pointers.Message));
 			}
 		}
 		catch (Exception ex)
 		{
-			errors.Add("Cursor scheme failed: " + ex.Message);
+			errors.Add("Pointer scheme failed: " + ex.Message);
 		}
 
 		try
@@ -677,7 +680,7 @@ internal static class ShellProfileManager
 			current.UseWin81Sounds = true;
 			migrated = true;
 		}
-		if (CursorScheme.IsApplied && !current.UseWin81Cursors)
+		if (PointerScheme.PeekAppliedKind() == PointerKind.Win81 && !current.UseWin81Cursors && string.IsNullOrEmpty(current.AlchemyCursors))
 		{
 			current.UseWin81Cursors = true;
 			migrated = true;
@@ -715,6 +718,7 @@ internal static class ShellProfileManager
 				value.Replace81AppIcons = true;
 				value.UseWin81Sounds = true;
 				value.UseWin81Cursors = true;
+				value.AlchemyCursors = "";
 				value.SuspendNativeStart = true;
 				value.TaskbarEnabled = true;
 				value.DominantMode = true;
@@ -751,6 +755,7 @@ internal static class ShellProfileManager
 				value.Replace81AppIcons = false;
 				value.UseWin81Sounds = false;
 				value.UseWin81Cursors = false;
+				value.AlchemyCursors = "";
 				value.SuspendNativeStart = true;
 				value.TaskbarEnabled = true;
 				value.DominantMode = true;
@@ -787,6 +792,7 @@ internal static class ShellProfileManager
 				value.Replace81AppIcons = false;
 				value.UseWin81Sounds = false;
 				value.UseWin81Cursors = false;
+				value.AlchemyCursors = "";
 				value.SuspendNativeStart = false;
 				value.TaskbarEnabled = false;
 				value.DominantMode = false;

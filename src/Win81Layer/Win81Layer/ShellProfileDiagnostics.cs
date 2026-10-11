@@ -53,6 +53,7 @@ internal static class ShellProfileDiagnostics
 			Require(!applied81.Win7StartMenuEnabled && applied81.HotCornersEnabled, "8.1 Start/Charms invariants");
 			Require(applied81.UseWin81Sounds && applied81.UseWin81Cursors && applied81.ReplaceSystemIcons, "8.1 asset invariants");
 			Require(applied81.DesktopCompositionMode == "windows81", "8.1 composition invariant");
+			Require(applied81.AlchemyCursors.Length == 0, "8.1 uses the Windows 8.1 pointers");
 			Require(CommonSettingsPreserved(common, applied81), "8.1 common settings preservation");
 			checks.Add("windows81-invariants");
 
@@ -61,6 +62,7 @@ internal static class ShellProfileDiagnostics
 			Require(applied7.Win7StartMenuEnabled && applied7.TaskbarEnabled && applied7.DominantMode, "7 shell invariants");
 			Require(!applied7.HotCornersEnabled && !applied7.UseWin81Sounds && !applied7.Replace81AppIcons, "7 separation from 8.1 assets");
 			Require(applied7.DesktopCompositionMode == "windows7-aero", "7 composition invariant");
+			Require(applied7.AlchemyCursors.Length == 0 && !applied7.UseWin81Cursors, "7 uses the Windows pointers");
 			Require(CommonSettingsPreserved(common, applied7), "7 common settings preservation");
 			checks.Add("windows7-invariants");
 
@@ -76,8 +78,20 @@ internal static class ShellProfileDiagnostics
 			Require(!appliedNative.ReplaceStartMenu && !appliedNative.TaskbarEnabled && !appliedNative.SuspendNativeStart && !appliedNative.DominantMode, "native takeover disabled");
 			Require(!appliedNative.ReplaceSystemIcons && !appliedNative.UseWin81Sounds && !appliedNative.UseWin81Cursors, "native assets restored");
 			Require(appliedNative.DesktopCompositionMode == "native", "native composition invariant");
+			Require(appliedNative.AlchemyCursors.Length == 0, "native ends on the Windows pointers");
 			Require(CommonSettingsPreserved(common, appliedNative), "native common settings preservation");
 			checks.Add("native-recovery-invariants");
+
+			AppSettings alchemyCommon = common.Clone();
+			alchemyCommon.AlchemyCursors = "dark";
+			alchemyCommon.UseWin81Cursors = false;
+			foreach (string id in new[] { ShellProfileIds.Windows81, ShellProfileIds.Windows7, ShellProfileIds.Native })
+			{
+				ShellProfileOwnedSettings owned = ShellProfileManager.BuildDefaultsForTest(id, alchemyCommon);
+				Require(owned.AlchemyCursors.Length == 0 && owned.ApplyTo(alchemyCommon).AlchemyCursors.Length == 0, id + " defaults clear the Alchemy pointers");
+			}
+			Require(ShellProfileOwnedSettings.Capture(alchemyCommon).ApplyTo(common).AlchemyCursors == "dark", "Alchemy pointer choice round-trips through a profile slot");
+			checks.Add("pointer-profile-invariants");
 
 			windows81.TaskbarSize = "Small";
 			windows81.TaskbarAlignment = "Center";
@@ -196,7 +210,10 @@ internal static class ShellProfileDiagnostics
 				settings.ReplaceSystemIcons,
 				settings.Replace81AppIcons,
 				settings.UseWin81Sounds,
-				settings.UseWin81Cursors
+				settings.UseWin81Cursors,
+				settings.AlchemyCursors,
+				settings.AlchemyCursorsSeasonal,
+				PointerApplied = PointerScheme.PeekAppliedKind().ToString()
 			}
 		}, Json));
 		Logger.Log("Shell profile status report: " + StatusPath);

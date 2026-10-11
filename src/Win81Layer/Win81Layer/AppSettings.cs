@@ -55,6 +55,13 @@ public sealed class AppSettings
 
 	public bool UseWin81Cursors { get; set; }
 
+	// Alchemy pointers: "" (off), "dark", "light" or "auto" (follows light/dark mode). Profile-owned. When set it takes
+	// the place of UseWin81Cursors: one pointer scheme at a time.
+	public string AlchemyCursors { get; set; } = "";
+
+	// While Halloween or Christmas is on, the Alchemy pointers take the season's colours. Not profile-owned.
+	public bool AlchemyCursorsSeasonal { get; set; } = true;
+
 	public bool AutoRecoverShell { get; set; } = true;
 
 	public bool ForceRebootOnShellFailure { get; set; } = false;

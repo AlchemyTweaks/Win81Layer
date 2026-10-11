@@ -360,5 +360,10 @@ public static class SettingsStore
 		settings.NewsFeedUrl = NewsFeedService.NormalizeUrl(settings.NewsFeedUrl) ?? NewsFeedService.DefaultUrl;
 		settings.PlaceSearchEngine = string.Equals(settings.PlaceSearchEngine, "Google", StringComparison.OrdinalIgnoreCase) ? "Google" : "Bing";
 		settings.SeasonalActive = SeasonalTheme.NormalizeId(settings.SeasonalActive);
+		settings.AlchemyCursors = AlchemyPalettes.NormalizeMode(settings.AlchemyCursors);
+		if (settings.AlchemyCursors.Length > 0)
+		{
+			settings.UseWin81Cursors = false;
+		}
 	}
 }
