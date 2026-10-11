@@ -1522,6 +1522,7 @@ public sealed class PcSettingsWindow : Window
 		{
 			SettingsStore.Update(delegate(AppSettings x) { x.SeasonalAppIcons = on; });
 			SeasonalAppIcons.Reconcile("toggle");
+			SetSeasonalTrayEnabled(on);
 		}));
 		// Opening the page picks up icons added to the folder since the last look.
 		SeasonalAppIcons.Reconcile("settings");
@@ -1537,8 +1538,52 @@ public sealed class PcSettingsWindow : Window
 			Text = SeasonalIconsStatusText()
 		};
 		panel.Children.Add(_seasonIconsStatus);
+		// The tray choice applies only while seasonal app icons are on: dimmed and inactive otherwise.
+		_seasonTrayGroup = new StackPanel
+		{
+			Margin = new Thickness(0.0, 8.0, 0.0, 0.0)
+		};
+		panel.Children.Add(_seasonTrayGroup);
+		_seasonTrayGroup.Children.Add(SubLabel("Tray icons"));
+		_seasonTrayGroup.Children.Add(new TextBlock
+		{
+			Text = SeasonalTrayHelpText,
+			Foreground = Text2,
+			FontFamily = new System.Windows.Media.FontFamily("Segoe UI"),
+			FontSize = 12.0,
+			TextWrapping = TextWrapping.Wrap,
+			MaxWidth = 760.0,
+			HorizontalAlignment = System.Windows.HorizontalAlignment.Left,
+			Margin = new Thickness(0.0, 1.0, 0.0, 2.0)
+		});
+		string[] trayOpts = new string[2] { "Seasonal, with live status", "Always the app's own icon" };
+		bool trayOriginal = string.Equals(s.SeasonalTrayIcons, "original", StringComparison.OrdinalIgnoreCase);
+		_seasonTrayGroup.Children.Add(Win81Dropdown("Tray icons", trayOpts, trayOriginal ? 1 : 0, delegate(int i)
+		{
+			string v = i == 1 ? "original" : "live";
+			SettingsStore.Update(delegate(AppSettings x) { x.SeasonalTrayIcons = v; });
+			TaskbarWindow.RaiseSeasonalTrayChanged();
+		}, 300.0));
+		SetSeasonalTrayEnabled(s.SeasonalAppIcons);
+		panel.Children.Add(new Border
+		{
+			Height = 10.0
+		});
 		panel.Children.Add(RowLink("Add your own seasonal icons", SeasonalIconsHelpText, OpenSeasonalIconsFolder, wrap: true));
 	}
+
+	private StackPanel _seasonTrayGroup;
+
+	private void SetSeasonalTrayEnabled(bool on)
+	{
+		if (_seasonTrayGroup != null)
+		{
+			_seasonTrayGroup.IsEnabled = on;
+			_seasonTrayGroup.Opacity = on ? 1.0 : 0.45;
+		}
+	}
+
+	internal const string SeasonalTrayHelpText = "With live status, a seasonal icon in the notification area still shows the app's status: an unread dot or count is drawn on the seasonal picture, and while the app shows something else, such as a call, a muted microphone or an error, its own icon comes back until it is idle again.";
 
 	internal const string SeasonalIconsHelpText = "Put a PNG named after the app's program file in the seasonal\\halloween-icons or seasonal\\christmas-icons folder next to the launcher, for example discord.png for Discord.exe. For pixel-exact small icons, add copies with the size in the name, such as discord-16.png. At 100% scaling the shell draws 16, 18, 22, 24, 27, 32, 34 and 36 px; tiles are scaled from a picture of 256 px or more. New icons show the next time you open this page or change the season.";
 

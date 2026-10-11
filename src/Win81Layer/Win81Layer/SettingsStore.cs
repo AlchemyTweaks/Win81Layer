@@ -79,6 +79,22 @@ public static class SettingsStore
 		return (s.SeasonalActive ?? "", s.SeasonalAppIcons);
 	}
 
+	// True when notification-area icons always show the app's own icon (SeasonalTrayIcons = "original"). Lock-free like
+	// PeekSeasonalAppIcons.
+	internal static bool PeekSeasonalTrayOriginal()
+	{
+		AppSettings? s = ReadOnlyDiagnostics ? DiagnosticsOverride : null;
+		s ??= System.Threading.Volatile.Read(ref _cache);
+		if (s == null)
+		{
+			lock (Gate)
+			{
+				s = _cache ?? LoadCore(force: false, 8, out _);
+			}
+		}
+		return string.Equals(s.SeasonalTrayIcons, "original", StringComparison.OrdinalIgnoreCase);
+	}
+
 	public static void PrimeCacheOffThread(int maxAttempts = 120)
 	{
 		lock (Gate)

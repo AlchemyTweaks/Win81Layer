@@ -578,6 +578,7 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		RebuildPins();
 		PinsChanged += RebuildPins;
 		SeasonalIconsChanged += OnSeasonalIconsChanged;
+		SeasonalTrayChanged += OnSeasonalTrayChanged;
 		PerfModeChanged += ApplyPerfMode;
 		AutoHideChanged += ApplyAutoHide;
 		TaskbarColorChanged += ApplyTaskbarColor;
@@ -1607,14 +1608,43 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		return (key != null ? SeasonalAppIcons.Frame(key, SeasonalAppIcons.Px(16.0)) : null) ?? icon;
 	}
 
-	// The image a notification-area icon shows at px: its seasonal icon while one applies (the launcher's own icon, the
-	// audio switcher and the system buttons never take one), otherwise the app's own image fitted to the box.
+	// The image a notification-area icon shows at px: while a seasonal icon applies (the launcher's own icon, the audio
+	// switcher and the system buttons never take one), the picture, the picture with the app's badge, or the app's own
+	// icon while it shows another state (SeasonalTrayIcons); otherwise the app's own image fitted to the box.
 	internal static ImageSource TrayImageFor(TrayAppIcon vm, int px)
 	{
 		string key = (vm.IsOwn || vm.IsAudioSwitcher || vm.HasHost) ? null : SeasonalAppIcons.KeyForProcess(vm.StableKey, vm.ExecutablePath);
 		ImageSource art = key != null ? SeasonalAppIcons.Frame(key, px) : null;
-		vm.SeasonalKey = art != null ? key : null;
-		return art ?? (vm.RawImage != null ? TrayIconFit.Fit(vm.RawImage, px) : null);
+		if (art == null && vm.SeasonalTray != null)
+		{
+			// No picture any more (Normal, a season without one for this app): the state-aware logic lets go of the icon,
+			// so nothing is left to settle and the app's own image is shown exactly as before.
+			SeasonalTrayIcons.Drop(vm);
+		}
+		ImageSource shown = art != null ? SeasonalTrayIcons.Show(vm, key, art, px) : null;
+		vm.SeasonalKey = shown != null ? key : null;
+		return shown ?? (vm.RawImage != null ? TrayIconFit.Fit(vm.RawImage, px) : null);
+	}
+
+	private static event Action SeasonalTrayChanged;
+
+	// The "Tray icons" choice changed: notification-area icons with a seasonal picture are drawn again.
+	public static void RaiseSeasonalTrayChanged()
+	{
+		SeasonalTrayChanged?.Invoke();
+	}
+
+	private void OnSeasonalTrayChanged()
+	{
+		if (!((DispatcherObject)this).Dispatcher.CheckAccess())
+		{
+			((DispatcherObject)this).Dispatcher.BeginInvoke((Action)OnSeasonalTrayChanged);
+			return;
+		}
+		if (!_stopped)
+		{
+			RefreshTrayImages();
+		}
 	}
 
 	// After a season change: only icons that showed a seasonal picture, or get one now, are fitted again.
@@ -2220,6 +2250,13 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		_menuHost = null;
 		PinsChanged -= RebuildPins;
 		SeasonalIconsChanged -= OnSeasonalIconsChanged;
+		SeasonalTrayChanged -= OnSeasonalTrayChanged;
+		// The bar's tray icons go away with it: their seasonal display time is counted up to now (a rebuilt bar's new
+		// icons continue from here).
+		foreach (TrayAppIcon trayVm in _appIcons.Concat(_overflowIcons))
+		{
+			SeasonalTrayIcons.Drop(trayVm);
+		}
 		PerfModeChanged -= ApplyPerfMode;
 		AutoHideChanged -= ApplyAutoHide;
 		TaskbarColorChanged -= ApplyTaskbarColor;
@@ -4739,6 +4776,7 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 			{
 				otherColl.Remove(moved);
 				otherDict.Remove(key);
+				SeasonalTrayIcons.Drop(moved);
 			}
 			if (!dict.TryGetValue(key, out var vm))
 			{
@@ -4775,7 +4813,12 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 			{
 				vm.HIcon = info.HIcon;
 				string trayName = (!string.IsNullOrEmpty(info.Tooltip)) ? info.Tooltip : ((!string.IsNullOrEmpty(info.ExecutablePath)) ? System.IO.Path.GetFileNameWithoutExtension(info.ExecutablePath) : "App");
-				vm.RawImage = IconResolver.EnsureNonBlank(info.Image ?? IconToSource(info.HIcon, info.OwnerHwnd), trayName);
+				bool fromHIcon = false;
+				System.Windows.Media.ImageSource got = info.Image ?? IconToSource(info.HIcon, info.OwnerHwnd, out fromHIcon);
+				vm.RawImage = IconResolver.EnsureNonBlank(got, trayName);
+				// Only the app's own tray HICON shows its state; a registry snapshot, the window or program icon or a letter
+				// tile is a stand-in (the state-aware seasonal tray icons never learn from one).
+				vm.RawSubstitute = info.Image != null || !fromHIcon || !ReferenceEquals(vm.RawImage, got);
 				if (audioSwitcher) { System.Windows.Media.ImageSource sw = AudioSwitchImage(); if (sw != null) { vm.RawImage = sw; } }
 				if (ownerPid == _ownPid)
 				{
@@ -4795,6 +4838,11 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 				// While a seasonal icon applies, its frame for the box is shown instead (RawImage stays the app's own).
 				vm.Image = TrayImageFor(vm, _trayAppPx);
 			}
+			else if (vm.SeasonalTray != null && SeasonalTrayIcons.NeedsSettle(vm))
+			{
+				// A blinking state went quiet: draw the icon for the image it settled on.
+				vm.Image = TrayImageFor(vm, _trayAppPx);
+			}
 			if (!over)
 			{
 				index++;
@@ -4802,11 +4850,13 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		}
 		foreach (string key2 in _appByKey.Keys.Where((string k) => !seen.Contains(k)).ToList())
 		{
+			SeasonalTrayIcons.Drop(_appByKey[key2]);
 			_appIcons.Remove(_appByKey[key2]);
 			_appByKey.Remove(key2);
 		}
 		foreach (string key3 in _overflowByKey.Keys.Where((string k) => !seen.Contains(k)).ToList())
 		{
+			SeasonalTrayIcons.Drop(_overflowByKey[key3]);
 			_overflowIcons.Remove(_overflowByKey[key3]);
 			_overflowByKey.Remove(key3);
 		}
@@ -5130,8 +5180,10 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		TaskOverflowPopup.IsOpen = !TaskOverflowPopup.IsOpen;
 	}
 
-	private static ImageSource? IconToSource(nint hIcon, nint ownerHwnd)
+	// fromHIcon: true when the image is the tray HICON itself, false for a fallback (window or program icon).
+	private static ImageSource? IconToSource(nint hIcon, nint ownerHwnd, out bool fromHIcon)
 	{
+		fromHIcon = false;
 		//IL_0017: Unknown result type (might be due to invalid IL or missing references)
 		//IL_00a6: Unknown result type (might be due to invalid IL or missing references)
 		// Primary: convert the tray HICON. CopyIcon promotes explorer's/foreign handle to a locally-owned copy and
@@ -5147,6 +5199,7 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 				((Freezable)src).Freeze();
 				if (!IconResolver.IsBlank(src))
 				{
+					fromHIcon = true;
 					return AppInventory.EnsureVisibleOnDark(src);
 				}
 			}

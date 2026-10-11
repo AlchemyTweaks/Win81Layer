@@ -1366,6 +1366,15 @@ public partial class App : System.Windows.Application
 			SeasonalAppIconsDiagnostics.Begin(this, e.Args);
 			return;
 		}
+		if (e.Args.Contains("--traystatetest"))
+		{
+			// Offscreen QA of the state-aware seasonal tray icons. Read-only: settings writes throw, the learned states
+			// are kept in the given folder, and results are written there only.
+			SettingsStore.ReadOnlyDiagnostics = true;
+			PersistenceDiagnostics.SuppressAutomaticPostBootVerification = true;
+			SeasonalTrayDiagnostics.Begin(this, e.Args);
+			return;
+		}
 		if (e.Args.Contains("--cursortest"))
 		{
 			// Offscreen QA of the Alchemy pointers. Read-only: the pointer engine is driven against an in-memory
@@ -3571,6 +3580,8 @@ public partial class App : System.Windows.Application
 		// whole shell before the first heartbeat. Contain it — the tray is non-core; taskbar/Start keep working without it.
 		try
 		{
+			// What the state-aware seasonal tray icons learned is read off the UI thread before the first tray icon arrives.
+			if (SettingsStore.PeekSeasonalAppIcons().AppIcons && !SettingsStore.PeekSeasonalTrayOriginal()) { SeasonalTrayIcons.Preload(); }
 			if (!_safeMode) { TrayHostService.Start(); }   // safe mode: leave the native tray host in place
 			_trayIcon = new NotifyIcon
 			{

@@ -34,8 +34,15 @@ public sealed class TrayAppIcon : INotifyPropertyChanged
 	// TrayIconFit.Fit(RawImage, app box px); kept so a taskbar size or DPI change can re-fit without a new HICON.
 	public ImageSource? RawImage;
 
+	// RawImage is a stand-in, not the app's own tray image: the owner window's or program's icon (the tray HICON could
+	// not be read), a letter tile, or a registry snapshot. It says nothing about the app's state (SeasonalTrayIcons).
+	internal bool RawSubstitute;
+
 	// The seasonal app icon shown instead of the live image (SeasonalAppIcons), or null. RawImage stays the app's own.
 	public string SeasonalKey;
+
+	// What the state-aware seasonal tray logic last saw and decided for this icon (SeasonalTrayIcons), or null.
+	internal SeasonalTrayLive SeasonalTray;
 
 	// The launcher's own icon, which never takes a seasonal icon.
 	public bool IsOwn;

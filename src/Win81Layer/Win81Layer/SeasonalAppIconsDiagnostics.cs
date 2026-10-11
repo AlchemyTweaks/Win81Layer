@@ -1462,7 +1462,8 @@ internal static class SeasonalAppIconsDiagnostics
 			}
 		}
 		Metrics["RealKeys"] = frames;
-		Check("real-folder-keys", string.Join(",", keys) == "chrome,discord,notion,slack,spotify" && missing.Count == 0, "keys=" + string.Join(",", keys) + (missing.Count > 0 ? " missing=" + string.Join(",", missing) : " each 16..256 + 512 master"));
+		// The folder may hold more pictures than the five the feature started with; those five must be there.
+		Check("real-folder-keys", new string[5] { "chrome", "discord", "notion", "slack", "spotify" }.All(k => keys.Contains(k)) && missing.Count == 0, "keys=" + string.Join(",", keys) + (missing.Count > 0 ? " missing=" + string.Join(",", missing) : " each 16..256 + 512 master"));
 
 		// Which installed apps and native taskbar pins match (read only).
 		List<string> appHits = new List<string>();
@@ -1504,7 +1505,8 @@ internal static class SeasonalAppIconsDiagnostics
 		Metrics["RealPins"] = pinHits;
 		string[] wantApps = new string[5] { "Discord=discord", "Google Chrome=chrome", "Notion=notion", "Slack=slack", "Spotify=spotify" };
 		List<string> names = appHits.Select(h => h.Split(" [")[0]).ToList();
-		bool exact = wantApps.All(w => names.Contains(w)) && names.Count == wantApps.Length;
+		// Every matched app must use a picture that exists, and the five reference apps must match their own picture.
+		bool exact = wantApps.All(w => names.Contains(w)) && names.All(n => n.Contains('=') && keys.Contains(n.Substring(n.LastIndexOf('=') + 1)));
 		Check("real-apps-match", exact, string.Join("; ", appHits));
 		Check("real-pins-match", pinHits.Count(h => !h.EndsWith("=-", StringComparison.Ordinal)) >= 1, string.Join("; ", pinHits));
 

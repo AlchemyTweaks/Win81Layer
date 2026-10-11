@@ -121,6 +121,10 @@ public sealed class AppSettings
 	// surface (SeasonalAppIcons). Not profile-owned.
 	public bool SeasonalAppIcons { get; set; } = true;
 
+	// Notification-area icons with a seasonal picture: "live" keeps the app's status visible (badges on the picture, the
+	// app's own icon during calls and other states, SeasonalTrayIcons); "original" always shows the app's own icon.
+	public string SeasonalTrayIcons { get; set; } = "live";
+
 	public bool StartGridFilledV1 { get; set; }
 
 	public string MotionMode { get; set; } = "Authentic";
