@@ -16,6 +16,16 @@
   <SolidColorBrush x:Key="Metro81.ScrollButtonPressedBrush" Color="#B0B0B0" />
   <SolidColorBrush x:Key="Metro81.ScrollGlyphBrush" Color="#000000" />
   <SolidColorBrush x:Key="Metro81.FieldBorder" Color="#767676" />
+  <SolidColorBrush x:Key="Metro81.SliderTrack" Color="#A6A6A6" />
+  <!-- The progress track and the tooltip (the same values as Metro81.HoverSurface, Metro81.Surface and
+       Metro81.FieldBorder; Dark rest gives them their own). -->
+  <SolidColorBrush x:Key="Metro81.ProgressTrack" Color="#DEDEDE" />
+  <SolidColorBrush x:Key="Metro81.TooltipSurface" Color="#FFFFFF" />
+  <SolidColorBrush x:Key="Metro81.TooltipBorder" Color="#767676" />
+  <!-- An outline around the keyboard-highlighted row of an open drop-down list: none normally; Dark rest sets one. -->
+  <SolidColorBrush x:Key="Metro81.ItemHighlightBorder" Color="Transparent" />
+  <!-- The outline of a disabled button: none normally; Dark rest keeps a dim one. -->
+  <SolidColorBrush x:Key="Metro81.DisabledBorder" Color="Transparent" />
   <!-- Semantic role tokens: ShellTheme.ApplyResourceTokens overrides these at Application scope on a light/dark flip.
        LIGHT values below are the authentic defaults so the shell looks identical in light mode. -->
   <SolidColorBrush x:Key="Metro81.Ink2" Color="#5A5A5A" />
@@ -71,7 +81,7 @@
     <Setter Property="MinHeight" Value="32" />
     <Setter Property="Padding" Value="12,4" />
     <Setter Property="Background" Value="{DynamicResource Metro81.ControlFill}" />
-    <Setter Property="BorderBrush" Value="Transparent" />
+    <Setter Property="BorderBrush" Value="{DynamicResource Metro81.ButtonBorder}" />
     <Setter Property="BorderThickness" Value="2" />
     <Setter Property="HorizontalContentAlignment" Value="Center" />
     <Setter Property="VerticalContentAlignment" Value="Center" />
@@ -84,14 +94,14 @@
                               VerticalAlignment="{TemplateBinding VerticalContentAlignment}" RecognizesAccessKey="True" />
           </Border>
           <ControlTemplate.Triggers>
-            <Trigger Property="IsDefaulted" Value="True"><Setter TargetName="Chrome" Property="BorderBrush" Value="{DynamicResource MenuAccent}" /></Trigger>
+            <Trigger Property="IsDefaulted" Value="True"><Setter TargetName="Chrome" Property="BorderBrush" Value="{DynamicResource Metro81.FocusBorder}" /></Trigger>
             <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Chrome" Property="Background" Value="{DynamicResource Metro81.ControlFillHover}" /><Setter TargetName="Chrome" Property="BorderBrush" Value="{DynamicResource Metro81.ControlFillBorder}" /></Trigger>
             <Trigger Property="IsPressed" Value="True">
               <Setter TargetName="Chrome" Property="Background" Value="{DynamicResource Metro81.HighlightSurface}" /><Setter Property="Foreground" Value="{DynamicResource Metro81.HighlightInk}" />
             </Trigger>
             <Trigger Property="IsEnabled" Value="False">
               <Setter TargetName="Chrome" Property="Background" Value="{DynamicResource Metro81.DisabledSurface}" />
-              <Setter TargetName="Chrome" Property="BorderBrush" Value="Transparent" />
+              <Setter TargetName="Chrome" Property="BorderBrush" Value="{DynamicResource Metro81.DisabledBorder}" />
               <Setter Property="Foreground" Value="{DynamicResource Metro81.DisabledInk}" />
             </Trigger>
           </ControlTemplate.Triggers>
@@ -100,7 +110,7 @@
     </Setter>
   </Style>
   <Style x:Key="Metro81.AccentButton" TargetType="Button" BasedOn="{StaticResource Metro81.Button}">
-    <Setter Property="Background" Value="{DynamicResource MenuAccent}" /><Setter Property="Foreground" Value="White" />
+    <Setter Property="Background" Value="{DynamicResource MenuAccent}" /><Setter Property="Foreground" Value="{DynamicResource Metro81.OnAccentInk}" /><Setter Property="BorderBrush" Value="Transparent" />
     <Setter Property="Template">
       <Setter.Value>
         <ControlTemplate TargetType="Button">
@@ -114,6 +124,7 @@
             <Trigger Property="IsPressed" Value="True"><Setter TargetName="Chrome" Property="Background" Value="{DynamicResource MenuAccentPressed}" /><Setter TargetName="Chrome" Property="BorderBrush" Value="{DynamicResource Metro81.Ink}" /></Trigger>
             <Trigger Property="IsEnabled" Value="False">
               <Setter TargetName="Chrome" Property="Background" Value="{DynamicResource Metro81.DisabledSurface}" />
+              <Setter TargetName="Chrome" Property="BorderBrush" Value="{DynamicResource Metro81.DisabledBorder}" />
               <Setter Property="Foreground" Value="{DynamicResource Metro81.DisabledInk}" />
             </Trigger>
           </ControlTemplate.Triggers>
@@ -129,10 +140,10 @@
       </Grid>
     </Border>
     <ControlTemplate.Triggers>
-      <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Overlay" Property="Background" Value="#187F7F7F" /></Trigger>
-      <Trigger Property="Tag" Value="sel"><Setter TargetName="Overlay" Property="Background" Value="#2EFFFFFF" /></Trigger>
+      <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Overlay" Property="Background" Value="{DynamicResource Metro81.CommandHover}" /></Trigger>
+      <Trigger Property="Tag" Value="sel"><Setter TargetName="Overlay" Property="Background" Value="{DynamicResource Metro81.CommandSelected}" /></Trigger>
       <Trigger Property="IsPressed" Value="True"><Setter TargetName="Overlay" Property="Background" Value="#407F7F7F" /></Trigger>
-      <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.4" /></Trigger>
+      <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="{DynamicResource Metro81.DisabledOpacity}" /></Trigger>
     </ControlTemplate.Triggers>
   </ControlTemplate>
   <Style x:Key="Metro81.CommandButton" TargetType="Button" BasedOn="{StaticResource Metro81.Control}">
@@ -141,11 +152,11 @@
     <Setter Property="HorizontalContentAlignment" Value="Center" /><Setter Property="VerticalContentAlignment" Value="Center" /><Setter Property="Template" Value="{StaticResource Metro81.CommandTemplate}" />
   </Style>
   <Style x:Key="Metro81.NavButton" TargetType="Button" BasedOn="{StaticResource Metro81.CommandButton}">
-    <Setter Property="Foreground" Value="White" /><Setter Property="FontSize" Value="19" /><Setter Property="Padding" Value="40,11,20,11" /><Setter Property="HorizontalContentAlignment" Value="Left" />
+    <Setter Property="Foreground" Value="{DynamicResource Metro81.NavInk}" /><Setter Property="FontSize" Value="19" /><Setter Property="Padding" Value="40,11,20,11" /><Setter Property="HorizontalContentAlignment" Value="Left" />
   </Style>
   <Style x:Key="Metro81.LinkButton" TargetType="Button" BasedOn="{StaticResource Metro81.CommandButton}">
-    <Setter Property="Foreground" Value="{DynamicResource MenuAccent}" /><Setter Property="FontSize" Value="14" /><Setter Property="Padding" Value="0,4" /><Setter Property="HorizontalContentAlignment" Value="Left" />
-    <Style.Triggers><Trigger Property="IsMouseOver" Value="True"><Setter Property="Foreground" Value="{DynamicResource MenuAccentPressed}" /></Trigger></Style.Triggers>
+    <Setter Property="Foreground" Value="{DynamicResource Metro81.LinkInk}" /><Setter Property="FontSize" Value="14" /><Setter Property="Padding" Value="0,4" /><Setter Property="HorizontalContentAlignment" Value="Left" />
+    <Style.Triggers><Trigger Property="IsMouseOver" Value="True"><Setter Property="Foreground" Value="{DynamicResource Metro81.LinkInkHover}" /></Trigger></Style.Triggers>
   </Style>
   <Style x:Key="Metro81.CheckBox" TargetType="CheckBox" BasedOn="{StaticResource Metro81.Control}">
     <Setter Property="MinHeight" Value="40" /><Setter Property="Padding" Value="0,4" />
@@ -170,7 +181,7 @@
             <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Box" Property="BorderBrush" Value="{DynamicResource Metro81.Ink}" /></Trigger>
             <Trigger Property="IsPressed" Value="True"><Setter TargetName="Box" Property="Background" Value="{DynamicResource Metro81.PressedSurface}" /></Trigger>
             <Trigger Property="IsEnabled" Value="False">
-              <Setter Property="Foreground" Value="{DynamicResource Metro81.DisabledInk}" /><Setter TargetName="Box" Property="Opacity" Value="0.4" />
+              <Setter Property="Foreground" Value="{DynamicResource Metro81.DisabledInk}" /><Setter TargetName="Box" Property="Opacity" Value="{DynamicResource Metro81.DisabledOpacity}" />
             </Trigger>
           </ControlTemplate.Triggers>
         </ControlTemplate>
@@ -196,7 +207,7 @@
             <Trigger Property="IsChecked" Value="True"><Setter TargetName="Dot" Property="Visibility" Value="Visible" /></Trigger>
             <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Ring" Property="Stroke" Value="{DynamicResource Metro81.Ink}" /></Trigger>
             <Trigger Property="IsPressed" Value="True"><Setter TargetName="Ring" Property="Fill" Value="{DynamicResource Metro81.PressedSurface}" /></Trigger>
-            <Trigger Property="IsEnabled" Value="False"><Setter TargetName="Disc" Property="Opacity" Value="0.4" /><Setter Property="Foreground" Value="{DynamicResource Metro81.DisabledInk}" /></Trigger>
+            <Trigger Property="IsEnabled" Value="False"><Setter TargetName="Disc" Property="Opacity" Value="{DynamicResource Metro81.DisabledOpacity}" /><Setter Property="Foreground" Value="{DynamicResource Metro81.DisabledInk}" /></Trigger>
           </ControlTemplate.Triggers>
         </ControlTemplate>
       </Setter.Value>
@@ -226,8 +237,8 @@
               <Setter TargetName="Thumb" Property="HorizontalAlignment" Value="Right" />
             </Trigger>
             <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Rail" Property="BorderBrush" Value="{DynamicResource Metro81.Ink}" /></Trigger>
-            <Trigger Property="IsPressed" Value="True"><Setter TargetName="Thumb" Property="Background" Value="#404040" /></Trigger>
-            <Trigger Property="IsEnabled" Value="False"><Setter TargetName="Switch" Property="Opacity" Value="0.4" /><Setter Property="Foreground" Value="{DynamicResource Metro81.DisabledInk}" /></Trigger>
+            <Trigger Property="IsPressed" Value="True"><Setter TargetName="Thumb" Property="Background" Value="{DynamicResource Metro81.ToggleThumbPressed}" /></Trigger>
+            <Trigger Property="IsEnabled" Value="False"><Setter TargetName="Switch" Property="Opacity" Value="{DynamicResource Metro81.DisabledOpacity}" /><Setter Property="Foreground" Value="{DynamicResource Metro81.DisabledInk}" /></Trigger>
           </ControlTemplate.Triggers>
         </ControlTemplate>
       </Setter.Value>
@@ -237,12 +248,12 @@
     <Setter Property="MinWidth" Value="32" /><Setter Property="MinHeight" Value="32" />
     <Setter Property="Width" Value="32" /><Setter Property="Padding" Value="0" />
     <Setter Property="Background" Value="Transparent" /><Setter Property="BorderThickness" Value="0" />
-    <Style.Triggers><Trigger Property="IsMouseOver" Value="True"><Setter Property="Background" Value="{DynamicResource MenuAccent}" /><Setter Property="Foreground" Value="White" /></Trigger></Style.Triggers>
+    <Style.Triggers><Trigger Property="IsMouseOver" Value="True"><Setter Property="Background" Value="{DynamicResource MenuAccent}" /><Setter Property="Foreground" Value="{DynamicResource Metro81.OnAccentInk}" /></Trigger></Style.Triggers>
   </Style>
   <Style x:Key="Metro81.TextBox" TargetType="TextBox" BasedOn="{StaticResource Metro81.Control}">
     <Setter Property="MinHeight" Value="36" /><Setter Property="Padding" Value="8,4" />
     <Setter Property="Background" Value="{DynamicResource Metro81.Surface}" /><Setter Property="BorderBrush" Value="{DynamicResource Metro81.FieldBorder}" /><Setter Property="BorderThickness" Value="2" />
-    <Setter Property="SelectionBrush" Value="{DynamicResource MenuAccent}" /><Setter Property="SelectionOpacity" Value="0.4" /><Setter Property="CaretBrush" Value="{DynamicResource Metro81.Ink}" />
+    <Setter Property="SelectionBrush" Value="{DynamicResource Metro81.TextSelection}" /><Setter Property="SelectionOpacity" Value="{DynamicResource Metro81.TextSelectionOpacity}" /><Setter Property="CaretBrush" Value="{DynamicResource Metro81.Ink}" />
     <Setter Property="VerticalContentAlignment" Value="Center" /><Setter Property="KeyboardNavigation.TabNavigation" Value="Local" />
     <Setter Property="Template">
       <Setter.Value>
@@ -262,7 +273,7 @@
             <Trigger Property="IsReadOnly" Value="True"><Setter TargetName="Clear" Property="Visibility" Value="Collapsed" /></Trigger>
             <Trigger Property="AcceptsReturn" Value="True"><Setter TargetName="Clear" Property="Visibility" Value="Collapsed" /></Trigger>
             <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Chrome" Property="BorderBrush" Value="{DynamicResource Metro81.Ink}" /></Trigger>
-            <Trigger Property="IsKeyboardFocusWithin" Value="True"><Setter TargetName="Chrome" Property="BorderBrush" Value="{DynamicResource MenuAccent}" /></Trigger>
+            <Trigger Property="IsKeyboardFocusWithin" Value="True"><Setter TargetName="Chrome" Property="BorderBrush" Value="{DynamicResource Metro81.FocusBorder}" /></Trigger>
             <Trigger Property="Validation.HasError" Value="True"><Setter TargetName="Chrome" Property="BorderBrush" Value="#C42B1C" /></Trigger>
             <Trigger Property="IsEnabled" Value="False">
               <Setter TargetName="Chrome" Property="Background" Value="{DynamicResource Metro81.DisabledSurface}" /><Setter Property="Foreground" Value="{DynamicResource Metro81.DisabledInk}" />
@@ -276,7 +287,7 @@
   <Style x:Key="Metro81.PasswordBox" TargetType="PasswordBox" BasedOn="{StaticResource Metro81.Control}">
     <Setter Property="MinHeight" Value="36" /><Setter Property="Padding" Value="8,4" />
     <Setter Property="Background" Value="{DynamicResource Metro81.Surface}" /><Setter Property="BorderBrush" Value="{DynamicResource Metro81.FieldBorder}" /><Setter Property="BorderThickness" Value="2" />
-    <Setter Property="VerticalContentAlignment" Value="Center" /><Setter Property="SelectionBrush" Value="{DynamicResource MenuAccent}" /><Setter Property="CaretBrush" Value="{DynamicResource Metro81.Ink}" />
+    <Setter Property="VerticalContentAlignment" Value="Center" /><Setter Property="SelectionBrush" Value="{DynamicResource Metro81.TextSelection}" /><Setter Property="CaretBrush" Value="{DynamicResource Metro81.Ink}" />
     <Setter Property="Template">
       <Setter.Value>
         <ControlTemplate TargetType="PasswordBox">
@@ -295,7 +306,7 @@
           </Border>
           <ControlTemplate.Triggers>
             <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Chrome" Property="BorderBrush" Value="{DynamicResource Metro81.Ink}" /></Trigger>
-            <Trigger Property="IsKeyboardFocusWithin" Value="True"><Setter TargetName="Chrome" Property="BorderBrush" Value="{DynamicResource MenuAccent}" /></Trigger>
+            <Trigger Property="IsKeyboardFocusWithin" Value="True"><Setter TargetName="Chrome" Property="BorderBrush" Value="{DynamicResource Metro81.FocusBorder}" /></Trigger>
             <Trigger Property="Validation.HasError" Value="True"><Setter TargetName="Chrome" Property="BorderBrush" Value="#C42B1C" /></Trigger>
             <Trigger Property="IsEnabled" Value="False"><Setter TargetName="Chrome" Property="Background" Value="{DynamicResource Metro81.DisabledSurface}" /><Setter Property="Foreground" Value="{DynamicResource Metro81.DisabledInk}" /></Trigger>
           </ControlTemplate.Triggers>
@@ -308,10 +319,13 @@
     <Setter Property="Template">
       <Setter.Value>
         <ControlTemplate TargetType="ComboBoxItem">
-          <Border x:Name="Chrome" Background="Transparent" Padding="{TemplateBinding Padding}"><ContentPresenter /></Border>
+          <Grid>
+            <Border x:Name="Chrome" Background="Transparent" Padding="{TemplateBinding Padding}"><ContentPresenter /></Border>
+            <Border x:Name="HighlightRing" BorderBrush="Transparent" BorderThickness="1" IsHitTestVisible="False" />
+          </Grid>
           <ControlTemplate.Triggers>
-            <Trigger Property="IsHighlighted" Value="True"><Setter TargetName="Chrome" Property="Background" Value="{DynamicResource Metro81.HoverSurface}" /></Trigger>
-            <Trigger Property="IsSelected" Value="True"><Setter TargetName="Chrome" Property="Background" Value="{DynamicResource MenuAccent}" /><Setter Property="Foreground" Value="White" /></Trigger>
+            <Trigger Property="IsHighlighted" Value="True"><Setter TargetName="Chrome" Property="Background" Value="{DynamicResource Metro81.HoverSurface}" /><Setter TargetName="HighlightRing" Property="BorderBrush" Value="{DynamicResource Metro81.ItemHighlightBorder}" /></Trigger>
+            <Trigger Property="IsSelected" Value="True"><Setter TargetName="Chrome" Property="Background" Value="{DynamicResource MenuAccent}" /><Setter Property="Foreground" Value="{DynamicResource Metro81.OnAccentInk}" /></Trigger>
             <Trigger Property="IsEnabled" Value="False"><Setter Property="Foreground" Value="{DynamicResource Metro81.DisabledInk}" /></Trigger>
           </ControlTemplate.Triggers>
         </ControlTemplate>
@@ -351,8 +365,8 @@
           <ControlTemplate.Triggers>
             <Trigger Property="IsEditable" Value="True"><Setter TargetName="Selection" Property="Visibility" Value="Hidden" /><Setter TargetName="PART_EditableTextBox" Property="Visibility" Value="Visible" /><Setter Property="IsTabStop" Value="False" /></Trigger>
             <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Chrome" Property="BorderBrush" Value="{DynamicResource Metro81.Ink}" /></Trigger>
-            <Trigger Property="IsKeyboardFocusWithin" Value="True"><Setter TargetName="Chrome" Property="BorderBrush" Value="{DynamicResource MenuAccent}" /></Trigger>
-            <Trigger Property="IsEnabled" Value="False"><Setter TargetName="Chrome" Property="Background" Value="{DynamicResource Metro81.DisabledSurface}" /><Setter Property="Foreground" Value="{DynamicResource Metro81.DisabledInk}" /><Setter TargetName="DropDown" Property="Opacity" Value="0.4" /></Trigger>
+            <Trigger Property="IsKeyboardFocusWithin" Value="True"><Setter TargetName="Chrome" Property="BorderBrush" Value="{DynamicResource Metro81.FocusBorder}" /></Trigger>
+            <Trigger Property="IsEnabled" Value="False"><Setter TargetName="Chrome" Property="Background" Value="{DynamicResource Metro81.DisabledSurface}" /><Setter Property="Foreground" Value="{DynamicResource Metro81.DisabledInk}" /><Setter TargetName="DropDown" Property="Opacity" Value="{DynamicResource Metro81.DisabledOpacity}" /></Trigger>
           </ControlTemplate.Triggers>
         </ControlTemplate>
       </Setter.Value>
@@ -360,7 +374,7 @@
   </Style>
   <Style x:Key="Metro81.ToolTip" TargetType="ToolTip" BasedOn="{StaticResource Metro81.Control}">
     <Style.Resources><Style TargetType="TextBlock"><Setter Property="TextWrapping" Value="Wrap" /></Style></Style.Resources>
-    <Setter Property="Background" Value="{DynamicResource Metro81.Surface}" /><Setter Property="BorderBrush" Value="{DynamicResource Metro81.FieldBorder}" /><Setter Property="BorderThickness" Value="2" />
+    <Setter Property="Background" Value="{DynamicResource Metro81.TooltipSurface}" /><Setter Property="BorderBrush" Value="{DynamicResource Metro81.TooltipBorder}" /><Setter Property="BorderThickness" Value="2" />
     <Setter Property="Padding" Value="10,6" /><Setter Property="MaxWidth" Value="400" />
     <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="ToolTip"><Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" Padding="{TemplateBinding Padding}"><ContentPresenter /></Border></ControlTemplate></Setter.Value></Setter>
   </Style>
@@ -509,8 +523,8 @@
         <Border x:Name="Chrome" Background="Transparent" Padding="{TemplateBinding Padding}"><ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}" /></Border>
         <ControlTemplate.Triggers>
           <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Chrome" Property="Background" Value="{DynamicResource Metro81.HoverSurface}" /></Trigger>
-          <Trigger Property="IsSelected" Value="True"><Setter TargetName="Chrome" Property="Background" Value="{DynamicResource MenuAccent}" /><Setter Property="Foreground" Value="White" /></Trigger>
-          <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.45" /></Trigger>
+          <Trigger Property="IsSelected" Value="True"><Setter TargetName="Chrome" Property="Background" Value="{DynamicResource MenuAccent}" /><Setter Property="Foreground" Value="{DynamicResource Metro81.OnAccentInk}" /></Trigger>
+          <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="{DynamicResource Metro81.DisabledRowOpacity}" /></Trigger>
         </ControlTemplate.Triggers>
       </ControlTemplate>
     </Setter.Value></Setter>
@@ -599,9 +613,9 @@
         <ControlTemplate.Triggers>
           <DataTrigger Binding="{Binding View, RelativeSource={RelativeSource AncestorType=ListView}}" Value="{x:Null}"><Setter TargetName="Cells" Property="Visibility" Value="Collapsed" /><Setter TargetName="PlainContent" Property="Visibility" Value="Visible" /></DataTrigger>
           <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Chrome" Property="Background" Value="{DynamicResource Metro81.HoverSurface}" /></Trigger>
-          <Trigger Property="IsSelected" Value="True"><Setter TargetName="Chrome" Property="Background" Value="{DynamicResource MenuAccent}" /><Setter Property="Foreground" Value="White" /></Trigger>
+          <Trigger Property="IsSelected" Value="True"><Setter TargetName="Chrome" Property="Background" Value="{DynamicResource MenuAccent}" /><Setter Property="Foreground" Value="{DynamicResource Metro81.OnAccentInk}" /></Trigger>
           <Trigger Property="IsKeyboardFocusWithin" Value="True"><Setter TargetName="Chrome" Property="BorderBrush" Value="{DynamicResource Metro81.Ink}" /></Trigger>
-          <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.45" /></Trigger>
+          <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="{DynamicResource Metro81.DisabledRowOpacity}" /></Trigger>
         </ControlTemplate.Triggers>
       </ControlTemplate>
     </Setter.Value></Setter>
@@ -644,11 +658,13 @@
     </Style.Triggers>
   </Style>
   <Style x:Key="Metro81.ProgressBar" TargetType="ProgressBar">
-    <Setter Property="Foreground" Value="{DynamicResource MenuAccent}" /><Setter Property="Background" Value="{DynamicResource Metro81.HoverSurface}" /><Setter Property="Height" Value="8" />
+    <Setter Property="Foreground" Value="{DynamicResource Metro81.SliderFill}" /><Setter Property="Background" Value="{DynamicResource Metro81.ProgressTrack}" /><Setter Property="Height" Value="8" />
     <Setter Property="local:MetroControlStyles81.AnimationsEnabled" Value="{DynamicResource {x:Static SystemParameters.ClientAreaAnimationKey}}" />
     <Setter Property="Template"><Setter.Value>
       <ControlTemplate TargetType="ProgressBar">
         <Grid x:Name="PART_Track" Background="{TemplateBinding Background}" ClipToBounds="True">
+          <!-- The track's outline (Dark rest only; transparent otherwise), under the filled part. -->
+          <Border x:Name="TrackEdge" BorderBrush="{DynamicResource Metro81.SliderTrackBorder}" BorderThickness="1" />
           <Border x:Name="PART_Indicator" Background="{TemplateBinding Foreground}" HorizontalAlignment="Left" />
           <UniformGrid x:Name="Dots" Rows="1" Width="90" HorizontalAlignment="Center" Visibility="Collapsed">
             <Ellipse Width="5" Height="5" Fill="{TemplateBinding Foreground}" /><Ellipse Width="5" Height="5" Fill="{TemplateBinding Foreground}" /><Ellipse Width="5" Height="5" Fill="{TemplateBinding Foreground}" /><Ellipse Width="5" Height="5" Fill="{TemplateBinding Foreground}" /><Ellipse Width="5" Height="5" Fill="{TemplateBinding Foreground}" />
@@ -656,7 +672,7 @@
           </UniformGrid>
         </Grid>
         <ControlTemplate.Triggers>
-          <Trigger Property="IsIndeterminate" Value="True"><Setter TargetName="PART_Indicator" Property="Visibility" Value="Collapsed" /><Setter TargetName="PART_Track" Property="Background" Value="Transparent" /><Setter TargetName="Dots" Property="Visibility" Value="Visible" /></Trigger>
+          <Trigger Property="IsIndeterminate" Value="True"><Setter TargetName="PART_Indicator" Property="Visibility" Value="Collapsed" /><Setter TargetName="PART_Track" Property="Background" Value="Transparent" /><Setter TargetName="TrackEdge" Property="Visibility" Value="Collapsed" /><Setter TargetName="Dots" Property="Visibility" Value="Visible" /></Trigger>
           <MultiDataTrigger>
             <MultiDataTrigger.Conditions>
               <Condition Binding="{Binding IsIndeterminate, RelativeSource={RelativeSource TemplatedParent}}" Value="True" /><Condition Binding="{Binding IsVisible, RelativeSource={RelativeSource TemplatedParent}}" Value="True" /><Condition Binding="{Binding IsEnabled, RelativeSource={RelativeSource TemplatedParent}}" Value="True" /><Condition Binding="{Binding Path=(local:MetroControlStyles81.AnimationsEnabled), RelativeSource={RelativeSource TemplatedParent}}" Value="True" />
@@ -664,7 +680,7 @@
             <MultiDataTrigger.EnterActions><BeginStoryboard Name="Moving"><Storyboard RepeatBehavior="Forever"><DoubleAnimation Storyboard.TargetName="Motion" Storyboard.TargetProperty="X" From="-70" To="70" Duration="0:0:1.6" AutoReverse="True" /></Storyboard></BeginStoryboard></MultiDataTrigger.EnterActions>
             <MultiDataTrigger.ExitActions><RemoveStoryboard BeginStoryboardName="Moving" /></MultiDataTrigger.ExitActions>
           </MultiDataTrigger>
-          <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.4" /></Trigger>
+          <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="{DynamicResource Metro81.DisabledOpacity}" /></Trigger>
         </ControlTemplate.Triggers>
       </ControlTemplate>
     </Setter.Value></Setter>
@@ -675,36 +691,37 @@
       <ControlTemplate TargetType="Thumb">
         <Border x:Name="Chrome" Background="{DynamicResource Metro81.SliderThumbFill}" />
         <ControlTemplate.Triggers>
-          <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Chrome" Property="Background" Value="#404040" /></Trigger>
-          <Trigger Property="IsDragging" Value="True"><Setter TargetName="Chrome" Property="Background" Value="#606060" /></Trigger>
+          <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Chrome" Property="Background" Value="{DynamicResource Metro81.SliderThumbHover}" /></Trigger>
+          <Trigger Property="IsDragging" Value="True"><Setter TargetName="Chrome" Property="Background" Value="{DynamicResource Metro81.SliderThumbDrag}" /></Trigger>
           <Trigger Property="IsEnabled" Value="False"><Setter TargetName="Chrome" Property="Background" Value="{DynamicResource Metro81.Border}" /></Trigger>
         </ControlTemplate.Triggers>
       </ControlTemplate>
     </Setter.Value></Setter>
   </Style>
   <Style x:Key="Metro81.SliderPage" TargetType="RepeatButton" BasedOn="{StaticResource Metro81.ScrollPage}">
-    <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="RepeatButton"><Border Background="Transparent"><Border Height="8" VerticalAlignment="Center" Background="{TemplateBinding Background}" /></Border></ControlTemplate></Setter.Value></Setter>
+    <!-- The track part; the remainder's outline (BorderBrush, set by the sliders) is drawn over it and is transparent outside Dark rest. -->
+    <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="RepeatButton"><Border Background="Transparent"><Grid Height="8" VerticalAlignment="Center"><Border Background="{TemplateBinding Background}" /><Border BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" /></Grid></Border></ControlTemplate></Setter.Value></Setter>
   </Style>
   <Style x:Key="Metro81.Slider" TargetType="Slider" BasedOn="{StaticResource Metro81.Control}">
-    <Setter Property="MinHeight" Value="40" /><Setter Property="Background" Value="{DynamicResource Metro81.Border}" /><Setter Property="Foreground" Value="{DynamicResource MenuAccent}" />
+    <Setter Property="MinHeight" Value="40" /><Setter Property="Background" Value="{DynamicResource Metro81.SliderTrack}" /><Setter Property="Foreground" Value="{DynamicResource Metro81.SliderFill}" />
     <Setter Property="Template"><Setter.Value>
       <ControlTemplate TargetType="Slider">
         <Grid Background="Transparent">
           <Track x:Name="PART_Track" Orientation="Horizontal" IsDirectionReversed="{TemplateBinding IsDirectionReversed}">
             <Track.DecreaseRepeatButton><RepeatButton Command="Slider.DecreaseLarge" Style="{StaticResource Metro81.SliderPage}" Background="{TemplateBinding Foreground}" /></Track.DecreaseRepeatButton>
-            <Track.IncreaseRepeatButton><RepeatButton Command="Slider.IncreaseLarge" Style="{StaticResource Metro81.SliderPage}" Background="{TemplateBinding Background}" /></Track.IncreaseRepeatButton>
+            <Track.IncreaseRepeatButton><RepeatButton Command="Slider.IncreaseLarge" Style="{StaticResource Metro81.SliderPage}" Background="{TemplateBinding Background}" BorderBrush="{DynamicResource Metro81.SliderTrackBorder}" BorderThickness="1" /></Track.IncreaseRepeatButton>
             <Track.Thumb><Thumb x:Name="PART_SliderThumb" Style="{StaticResource Metro81.SliderThumb}" /></Track.Thumb>
           </Track>
           <!-- Pattern 19: a small value box appears above the thumb while dragging (the "75" in the reference). -->
           <Popup IsOpen="{Binding IsDragging, ElementName=PART_SliderThumb, Mode=OneWay}" PlacementTarget="{Binding ElementName=PART_SliderThumb}"
                  Placement="Top" VerticalOffset="-6" AllowsTransparency="True" Focusable="False" IsHitTestVisible="False">
-            <Border Background="White" BorderBrush="{DynamicResource Metro81.FieldBorder}" BorderThickness="1" Padding="8,3">
-              <TextBlock Foreground="Black" FontSize="14" FontFamily="Segoe UI"
+            <Border Background="{DynamicResource Metro81.ValuePopupSurface}" BorderBrush="{DynamicResource Metro81.FieldBorder}" BorderThickness="1" Padding="8,3">
+              <TextBlock Foreground="{DynamicResource Metro81.ValuePopupInk}" FontSize="14" FontFamily="Segoe UI"
                          Text="{Binding Value, RelativeSource={RelativeSource AncestorType=Slider}, StringFormat={}{0:0}}" />
             </Border>
           </Popup>
         </Grid>
-        <ControlTemplate.Triggers><Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.4" /></Trigger></ControlTemplate.Triggers>
+        <ControlTemplate.Triggers><Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="{DynamicResource Metro81.DisabledOpacity}" /></Trigger></ControlTemplate.Triggers>
       </ControlTemplate>
     </Setter.Value></Setter>
   </Style>
@@ -712,7 +729,7 @@
     <Setter Property="Width" Value="10" /><Setter Property="Height" Value="24" />
     <Setter Property="Template"><Setter.Value>
       <ControlTemplate TargetType="Thumb">
-        <Border x:Name="Chrome" Background="White" />
+        <Border x:Name="Chrome" Background="{DynamicResource Metro81.SliderDarkThumb}" />
         <ControlTemplate.Triggers>
           <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Chrome" Property="Background" Value="#E0E0E0" /></Trigger>
           <Trigger Property="IsDragging" Value="True"><Setter TargetName="Chrome" Property="Background" Value="#C8C8C8" /></Trigger>
@@ -724,24 +741,24 @@
   <!-- The pattern slider for DARK surfaces (charms settings, flyouts): accent fill, translucent-white remainder,
        white block thumb, same drag value box. -->
   <Style x:Key="Metro81.SliderDark" TargetType="Slider" BasedOn="{StaticResource Metro81.Control}">
-    <Setter Property="MinHeight" Value="32" /><Setter Property="Background" Value="#66FFFFFF" /><Setter Property="Foreground" Value="{DynamicResource MenuAccent}" />
+    <Setter Property="MinHeight" Value="32" /><Setter Property="Background" Value="{DynamicResource Metro81.SliderDarkTrack}" /><Setter Property="Foreground" Value="{DynamicResource Metro81.SliderFill}" />
     <Setter Property="Template"><Setter.Value>
       <ControlTemplate TargetType="Slider">
         <Grid Background="Transparent">
           <Track x:Name="PART_Track" Orientation="Horizontal" IsDirectionReversed="{TemplateBinding IsDirectionReversed}">
             <Track.DecreaseRepeatButton><RepeatButton Command="Slider.DecreaseLarge" Style="{StaticResource Metro81.SliderPage}" Background="{TemplateBinding Foreground}" /></Track.DecreaseRepeatButton>
-            <Track.IncreaseRepeatButton><RepeatButton Command="Slider.IncreaseLarge" Style="{StaticResource Metro81.SliderPage}" Background="{TemplateBinding Background}" /></Track.IncreaseRepeatButton>
+            <Track.IncreaseRepeatButton><RepeatButton Command="Slider.IncreaseLarge" Style="{StaticResource Metro81.SliderPage}" Background="{TemplateBinding Background}" BorderBrush="{DynamicResource Metro81.SliderTrackBorder}" BorderThickness="1" /></Track.IncreaseRepeatButton>
             <Track.Thumb><Thumb x:Name="PART_SliderThumb" Style="{StaticResource Metro81.SliderThumbDark}" /></Track.Thumb>
           </Track>
           <Popup IsOpen="{Binding IsDragging, ElementName=PART_SliderThumb, Mode=OneWay}" PlacementTarget="{Binding ElementName=PART_SliderThumb}"
                  Placement="Top" VerticalOffset="-6" AllowsTransparency="True" Focusable="False" IsHitTestVisible="False">
-            <Border Background="White" BorderBrush="{DynamicResource Metro81.FieldBorder}" BorderThickness="1" Padding="8,3">
-              <TextBlock Foreground="Black" FontSize="14" FontFamily="Segoe UI"
+            <Border Background="{DynamicResource Metro81.ValuePopupSurface}" BorderBrush="{DynamicResource Metro81.FieldBorder}" BorderThickness="1" Padding="8,3">
+              <TextBlock Foreground="{DynamicResource Metro81.ValuePopupInk}" FontSize="14" FontFamily="Segoe UI"
                          Text="{Binding Value, RelativeSource={RelativeSource AncestorType=Slider}, StringFormat={}{0:0}}" />
             </Border>
           </Popup>
         </Grid>
-        <ControlTemplate.Triggers><Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.4" /></Trigger></ControlTemplate.Triggers>
+        <ControlTemplate.Triggers><Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="{DynamicResource Metro81.DisabledOpacity}" /></Trigger></ControlTemplate.Triggers>
       </ControlTemplate>
     </Setter.Value></Setter>
   </Style>
@@ -824,7 +841,7 @@
     <Setter Property="Content" Value="&#x2212;" /><Setter Property="FontSize" Value="24" /><Setter Property="AutomationProperties.Name" Value="Zoom out" />
   </Style>
   <Style x:Key="Metro81.Hyperlink" TargetType="Hyperlink">
-    <Setter Property="Foreground" Value="{DynamicResource MenuAccent}" /><Setter Property="TextDecorations" Value="Underline" />
-    <Style.Triggers><Trigger Property="IsMouseOver" Value="True"><Setter Property="Foreground" Value="{DynamicResource MenuAccentPressed}" /></Trigger><Trigger Property="IsEnabled" Value="False"><Setter Property="Foreground" Value="{DynamicResource Metro81.DisabledInk}" /></Trigger></Style.Triggers>
+    <Setter Property="Foreground" Value="{DynamicResource Metro81.LinkInk}" /><Setter Property="TextDecorations" Value="Underline" />
+    <Style.Triggers><Trigger Property="IsMouseOver" Value="True"><Setter Property="Foreground" Value="{DynamicResource Metro81.LinkInkHover}" /></Trigger><Trigger Property="IsEnabled" Value="False"><Setter Property="Foreground" Value="{DynamicResource Metro81.DisabledInk}" /></Trigger></Style.Triggers>
   </Style>
 </ResourceDictionary>

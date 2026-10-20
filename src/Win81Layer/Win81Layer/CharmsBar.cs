@@ -111,7 +111,7 @@ public partial class CharmsBar : Window, IComponentConnector
 		ShellSkin.ApplyGlass(this);
 		try
 		{
-			StartCharm.Foreground = new SolidColorBrush(StartAccent.Color());
+			ApplyCharmInk();
 		}
 		catch
 		{
@@ -184,7 +184,7 @@ public partial class CharmsBar : Window, IComponentConnector
 			Show();
 			BarRoot.Background = BarBackground();
 			ShellSkin.ApplyGlass(this);
-			try { StartCharm.Foreground = new SolidColorBrush(StartAccent.Color()); } catch { }
+			try { ApplyCharmInk(); } catch { }
 			PositionCharmsOnCursorScreen();
 			BarRoot.RenderTransform = _slide;
 			_slide.BeginAnimation(TranslateTransform.XProperty, null);
@@ -293,8 +293,24 @@ public partial class CharmsBar : Window, IComponentConnector
 		}
 	}
 
+	// The window's own Charm.Ink (white, declared in the XAML), kept so Normal puts back the very same brush.
+	private object _charmInkNormal;
+
+	// The glyphs and labels: white normally, the soft Dark rest ink while Dark rest is on. The Start charm takes the
+	// accent, and in Dark rest the accent line (the muted accent alone is too faint on the black strip).
+	private void ApplyCharmInk()
+	{
+		_charmInkNormal ??= base.Resources["Charm.Ink"];
+		object want = DarkRest.Visuals ? DarkRestPalette.Ink : _charmInkNormal;
+		if (want != null && !ReferenceEquals(base.Resources["Charm.Ink"], want))
+		{
+			base.Resources["Charm.Ink"] = want;
+		}
+		StartCharm.Foreground = DarkRest.Visuals ? DarkRestPalette.AccentLine : new SolidColorBrush(StartAccent.Color());
+	}
+
 	// Win7-Aero: a translucent smoked-glass strip (the wallpaper shows through); Win8.1/native: an opaque flat strip.
-	// Dark rest uses a slightly cooler, darker slate in both.
+	// Dark rest uses its near-black panel colour in both.
 	private static SolidColorBrush BarBackground()
 	{
 		System.Windows.Media.Color c;
@@ -319,7 +335,7 @@ public partial class CharmsBar : Window, IComponentConnector
 		BarRoot.Background = BarBackground();
 		try
 		{
-			StartCharm.Foreground = new SolidColorBrush(StartAccent.Color());
+			ApplyCharmInk();
 		}
 		catch
 		{

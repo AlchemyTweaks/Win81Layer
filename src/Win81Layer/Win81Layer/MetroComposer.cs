@@ -315,6 +315,12 @@ internal static class MetroComposer
 			Name = "bd"
 		};
 		bd.SetValue(Border.BackgroundProperty, new SolidColorBrush(Color.FromArgb(20, byte.MaxValue, byte.MaxValue, byte.MaxValue)));
+		if (DarkRest.Visuals)
+		{
+			// Dark rest: the faint fill hardly differs from the dark card, so the button keeps the control outline
+			bd.SetValue(Border.BorderBrushProperty, DarkRestPalette.Boundary);
+			bd.SetValue(Border.BorderThicknessProperty, new Thickness(1.0));
+		}
 		FrameworkElementFactory cp = new FrameworkElementFactory(typeof(ContentPresenter));
 		cp.SetValue(FrameworkElement.MarginProperty, new TemplateBindingExtension(Control.PaddingProperty));
 		cp.SetValue(FrameworkElement.VerticalAlignmentProperty, VerticalAlignment.Center);

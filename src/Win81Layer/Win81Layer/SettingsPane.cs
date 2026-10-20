@@ -531,7 +531,7 @@ public sealed class SettingsPane : Window
 					}
 					if (_brightTile != null)
 					{
-						_brightTile.Opacity = ((s == "Unavailable") ? 0.5 : 1.0);
+						_brightTile.Opacity = ((s == "Unavailable") ? UnavailableOpacity : 1.0);
 					}
 				}, Array.Empty<object>());
 			});
@@ -638,6 +638,13 @@ public sealed class SettingsPane : Window
 	}
 
 	private void Build()
+	{
+		BuildContent();
+		// Dark rest: the pane's white text and glyphs take the soft ink (and white again with Normal).
+		DarkRestPalette.RetintWhite(_root, DarkRest.Visuals);
+	}
+
+	private void BuildContent()
 	{
 		Grid grid = new Grid
 		{
@@ -843,7 +850,8 @@ public sealed class SettingsPane : Window
 			Property = UIElement.IsMouseOverProperty,
 			Value = true
 		};
-		hover.Setters.Add(new Setter(Border.BackgroundProperty, new SolidColorBrush(System.Windows.Media.Color.FromArgb(12, byte.MaxValue, byte.MaxValue, byte.MaxValue)), "bd"));
+		// the hover wash (white at alpha 12; a stronger one in Dark rest, which writes Metro81.PaneHover12)
+		hover.Setters.Add(new Setter(Border.BackgroundProperty, new DynamicResourceExtension("Metro81.PaneHover12"), "bd"));
 		t.Triggers.Add(hover);
 		Trigger press = new Trigger
 		{
@@ -944,7 +952,7 @@ public sealed class SettingsPane : Window
 			(TextBlock, TextBlock, System.Windows.Controls.Button, System.Windows.Controls.Image) t4 = AddQuick(host, row, col, G(59142), brLabel, OnBrightness);
 			_brightLabelTb = t4.Item2;
 			_brightTile = t4.Item3;
-			_brightTile.Opacity = ((brLabel == "Unavailable") ? 0.5 : 1.0);
+			_brightTile.Opacity = ((brLabel == "Unavailable") ? UnavailableOpacity : 1.0);
 			break;
 		}
 		case "notifications":
@@ -1973,14 +1981,25 @@ public sealed class SettingsPane : Window
 
 	private void OnPower()
 	{
+		ShowFlyout(BuildPowerFlyout(), _powerTile, PopupAnimation.Slide);
+	}
+
+	// A quick tile that is unavailable (brightness on external displays): faded, though in Dark rest only so far that
+	// its label keeps 4.5:1 on the black pane.
+	private static double UnavailableOpacity => DarkRest.Visuals ? 0.8 : 0.5;
+
+	private Border BuildPowerFlyout()
+	{
+		// Dark rest: the popup fill with the control outline (3:1 or more on the pane), so the flyout's extent shows.
+		bool rest = DarkRest.Visuals;
 		StackPanel panel = new StackPanel
 		{
-			Background = _root.Background
+			Background = rest ? DarkRestPalette.Popup : _root.Background
 		};
 		Border wrap = new Border
 		{
-			Background = _root.Background,
-			BorderBrush = new SolidColorBrush(System.Windows.Media.Color.FromArgb(85, byte.MaxValue, byte.MaxValue, byte.MaxValue)),
+			Background = rest ? DarkRestPalette.Popup : _root.Background,
+			BorderBrush = rest ? DarkRestPalette.Boundary : new SolidColorBrush(System.Windows.Media.Color.FromArgb(85, byte.MaxValue, byte.MaxValue, byte.MaxValue)),
 			BorderThickness = new Thickness(1.0),
 			Child = panel,
 			MinWidth = 180.0
@@ -2003,7 +2022,41 @@ public sealed class SettingsPane : Window
 				Launch("shutdown.exe", "/r /t 0");
 			});
 		}));
-		ShowFlyout(wrap, _powerTile, PopupAnimation.Slide);
+		return wrap;
+	}
+
+	// Dark rest: a flyout's white text and glyphs (volume, brightness, power) in the soft ink on the black pane.
+	private static void PrepareFlyout(UIElement content)
+	{
+		if (DarkRest.Visuals)
+		{
+			DarkRestPalette.RetintWhite(content, rest: true);
+		}
+	}
+
+	// QA: the power flyout as it opens, drawn offscreen (nothing is opened or run).
+	internal void QaRenderPowerFlyout(string outPath)
+	{
+		_root.Background = PaneBg();
+		Border wrap = BuildPowerFlyout();
+		PrepareFlyout(wrap);
+		Border host = new Border
+		{
+			Background = _root.Background,
+			Padding = new Thickness(16.0),
+			Child = wrap
+		};
+		host.Measure(new System.Windows.Size(double.PositiveInfinity, double.PositiveInfinity));
+		host.Arrange(new Rect(host.DesiredSize));
+		host.UpdateLayout();
+		int w = Math.Max(1, (int)Math.Ceiling(host.ActualWidth));
+		int h = Math.Max(1, (int)Math.Ceiling(host.ActualHeight));
+		RenderTargetBitmap rtb = new RenderTargetBitmap(w, h, 96.0, 96.0, PixelFormats.Pbgra32);
+		rtb.Render(host);
+		PngBitmapEncoder enc = new PngBitmapEncoder();
+		enc.Frames.Add(BitmapFrame.Create(rtb));
+		using FileStream fs = File.Create(outPath);
+		enc.Save(fs);
 	}
 
 	private System.Windows.Controls.Button PowerItem(string text, Action onClick)
@@ -2044,6 +2097,7 @@ public sealed class SettingsPane : Window
 		_flyout.PopupAnimation = anim;
 		_flyout.HorizontalOffset = 0.0;
 		_flyout.VerticalOffset = ((anchor != null) ? (-6) : 0);
+		PrepareFlyout(content);
 		_flyout.Child = content;
 		_flyout.IsOpen = true;
 	}
@@ -2094,7 +2148,8 @@ public sealed class SettingsPane : Window
 			Property = UIElement.IsMouseOverProperty,
 			Value = true
 		};
-		hover.Setters.Add(new Setter(Border.BackgroundProperty, new SolidColorBrush(System.Windows.Media.Color.FromArgb(18, byte.MaxValue, byte.MaxValue, byte.MaxValue)), "bd"));
+		// the hover wash (white at alpha 18; a stronger one in Dark rest, which writes Metro81.PaneHover18)
+		hover.Setters.Add(new Setter(Border.BackgroundProperty, new DynamicResourceExtension("Metro81.PaneHover18"), "bd"));
 		t.Triggers.Add(hover);
 		Trigger press = new Trigger
 		{

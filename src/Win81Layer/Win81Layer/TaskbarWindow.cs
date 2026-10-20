@@ -966,7 +966,7 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 			// Win7-Aero shell skin: translucent smoked-glass taskbar (wallpaper shows through). Uses a plain alpha
 			// WPF brush, NOT WCA acrylic — the acrylic backdrop leaks a stuck DWM region that outlives the process.
 			AcrylicGlass.Clear(tbHwnd);
-			// Dark rest keeps its calm slate here too.
+			// Dark rest keeps its opaque black here too.
 			base.Background = DarkRest.Visuals ? TaskbarTheme.CurrentBackground() : new SolidColorBrush(System.Windows.Media.Color.FromArgb(184, 22, 22, 28));
 		}
 		else
@@ -1015,7 +1015,7 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 			if (glass)
 			{
 				System.Windows.Media.Color t = ShellSkin.AccentTone(0.30);
-				base.Resources["TB.FlyoutBg"] = Fz(System.Windows.Media.Color.FromArgb(0xC0, t.R, t.G, t.B));
+				base.Resources["TB.FlyoutBg"] = DarkRest.Visuals ? Fz(DarkRestPalette.FlyoutBg) : Fz(System.Windows.Media.Color.FromArgb(0xC0, t.R, t.G, t.B));
 				// Win7 "pearl" gel: a glossy vertical accent gradient (bright top highlight → glossy mid split → medium bottom).
 				base.Resources["TB.BtnHover"] = FzGel(sc2, 0x66, 0x33, 0x55, 0x40);
 				base.Resources["TB.BtnActive"] = FzGel(sc2, 0x80, 0x50, 0x74, 0x5A);
@@ -1027,7 +1027,7 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 			}
 			else
 			{
-				base.Resources["TB.FlyoutBg"] = Fz(System.Windows.Media.Color.FromArgb(0xF2, 0x1A, 0x1A, 0x1F));
+				base.Resources["TB.FlyoutBg"] = DarkRest.Visuals ? Fz(DarkRestPalette.FlyoutBg) : Fz(System.Windows.Media.Color.FromArgb(0xF2, 0x1A, 0x1A, 0x1F));
 				base.Resources["TB.BtnHover"] = Fz(System.Windows.Media.Color.FromArgb(0x1A, byte.MaxValue, byte.MaxValue, byte.MaxValue));
 				base.Resources["TB.BtnActive"] = Fz(System.Windows.Media.Color.FromArgb(0x30, byte.MaxValue, byte.MaxValue, byte.MaxValue));
 				base.Resources["TB.BtnPressed"] = Fz(System.Windows.Media.Color.FromArgb(0x55, byte.MaxValue, byte.MaxValue, byte.MaxValue));
@@ -1035,20 +1035,149 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 				base.Resources["TB.GlyphHover"] = Fz(System.Windows.Media.Color.FromArgb(0x22, byte.MaxValue, byte.MaxValue, byte.MaxValue));
 				base.Resources["TB.GlyphPressed"] = Fz(System.Windows.Media.Color.FromArgb(0x33, byte.MaxValue, byte.MaxValue, byte.MaxValue));
 				base.Resources["TB.BarEdge"] = Fz(System.Windows.Media.Color.FromArgb(0x22, byte.MaxValue, byte.MaxValue, byte.MaxValue));
+				if (DarkRest.Visuals)
+				{
+					// Dark rest on the opaque black bar: the foreground app's button a step lighter, so it stands apart
+					// from a running one by its fill as well as by its indicator line
+					base.Resources["TB.BtnActive"] = Fz(DarkRestBtnActive);
+				}
+			}
+			if (DarkRest.Visuals)
+			{
+				// Dark rest: the bar's top edge stays just above black instead of a light seam over the black desktop
+				base.Resources["TB.BarEdge"] = Fz(DarkRestBarEdge);
 			}
 		}
 		catch
 		{
 		}
+		ApplyTaskbarInk();
 		ApplyClockCalendarTheme();
 		ApplySoundFlyoutTheme();
 		ApplyNetworkFlyoutTheme();
 		ApplyStartButtonTheme();
-		// The flyouts' scrollbars: quiet blue-grey while Dark rest is on, the normal dark rail otherwise.
+		// The flyouts' scrollbars: a quiet grey thumb on black while Dark rest is on, the normal dark rail otherwise.
 		DarkRestPalette.RemoveRestResources(base.Resources);
 		if (DarkRest.Visuals)
 		{
 			DarkRestPalette.WriteScrollBrushes(base.Resources);
+		}
+	}
+
+	// The window's own TB.Ink and TB.DayInk (declared in the XAML), kept so Normal puts back the very same brushes.
+	private object _tbInkNormal;
+
+	private object _tbDayInkNormal;
+
+	private object _tbChevronInkNormal;
+
+	// The other inks of the XAML (TB.GlyphInk and its siblings), kept the same way.
+	private readonly System.Collections.Generic.Dictionary<string, object> _tbInksNormal = new System.Collections.Generic.Dictionary<string, object>(StringComparer.Ordinal);
+
+	private static readonly System.Windows.Media.Brush RestInkSoft = Fz(System.Windows.Media.Color.FromArgb(0xBB, 0xDC, 0xDC, 0xDC));
+
+	private static readonly object RestSystemGlyphOpacity = DarkRestPalette.GlyphOpacity;
+
+	private static readonly object NormalSystemGlyphOpacity = 1.0;
+
+	private static readonly object BoxedTrue = true;
+
+	private static readonly object BoxedFalse = false;
+
+	// The clock and its flyouts use TB.Ink (and the calendar days TB.DayInk): white normally, the soft Dark rest ink
+	// while Dark rest is on.
+	private void ApplyTaskbarInk()
+	{
+		try
+		{
+			_tbInkNormal ??= base.Resources["TB.Ink"];
+			_tbDayInkNormal ??= base.Resources["TB.DayInk"];
+			_tbChevronInkNormal ??= base.Resources["TB.ChevronInk"];
+			bool rest = DarkRest.Visuals;
+			SwapInk("TB.Ink", rest ? DarkRestPalette.Ink : _tbInkNormal);
+			SwapInk("TB.DayInk", rest ? DarkRestPalette.Ink : _tbDayInkNormal);
+			SwapInk("TB.ChevronInk", rest ? DarkRestPalette.Ink : _tbChevronInkNormal);
+			// The tray glyphs and running-app labels and the volume headers in the soft ink, the chevron of a toolbar
+			// softer still, the address box outlined in the control grey, the selected calendar day in the ink for
+			// accent fills, and the volume slider's track dark with an outline (its fill keeps 3:1 against it).
+			foreach ((string key, System.Windows.Media.Brush restInk) in new (string, System.Windows.Media.Brush)[7]
+			{
+				("TB.GlyphInk", DarkRestPalette.Ink),
+				("TB.HeadInk", DarkRestPalette.Ink),
+				("TB.InkSoft", RestInkSoft),
+				("TB.AddressBorder", DarkRestPalette.Boundary),
+				("TB.DaySelectedInk", DarkRestPalette.InkOnAccent),
+				("TB.SliderTrack", DarkRestPalette.SliderTrackBrush),
+				("TB.SliderTrackBorder", DarkRestPalette.Boundary)
+			})
+			{
+				if (!_tbInksNormal.ContainsKey(key) && base.Resources.Contains(key))
+				{
+					_tbInksNormal[key] = base.Resources[key];
+				}
+				if (rest || _tbInksNormal.ContainsKey(key))
+				{
+					SwapInk(key, rest ? restInk : _tbInksNormal[key]);
+				}
+			}
+			// the launcher's own tray glyphs (network, volume, notifications) at the soft ink's brightness, and the
+			// outline for opaque dark app icons on the black bar
+			SwapInk("TB.SystemGlyphOpacity", rest ? RestSystemGlyphOpacity : NormalSystemGlyphOpacity);
+			SwapInk("TB.RestIcons", rest ? BoxedTrue : BoxedFalse);
+			// the white hero pictures of the network and volume flyouts at the soft ink's brightness
+			double opacity = rest ? DarkRestPalette.GlyphOpacity : 1.0;
+			NetHeroImage.Opacity = opacity;
+			VolumeHeroImage.Opacity = opacity;
+		}
+		catch
+		{
+		}
+	}
+
+	private void SwapInk(string key, object want)
+	{
+		if (want != null && !ReferenceEquals(base.Resources[key], want))
+		{
+			base.Resources[key] = want;
+		}
+	}
+
+	// Dark rest's flyout bodies: near-black, top-left to bottom-right, like the normal gradient.
+	private static LinearGradientBrush RestFlyoutBody()
+	{
+		LinearGradientBrush body = new LinearGradientBrush
+		{
+			StartPoint = new System.Windows.Point(0.0, 0.0),
+			EndPoint = new System.Windows.Point(1.0, 1.0)
+		};
+		body.GradientStops.Add(new GradientStop(DarkRestPalette.PopupColor, 0.0));
+		body.GradientStops.Add(new GradientStop(DarkRestPalette.PanelColor, 1.0));
+		((Freezable)body).Freeze();
+		return body;
+	}
+
+	private static readonly SolidColorBrush RestFlyoutHeader = Fz(DarkRestPalette.FieldColor);
+
+	private static readonly SolidColorBrush RestFlyoutFooter = Fz(DarkRestPalette.PanelColor);
+
+	private static readonly SolidColorBrush RestFlyoutBorder = Fz(DarkRestPalette.PopupEdgeColor);
+
+	private static readonly SolidColorBrush RestFlyoutLink = Fz(DarkRestPalette.AccentInkColor);
+
+	private static readonly SolidColorBrush RestFlyoutSelection = Fz(DarkRestPalette.AccentFillColor);
+
+	// The normal SoundTone colour (without the Dark rest rule), for tiles that Dark rest mutes.
+	private static System.Windows.Media.Color NormalSoundTone(System.Windows.Media.Color seed, double hueShift, double saturationFloor, double lightness)
+	{
+		bool rest = s_restTones;
+		s_restTones = false;
+		try
+		{
+			return SoundTone(seed, hueShift, saturationFloor, lightness);
+		}
+		finally
+		{
+			s_restTones = rest;
 		}
 	}
 
@@ -1084,11 +1213,21 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		}
 	}
 
+	private static readonly System.Windows.Media.Color DarkRestBarEdge = System.Windows.Media.Color.FromRgb(0x14, 0x14, 0x14);
+
+	private static readonly System.Windows.Media.Color DarkRestBtnActive = System.Windows.Media.Color.FromRgb(0x3A, 0x3A, 0x3A);
+
 	internal static System.Windows.Media.Color StartSurfaceTone(string mode, string state)
 	{
 		if (!UsesMetroStartFrame(mode))
 		{
 			return Colors.Transparent;
+		}
+		if (state is "pressed" or "open" && DarkRest.Visuals)
+		{
+			// Dark rest: black would not show on the black bar, so the pressed and open Start button gets the neutral
+			// pressed fill
+			return DarkRestPalette.PressedColor;
 		}
 		return state is "pressed" or "open" ? Colors.Black : Colors.Transparent;
 	}
@@ -1099,6 +1238,11 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		// stays accent while Start is open (so the press-colour persists as an "active" state) and returns to white
 		// on close/leave. UpdateStartGlyphColor animates this swap over ~130ms (Micro) in both directions. Hover is
 		// intentionally left white — the button's surface already gives hover feedback.
+		// Dark rest: the soft ink at rest and the accent line while pressed or open (no pure white on the black taskbar).
+		if (DarkRest.Visuals)
+		{
+			return (pressed || open) ? DarkRestPalette.AccentLineColor : DarkRestPalette.InkColor;
+		}
 		return (pressed || open) ? accent : Colors.White;
 	}
 
@@ -1138,6 +1282,19 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 
 	private void ApplyClockCalendarPalette(System.Windows.Media.Color accent, System.Windows.Media.Color themeBase)
 	{
+		if (s_restTones)
+		{
+			// Dark rest: a near-black body, a quiet header, the popup edge and the accent family for links and today.
+			LinearGradientBrush restBody = RestFlyoutBody();
+			base.Resources["TB.ClockBackground"] = restBody;
+			base.Resources["TB.ClockHeader"] = RestFlyoutHeader;
+			base.Resources["TB.ClockBody"] = restBody;
+			base.Resources["TB.ClockFooter"] = RestFlyoutFooter;
+			base.Resources["TB.ClockBorder"] = RestFlyoutBorder;
+			base.Resources["TB.ClockLink"] = RestFlyoutLink;
+			base.Resources["TB.ClockSelection"] = RestFlyoutSelection;
+			return;
+		}
 		System.Windows.Media.Color bodyTop = SoundTone(themeBase, 0.0, 0.0, 0.23);
 		System.Windows.Media.Color bodyBottom = SoundTone(accent, 0.0, 0.0, 0.12);
 		LinearGradientBrush body = new LinearGradientBrush
@@ -1168,6 +1325,17 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 			System.Windows.Media.Color themeBase = settings.StartBgMode == "pattern"
 				? StartBackgroundFactory.Parse(settings.StartBgColor, accent)
 				: accent;
+			if (s_restTones)
+			{
+				// Dark rest: the same near-black set as the clock flyout; the tiles are muted below.
+				base.Resources["TB.SoundBackground"] = RestFlyoutBody();
+				base.Resources["TB.SoundHeader"] = RestFlyoutHeader;
+				base.Resources["TB.SoundFooter"] = RestFlyoutFooter;
+				base.Resources["TB.SoundBorder"] = RestFlyoutBorder;
+				base.Resources["TB.SoundLink"] = RestFlyoutLink;
+				ApplySoundTileTones();
+				return;
+			}
 			System.Windows.Media.Color bodyTop = SoundTone(themeBase, 0.0, 0.0, 0.24);
 			System.Windows.Media.Color bodyBottom = SoundTone(accent, 0.0, 0.0, 0.14);
 			LinearGradientBrush background = new LinearGradientBrush
@@ -1194,10 +1362,10 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 
 	// The device, app and action tiles of the volume flyout keep their fixed Metro colours; Dark rest mutes them the
 	// way it mutes the Action Center tiles. The XAML brushes are kept so they can be put back exactly.
-	private static readonly string[] SoundTileKeys = new string[10]
+	private static readonly string[] SoundTileKeys = new string[12]
 	{
 		"TB.SoundOutputDefault", "TB.SoundOutputOther", "TB.SoundInputDefault", "TB.SoundInputOther", "TB.SoundApp", "TB.SoundSystemApp",
-		"TB.SoundPlaybackTile", "TB.SoundRecordingTile", "TB.SoundSoundsTile", "TB.SoundSettingsTile"
+		"TB.SoundPlaybackTile", "TB.SoundRecordingTile", "TB.SoundSoundsTile", "TB.SoundSettingsTile", "TB.SoundRowEdgeDefault", "TB.SoundRowEdgeOther"
 	};
 
 	private Dictionary<string, object> _soundTileDefaults;
@@ -1221,6 +1389,18 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 					base.Resources[key] = Fz(DarkRestPalette.Mute(b.Color));
 				}
 			}
+			// The device rows: the default device in the selection fill, any other on a dark field with the control
+			// outline (the two fills differ by 3.6:1; muted, they were nearly the same colour).
+			base.Resources["TB.SoundOutputDefault"] = DarkRestPalette.AccentFill;
+			base.Resources["TB.SoundInputDefault"] = DarkRestPalette.AccentFill;
+			base.Resources["TB.SoundOutputOther"] = DarkRestPalette.Field;
+			base.Resources["TB.SoundInputOther"] = DarkRestPalette.Field;
+			base.Resources["TB.SoundRowEdgeDefault"] = DarkRestPalette.AccentFill;
+			base.Resources["TB.SoundRowEdgeOther"] = DarkRestPalette.Boundary;
+			// The app cards on a neutral dark fill: on the muted teal the slider's accent fill and its track outline
+			// hardly stood out (2.1:1 and 1.3:1); here they keep 5:1 and 3:1.
+			base.Resources["TB.SoundApp"] = DarkRestPalette.Hover;
+			base.Resources["TB.SoundSystemApp"] = DarkRestPalette.Hover;
 		}
 		else if (_soundTileDefaults != null)
 		{
@@ -1251,6 +1431,20 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 
 	private void ApplyNetworkFlyoutPalette(System.Windows.Media.Color accent, System.Windows.Media.Color themeBase)
 	{
+		if (s_restTones)
+		{
+			// Dark rest: the near-black set, a quiet state banner and the normal action tiles muted.
+			base.Resources["TB.NetworkBackground"] = RestFlyoutBody();
+			base.Resources["TB.NetworkHeader"] = RestFlyoutHeader;
+			base.Resources["TB.NetworkFooter"] = RestFlyoutFooter;
+			base.Resources["TB.NetworkBorder"] = RestFlyoutBorder;
+			base.Resources["TB.NetworkLink"] = RestFlyoutLink;
+			base.Resources["TB.NetworkState"] = RestFlyoutHeader;
+			base.Resources["TB.NetworkWifiTile"] = Fz(DarkRestPalette.Mute(NormalSoundTone(accent, 0.0, 0.60, 0.49)));
+			base.Resources["TB.NetworkConnectionsTile"] = Fz(DarkRestPalette.Mute(NormalSoundTone(accent, 0.02, 0.56, 0.39)));
+			base.Resources["TB.NetworkTroubleshootTile"] = Fz(DarkRestPalette.Mute(NormalSoundTone(accent, 0.09, 0.58, 0.48)));
+			return;
+		}
 		System.Windows.Media.Color bodyTop = SoundTone(themeBase, 0.0, 0.0, 0.25);
 		System.Windows.Media.Color bodyBottom = SoundTone(accent, 0.0, 0.0, 0.13);
 		LinearGradientBrush background = new LinearGradientBrush
@@ -5878,8 +6072,13 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 			return;
 		}
 
+		// Dark rest: the default device sits in the selection fill with the ink for accent fills, the others on a dark field
+		// with soft ink (their outline comes from TB.SoundRowEdgeOther), so the chosen device reads apart from the rest.
+		bool rest = DarkRest.Visuals;
 		foreach (AudioDevice d in devices)
 		{
+			System.Windows.Media.Brush rowInk = !rest ? System.Windows.Media.Brushes.White : (d.IsDefault ? DarkRestPalette.InkOnAccent : DarkRestPalette.Ink);
+			System.Windows.Media.Brush rowInk2 = !rest ? new SolidColorBrush(System.Windows.Media.Color.FromArgb(190, 255, 255, 255)) : (d.IsDefault ? DarkRestPalette.InkOnAccent : DarkRestPalette.Ink2);
 			Grid content = new Grid();
 			content.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(50.0) });
 			content.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.0) });
@@ -5912,7 +6111,7 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 					Text = char.ConvertFromUtf32(capture ? 59168 : 59239),
 					FontFamily = new System.Windows.Media.FontFamily("Segoe MDL2 Assets"),
 					FontSize = 24.0,
-					Foreground = System.Windows.Media.Brushes.White,
+					Foreground = rowInk,
 					HorizontalAlignment = System.Windows.HorizontalAlignment.Center,
 					VerticalAlignment = VerticalAlignment.Center
 				};
@@ -5934,7 +6133,7 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 			labels.Children.Add(new TextBlock
 			{
 				Text = d.Name,
-				Foreground = System.Windows.Media.Brushes.White,
+				Foreground = rowInk,
 				FontFamily = new System.Windows.Media.FontFamily("Segoe UI"),
 				FontSize = 12.0,
 				TextTrimming = TextTrimming.CharacterEllipsis
@@ -5942,7 +6141,7 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 			labels.Children.Add(new TextBlock
 			{
 				Text = d.IsDefault ? "Default device" : "Select device",
-				Foreground = new SolidColorBrush(System.Windows.Media.Color.FromArgb(190, 255, 255, 255)),
+				Foreground = rowInk2,
 				FontFamily = new System.Windows.Media.FontFamily("Segoe UI"),
 				FontSize = 10.5,
 				Margin = new Thickness(0.0, 1.0, 0.0, 0.0)
@@ -5952,7 +6151,7 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 			TextBlock arrow = new TextBlock
 			{
 				Text = "›",
-				Foreground = System.Windows.Media.Brushes.White,
+				Foreground = rowInk,
 				FontFamily = new System.Windows.Media.FontFamily("Segoe UI"),
 				FontSize = 22.0,
 				VerticalAlignment = VerticalAlignment.Center,
@@ -5972,6 +6171,7 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 				? (d.IsDefault ? "TB.SoundInputDefault" : "TB.SoundInputOther")
 				: (d.IsDefault ? "TB.SoundOutputDefault" : "TB.SoundOutputOther");
 			btn.SetResourceReference(System.Windows.Controls.Control.BackgroundProperty, resourceKey);
+			btn.SetResourceReference(System.Windows.Controls.Control.BorderBrushProperty, d.IsDefault ? "TB.SoundRowEdgeDefault" : "TB.SoundRowEdgeOther");
 			string id = d.Id;
 			btn.Click += async delegate
 			{
@@ -6898,10 +7098,13 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 			if (selected)
 			{
 				dayButton.SetResourceReference(System.Windows.Controls.Control.BackgroundProperty, "TB.ClockSelection");
+				// the day's number on the selection fill (TB.DayInk normally; the ink for accent fills in Dark rest)
+				dayButton.SetResourceReference(System.Windows.Controls.Control.ForegroundProperty, "TB.DaySelectedInk");
 			}
 			else
 			{
 				dayButton.Background = System.Windows.Media.Brushes.Transparent;
+				dayButton.ClearValue(System.Windows.Controls.Control.ForegroundProperty);
 			}
 		}
 	}
@@ -7435,10 +7638,48 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		}
 	}
 
-	public SoundFlyoutQaMetrics QaRenderSoundFlyout(string screenshotPath, double widthDiu = 420.0, double heightDiu = 540.0, string? commandScreenshotPath = null)
+	// QA only: lets layout run again below a closed popup whose window was released (the step WPF itself takes when the
+	// popup opens). Without the internal method nothing changes and the render shows the suspended layout.
+	private static void QaResumeLayout(Visual v)
+	{
+		try
+		{
+			typeof(UIElement).GetMethod("PropagateResumeLayout", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static, null, new Type[2] { typeof(Visual), typeof(Visual) }, null)?.Invoke(null, new object?[2] { null, v });
+		}
+		catch (Exception ex)
+		{
+			Logger.Log("Sound flyout QA: layout could not be resumed: " + ex.Message);
+		}
+	}
+
+	// QA: where a device row (or an app volume card) of the last volume render sits in that render.
+	internal Rect QaVolumeRowBounds(bool capture, int index)
+	{
+		StackPanel list = capture ? InputList : OutputList;
+		return index >= 0 && index < list.Children.Count && list.Children[index] is FrameworkElement row && VolumePopup.Child is Visual root
+			? row.TransformToAncestor(root).TransformBounds(new Rect(row.RenderSize))
+			: Rect.Empty;
+	}
+
+	internal Rect QaVolumeSessionBounds(int index)
+	{
+		return AppVolumeHost.ItemContainerGenerator.ContainerFromIndex(index) is FrameworkElement card && VolumePopup.Child is Visual root
+			? card.TransformToAncestor(root).TransformBounds(new Rect(card.RenderSize))
+			: Rect.Empty;
+	}
+
+	public SoundFlyoutQaMetrics QaRenderSoundFlyout(string screenshotPath, double widthDiu = 420.0, double heightDiu = 540.0, string? commandScreenshotPath = null, ImageSource? qaSessionIcon = null)
 	{
 		StopVolumeTick();
 		Stopwatch total = Stopwatch.StartNew();
+		// Once the popup's window has been closed and released, WPF suspends layout below it until the popup opens
+		// again (live, the rows are always built while it is open), so rows built for this offscreen render would never
+		// be measured or drawn. Layout is resumed for the content first, the same step opening the popup takes.
+		FrameworkElement volumeContent = (FrameworkElement)VolumePopup.Child;
+		if (!VolumePopup.IsOpen && PresentationSource.FromVisual(volumeContent) == null)
+		{
+			QaResumeLayout(volumeContent);
+		}
 		ApplySoundFlyoutTheme();
 		_tray.VolumePct = 100;
 		_tray.Muted = false;
@@ -7455,6 +7696,10 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		{
 			AudioSessionVm.Preview("System sounds", 73)
 		};
+		if (qaSessionIcon != null)
+		{
+			sessions.Add(AudioSessionVm.Preview("Player", 40, icon: qaSessionIcon));
+		}
 		Stopwatch build = Stopwatch.StartNew();
 		ApplyAudioSnapshot(new AudioFlyoutSnapshot(outputs, inputs, sessions, 0L));
 		build.Stop();
@@ -7468,7 +7713,7 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		VolumeFlyoutSlide.X = 0.0;
 		VolumeFlyoutSlide.Y = 0.0;
 		VolumeFlyoutRoot.CacheMode = null;
-		RenderDetached((FrameworkElement)VolumePopup.Child, _tray, screenshotPath);
+		RenderDetached(volumeContent, _tray, screenshotPath);
 		if (!string.IsNullOrWhiteSpace(commandScreenshotPath))
 		{
 			RenderDetached((FrameworkElement)SoundCommandPopup.Child, null, commandScreenshotPath);

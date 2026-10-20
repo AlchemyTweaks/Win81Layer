@@ -146,6 +146,9 @@ internal interface ISeasonalWorld
 
 	bool SetWallpaper(string path);
 
+	// Sets path on the given displays only; the others and the picture position are left as they are.
+	bool SetWallpaperOn(IReadOnlyCollection<string> monitorIds, string path);
+
 	string RestoreWallpaper(DesktopWallpaperSnapshot snapshot);
 
 	bool IsSeasonalFile(string? path);
@@ -198,7 +201,7 @@ internal sealed class SeasonalEngine
 		}
 	}
 
-	private SeasonalResult ApplyTo(SeasonPreset p, bool keepTheme)
+	private SeasonalResult ApplyTo(SeasonPreset p, bool keepTheme, bool migrate = false)
 	{
 		string target = p.Id;
 		SeasonalStateFile st = _w.LoadState();
@@ -245,7 +248,7 @@ internal sealed class SeasonalEngine
 			// Normal is on, so these are the user's own values, even when they happen to equal a seasonal design.
 			orig = Stamp(FromSettings(s));
 		}
-		return ApplyCore(p, orig, cur, s, st.ActiveSinceUtc, isRecovery: false, keepTheme: themeKept);
+		return ApplyCore(p, orig, cur, s, st.ActiveSinceUtc, isRecovery: false, keepTheme: themeKept, migrate: migrate);
 	}
 
 	private bool IsFullyOn(AppSettings s, SeasonalOriginal orig, SeasonPreset p, bool themeKept)
@@ -378,6 +381,42 @@ internal sealed class SeasonalEngine
 		return new SeasonalResult { Success = true, Season = "", Message = message, WallpaperOutcome = seasonalWallpaper ? "unknown" : "none" };
 	}
 
+	// Startup: Recover, and then brings the Dark rest look of an earlier version (its exact preset values, with a
+	// restore point) up to date by applying Dark rest again over the SAME restore point. Light/dark mode is left as it
+	// is and is not merged into the restore point, so Normal still brings back exactly what was there before the first
+	// preset. A tweaked look (other values) or a missing restore point is never migrated. Recovery itself runs once,
+	// exactly as Recover does, whether or not a migration follows.
+	public SeasonalResult RecoverAndMigrate()
+	{
+		try
+		{
+			SeasonalStateFile st = _w.LoadState();
+			SeasonalResult? recovered = null;
+			if (st.Phase != SeasonalTheme.PhaseIdle)
+			{
+				SeasonalResult r = RecoverCore();
+				if (!r.Success)
+				{
+					return r;
+				}
+				recovered = r;
+				st = _w.LoadState();
+			}
+			AppSettings s = _w.LoadSettings();
+			if (st.Phase == SeasonalTheme.PhaseIdle && st.Original != null && SeasonalTheme.IsLegacyRestLook(s))
+			{
+				Logger.Log("Dark rest: the look from an earlier version is brought up to date over the same restore point.");
+				return ApplyTo(SeasonalTheme.Find(SeasonalTheme.Rest)!, keepTheme: true, migrate: true);
+			}
+			return recovered ?? RecoverCore();
+		}
+		catch (SeasonalReadException ex)
+		{
+			Logger.Log("Seasonal: recovery postponed: " + ex.Message);
+			return Result(false, "", ex.Message);
+		}
+	}
+
 	// Finishes or rolls back an interrupted change, and reconciles the marker with the restore point.
 	public SeasonalResult Recover()
 	{
@@ -411,10 +450,12 @@ internal sealed class SeasonalEngine
 			{
 				SeasonPreset? source = SeasonalTheme.Find(st.Source);
 				// Rolling Dark rest back onto itself (an interrupted re-apply or option change) puts back its look and
-				// leaves light/dark mode as it is: it was already Dark rest's before the change started.
+				// leaves light/dark mode as it is: it was already Dark rest's before the change started. An interrupted
+				// startup upgrade keeps its own wallpaper rule (only displays that still show a launcher picture change).
 				r = source == null
 					? RestoreCore(st.Original, st.Source)
-					: ApplyCore(source, st.Original.Clone(), st.Source, _w.LoadSettings(), st.ActiveSinceUtc, isRecovery: true, keepTheme: SameRest(source.Id, st.Target));
+					: ApplyCore(source, st.Original.Clone(), st.Source, _w.LoadSettings(), st.ActiveSinceUtc, isRecovery: true, keepTheme: SameRest(source.Id, st.Target),
+						migrate: SameRest(source.Id, st.Target) && string.Equals(st.LastResult, UpgradeNote + SeasonalTheme.NormalizeId(st.Target), StringComparison.Ordinal));
 			}
 		}
 		else if (phase == SeasonalTheme.PhaseRestoring)
@@ -527,7 +568,14 @@ internal sealed class SeasonalEngine
 		return SeasonalTheme.IsRest(source) && SeasonalTheme.IsRest(SeasonalTheme.NormalizeId(target));
 	}
 
-	private SeasonalResult ApplyCore(SeasonPreset p, SeasonalOriginal orig, string source, AppSettings prefs, DateTime activeSince, bool isRecovery, bool keepTheme = false)
+	// The pending note of the startup upgrade, so finishing an interrupted one keeps its wallpaper rule.
+	private const string UpgradeNote = "upgrading ";
+
+	// migrate: the startup upgrade of an earlier Dark rest look, which nobody clicked: the desktop picture is only replaced
+	// on the displays where the earlier Dark rest picture is still showing. A wallpaper the user chose meanwhile is left
+	// as it is; when no display shows a launcher picture any more, the restore point keeps the user's original wallpaper
+	// and only forgets the applied file, so the startup check has nothing left to redraw.
+	private SeasonalResult ApplyCore(SeasonPreset p, SeasonalOriginal orig, string source, AppSettings prefs, DateTime activeSince, bool isRecovery, bool keepTheme = false, bool migrate = false)
 	{
 		Stopwatch sw = Stopwatch.StartNew();
 		bool wantWallpaper = SeasonalTheme.WantsWallpaper(prefs, p);
@@ -535,6 +583,8 @@ internal sealed class SeasonalEngine
 		string plan = "none";
 		string? note = null;
 		string? skip = null;
+		// The startup upgrade with a display the user gave their own picture: only these displays get the new one.
+		List<string>? onlyOn = null;
 		WallpaperProbe probe = _w.ProbeWallpaper();
 		if (wantWallpaper && probe.SkipReason != null)
 		{
@@ -548,10 +598,23 @@ internal sealed class SeasonalEngine
 				// Keep the original capture. A display the user changed in the meantime is captured again.
 				MergeUserChanges(orig.Wallpaper, probe.Current!);
 				plan = "set";
+				if (migrate && probe.Current!.Monitors.Any(m => !_w.IsSeasonalFile(m.Path)))
+				{
+					onlyOn = probe.Current.Monitors.Where(m => _w.IsSeasonalFile(m.Path)).Select(m => m.MonitorId).ToList();
+					Logger.Log($"Dark rest: {onlyOn.Count} display(s) still show the earlier Dark rest picture; only those get the new one.");
+				}
 			}
 			else if (orig.Wallpaper == null && anyOurs)
 			{
 				Logger.Log("Seasonal: a seasonal picture is showing but no restore point owns it; the wallpaper is left alone.");
+			}
+			else if (migrate)
+			{
+				Logger.Log("Dark rest: no Dark rest picture is showing (the wallpaper was changed meanwhile), so it is left as it is.");
+				if (orig.Wallpaper != null)
+				{
+					orig.Wallpaper.AppliedPath = "";
+				}
 			}
 			else if (probe.Current != null && probe.Current.Monitors.Count > 0)
 			{
@@ -618,7 +681,7 @@ internal sealed class SeasonalEngine
 			Target = p.Id,
 			Original = orig,
 			ActiveSinceUtc = activeSince,
-			LastResult = "applying " + p.Id
+			LastResult = (migrate ? UpgradeNote : "applying ") + p.Id
 		};
 		if (!_w.SaveState(pending))
 		{
@@ -633,14 +696,14 @@ internal sealed class SeasonalEngine
 			x.SeasonalActive = p.Id;
 		}))
 		{
-			return Rollback(pending, p, "the settings could not be saved", prefs, isRecovery, keepTheme);
+			return Rollback(pending, p, "the settings could not be saved", prefs, isRecovery, keepTheme, migrate);
 		}
 		string wallpaperOutcome = wantWallpaper ? (skip != null ? "skipped:" + skip : (note != null ? "skipped:not-drawn" : "none")) : "off";
 		if (plan == "set")
 		{
-			if (!_w.SetWallpaper(path!))
+			if (!(onlyOn != null ? _w.SetWallpaperOn(onlyOn, path!) : _w.SetWallpaper(path!)))
 			{
-				return Rollback(pending, p, "the desktop wallpaper could not be set", prefs, isRecovery, keepTheme);
+				return Rollback(pending, p, "the desktop wallpaper could not be set", prefs, isRecovery, keepTheme, migrate);
 			}
 			orig.Wallpaper!.AppliedPath = path!;
 			wallpaperOutcome = "set";
@@ -650,7 +713,7 @@ internal sealed class SeasonalEngine
 			string restored = _w.RestoreWallpaper(orig.Wallpaper!);
 			if (restored.StartsWith("failed", StringComparison.Ordinal))
 			{
-				return Rollback(pending, p, "the desktop wallpaper could not be restored", prefs, isRecovery, keepTheme);
+				return Rollback(pending, p, "the desktop wallpaper could not be restored", prefs, isRecovery, keepTheme, migrate);
 			}
 			orig.Wallpaper = null;
 			wallpaperOutcome = "restored";
@@ -659,7 +722,7 @@ internal sealed class SeasonalEngine
 		{
 			if (!_w.SetWindowsDark())
 			{
-				return Rollback(pending, p, "Windows light/dark mode could not be changed", prefs, isRecovery, keepTheme);
+				return Rollback(pending, p, "Windows light/dark mode could not be changed", prefs, isRecovery, keepTheme, migrate);
 			}
 		}
 		else if (themePlan == "restore-drop")
@@ -667,7 +730,7 @@ internal sealed class SeasonalEngine
 			string restoredTheme = _w.RestoreWindowsTheme(orig.WindowsTheme!);
 			if (restoredTheme.StartsWith("failed", StringComparison.Ordinal))
 			{
-				return Rollback(pending, p, "Windows light/dark mode could not be restored", prefs, isRecovery, keepTheme);
+				return Rollback(pending, p, "Windows light/dark mode could not be restored", prefs, isRecovery, keepTheme, migrate);
 			}
 			orig.WindowsTheme = null;
 		}
@@ -697,7 +760,7 @@ internal sealed class SeasonalEngine
 		return new SeasonalResult { Success = true, Season = p.Id, Message = message, WallpaperOutcome = wallpaperOutcome };
 	}
 
-	private SeasonalResult Rollback(SeasonalStateFile pending, SeasonPreset p, string reason, AppSettings prefs, bool isRecovery, bool keepTheme)
+	private SeasonalResult Rollback(SeasonalStateFile pending, SeasonPreset p, string reason, AppSettings prefs, bool isRecovery, bool keepTheme, bool migrate = false)
 	{
 		Logger.Log($"Seasonal: apply {p.Id} failed ({reason}); rolling back to '{pending.Source}'.");
 		if (isRecovery)
@@ -714,7 +777,7 @@ internal sealed class SeasonalEngine
 		{
 			// The source's own wallpaper preference decides (Dark rest has its own option). Dark rest rolled back onto
 			// itself leaves light/dark mode alone when this change was not meant to touch it.
-			back = ApplyCore(source, pending.Original!.Clone(), source.Id, prefs, pending.ActiveSinceUtc, isRecovery: true, keepTheme: keepTheme && source.Id == p.Id);
+			back = ApplyCore(source, pending.Original!.Clone(), source.Id, prefs, pending.ActiveSinceUtc, isRecovery: true, keepTheme: keepTheme && source.Id == p.Id, migrate: migrate && source.Id == p.Id);
 		}
 		string tail = back.Success ? " Your previous look was restored." : " Your previous look will be restored when the launcher starts.";
 		return new SeasonalResult { Success = false, Season = pending.Source, Message = "Could not apply " + p.Name + ": " + reason + "." + tail, WallpaperOutcome = back.WallpaperOutcome };
@@ -844,9 +907,10 @@ internal sealed class SeasonalEngine
 		};
 	}
 
+	// A preset's Start values, or the Dark rest values of an earlier version.
 	private static bool MatchesAnyPreset(AppSettings s)
 	{
-		return SeasonalTheme.Presets.Any(p => StartMatches(s, p));
+		return SeasonalTheme.Presets.Any(p => StartMatches(s, p)) || SeasonalTheme.LegacyRestStartMatches(s);
 	}
 
 	// The Start values a preset writes (the custom picture path is not one of them).
@@ -915,9 +979,31 @@ internal static class SeasonalTheme
 	{
 		new SeasonPreset(Halloween, "Halloween", "pumpkins", "#FF22103A", "#FFE0620B", "bats", "halloween"),
 		new SeasonPreset(Christmas, "Christmas", "ornaments", "#FF0B3D2C", "#FFC8102E", "snow", "christmas"),
-		// No ambient effect and no seasonal icons; the accent is a muted blue-grey (HSL 207, 0.18, 0.38).
-		new SeasonPreset(Rest, "Dark rest", SeasonalArt.RestPattern, "#FF121519", "#FF4F6272", "", SeasonalArt.RestArt)
+		// True black. No ambient effect and no seasonal icons; the accent is a muted dark teal (HSL 191, 0.22, 0.34).
+		new SeasonPreset(Rest, "Dark rest", SeasonalArt.RestPattern, "#FF000000", "#FF44636A", "", SeasonalArt.RestArt)
 	};
+
+	// The Dark rest Start values of the earlier version (slate background, blue-grey accent, the "dusk" pattern).
+	public const string LegacyRestBase = "#FF121519";
+
+	public const string LegacyRestAccent = "#FF4F6272";
+
+	public const string LegacyRestPattern = SeasonalArt.LegacyRestPattern;
+
+	// The Start values the earlier version's Dark rest wrote (the marker is not looked at).
+	public static bool LegacyRestStartMatches(AppSettings s)
+	{
+		return string.Equals(s.StartBgMode, "pattern", StringComparison.Ordinal)
+			&& string.Equals(s.StartPattern, LegacyRestPattern, StringComparison.Ordinal)
+			&& string.Equals(s.StartBgColor, LegacyRestBase, StringComparison.OrdinalIgnoreCase)
+			&& string.Equals(s.StartAccentColor, LegacyRestAccent, StringComparison.OrdinalIgnoreCase);
+	}
+
+	// Dark rest is on with exactly the look of the earlier version, so it can be brought up to date.
+	public static bool IsLegacyRestLook(AppSettings s)
+	{
+		return IsRest(NormalizeId(s.SeasonalActive)) && LegacyRestStartMatches(s);
+	}
 
 	// The two real seasons (the presets with seasonal art, effects and icons).
 	public static readonly SeasonPreset[] Seasons = Presets.Where(p => !IsRest(p.Id)).ToArray();
@@ -1268,8 +1354,28 @@ internal static class SeasonalTheme
 		}
 	}
 
+	// Whether startup has work for the recovery worker: an interrupted change, a marker that disagrees with the restore
+	// point, a missing or outdated wallpaper file, or the Dark rest look of an earlier version. Pure (the file checks are
+	// passed in), so the self-test can drive it.
+	internal static bool NeedsStartupWork(AppSettings s, SeasonalStateFile st, bool unreadable, bool degraded, Func<string, bool> fileExists, Func<AppSettings, string, bool> pictureChanged)
+	{
+		bool marker = NormalizeId(s.SeasonalActive).Length > 0;
+		string applied = st.Original?.Wallpaper?.AppliedPath ?? "";
+		if (unreadable || degraded)
+		{
+			// The marker cannot be trusted from a degraded read. The worker reads both again and changes nothing while
+			// either is still unreadable.
+			return unreadable || st.Phase != PhaseIdle || st.Original != null;
+		}
+		return st.Phase != PhaseIdle
+			|| (!marker && st.Original != null)
+			|| (marker && applied.Length > 0 && (!fileExists(applied) || pictureChanged(s, applied)))
+			|| (marker && st.Original != null && IsLegacyRestLook(s));
+	}
+
 	// Startup: load the state (one small file) on the UI thread. An interrupted change, a marker that disagrees with
-	// the restore point, or a missing wallpaper file is handled on a worker a few seconds later, once Explorer is up.
+	// the restore point, a missing wallpaper file or an earlier version's Dark rest look is handled on a worker a few
+	// seconds later, once Explorer is up.
 	public static void InitializeAndRecover(App app)
 	{
 		SeasonalStateFile st = LoadStateFile(out bool unreadable) ?? new SeasonalStateFile();
@@ -1281,18 +1387,7 @@ internal static class SeasonalTheme
 		}
 		AppSettings s = SettingsStore.Load();
 		bool marker = NormalizeId(s.SeasonalActive).Length > 0;
-		string applied = st.Original?.Wallpaper?.AppliedPath ?? "";
-		bool needs;
-		if (unreadable || SettingsStore.LoadWasDegraded)
-		{
-			// The marker cannot be trusted from a degraded read. The worker reads both again and changes nothing while
-			// either is still unreadable.
-			needs = unreadable || st.Phase != PhaseIdle || st.Original != null;
-		}
-		else
-		{
-			needs = st.Phase != PhaseIdle || (!marker && st.Original != null) || (marker && applied.Length > 0 && (!File.Exists(applied) || PictureChanged(s, applied)));
-		}
+		bool needs = NeedsStartupWork(s, st, unreadable, SettingsStore.LoadWasDegraded, File.Exists, PictureChanged);
 		if (!needs)
 		{
 			return;
@@ -1309,7 +1404,7 @@ internal static class SeasonalTheme
 					try
 					{
 						_busy = true;
-						RunLocked(engine => engine.Recover(), "");
+						RunLocked(engine => engine.RecoverAndMigrate(), "");
 						ran = true;
 					}
 					finally
@@ -1647,9 +1742,28 @@ internal sealed class RealSeasonalWorld : ISeasonalWorld
 			if (!File.Exists(path) || new FileInfo(path).Length < 1024)
 			{
 				Stopwatch sw = Stopwatch.StartNew();
-				if (picture != null)
+				if (picture != null && art == SeasonalArt.RestArt)
 				{
-					SeasonalArt.RenderPicturePng(picture, w, h, path);
+					try
+					{
+						SeasonalArt.RenderPicturePng(art, picture, w, h, path);
+						Logger.Log($"Seasonal: fitted the user's {art} picture to {w}x{h} in {sw.ElapsedMilliseconds} ms");
+					}
+					catch (Exception ex) when (ex is NotSupportedException || ex is FileFormatException || ex is ArgumentException || ex is InvalidOperationException || ex is System.Runtime.InteropServices.COMException)
+					{
+						// A Dark rest picture that cannot be decoded: the drawn scene goes on the desktop, the same one
+						// Start falls back to, so the two still match.
+						Logger.Log("Seasonal: the Dark rest picture could not be decoded, so the drawn scene is used: " + ex.Message);
+						path = Path.Combine(SeasonalArt.SeasonalDir, SeasonalArt.WallpaperFileName(art, w, h));
+						if (!File.Exists(path) || new FileInfo(path).Length < 1024)
+						{
+							SeasonalArt.RenderWallpaperPng(art, w, h, path);
+						}
+					}
+				}
+				else if (picture != null)
+				{
+					SeasonalArt.RenderPicturePng(art, picture, w, h, path);
 					Logger.Log($"Seasonal: fitted the user's {art} picture to {w}x{h} in {sw.ElapsedMilliseconds} ms");
 				}
 				else
@@ -1675,6 +1789,11 @@ internal sealed class RealSeasonalWorld : ISeasonalWorld
 	public bool SetWallpaper(string path)
 	{
 		return DesktopWallpaperApi.SetAll(path);
+	}
+
+	public bool SetWallpaperOn(IReadOnlyCollection<string> monitorIds, string path)
+	{
+		return DesktopWallpaperApi.SetOn(monitorIds, path);
 	}
 
 	public string RestoreWallpaper(DesktopWallpaperSnapshot snapshot)

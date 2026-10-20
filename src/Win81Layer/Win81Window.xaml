@@ -89,22 +89,27 @@
           </Setter.Value>
         </Setter>
       </Style>
+      <!-- The close button. Dark rest swaps in muted colours in code (Win81Window.ApplyAccent). -->
+      <SolidColorBrush x:Key="Caption.CloseFill" Color="#C75450" />
+      <SolidColorBrush x:Key="Caption.CloseHover" Color="#E81123" />
+      <SolidColorBrush x:Key="Caption.ClosePress" Color="#F1707A" />
+      <SolidColorBrush x:Key="Caption.CloseInk" Color="#FFFFFFFF" />
       <Style x:Key="CloseButton" TargetType="{x:Type Button}" BasedOn="{StaticResource CaptionButton}">
         <!-- AUTHENTIC 8.1 (VM-verified, Build 9600): the close button is RED AT REST with a white glyph, brighter red
              on hover, lighter red on press. (Win10 later moved to no-fill-at-rest; 8.1 is red at rest.) -->
-        <Setter Property="Foreground" Value="#FFFFFFFF" />
+        <Setter Property="Foreground" Value="{DynamicResource Caption.CloseInk}" />
         <Setter Property="Template">
           <Setter.Value>
             <ControlTemplate TargetType="{x:Type Button}">
-              <Border Name="Bd" Background="#C75450">
+              <Border Name="Bd" Background="{DynamicResource Caption.CloseFill}">
                 <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
               </Border>
               <ControlTemplate.Triggers>
                 <Trigger Property="UIElement.IsMouseOver" Value="True">
-                  <Setter TargetName="Bd" Property="Border.Background" Value="#E81123" />
+                  <Setter TargetName="Bd" Property="Border.Background" Value="{DynamicResource Caption.CloseHover}" />
                 </Trigger>
                 <Trigger Property="IsPressed" Value="True">
-                  <Setter TargetName="Bd" Property="Border.Background" Value="#F1707A" />
+                  <Setter TargetName="Bd" Property="Border.Background" Value="{DynamicResource Caption.ClosePress}" />
                 </Trigger>
               </ControlTemplate.Triggers>
             </ControlTemplate>

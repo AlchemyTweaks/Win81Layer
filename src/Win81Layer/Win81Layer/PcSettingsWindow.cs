@@ -100,7 +100,7 @@ public sealed class PcSettingsWindow : Window
 
 	private static readonly System.Windows.Media.Brush TrackNormal = Freeze(4291611852u);
 
-	// The page colours. Dark rest swaps in a dark slate page with soft ink; the white page is today's look.
+	// The page colours. Dark rest swaps in a black page with soft ink; the white page is today's look.
 	private static System.Windows.Media.Brush RightBg => DarkRest.Visuals ? DarkRestPalette.PcPage : RightBgNormal;
 
 	private static System.Windows.Media.Brush Text => DarkRest.Visuals ? DarkRestPalette.PcText : TextNormal;
@@ -117,6 +117,17 @@ public sealed class PcSettingsWindow : Window
 	private static System.Windows.Media.Brush KnobBrush => DarkRest.Visuals ? DarkRestPalette.PcKnob : KnobNormal;
 
 	private static System.Windows.Media.Brush TrackBrush => DarkRest.Visuals ? DarkRestPalette.PcTrack : TrackNormal;
+
+	// Dark rest: picture frames in the popups' outline, an empty lock screen preview in the field fill, and the icon
+	// status words in the soft accent ink and the soft ink, instead of near-white frames, a near-white block and
+	// saturated green or amber.
+	private static System.Windows.Media.Brush ThumbFrame => DarkRest.Visuals ? DarkRestPalette.PopupEdge : Freeze(4293322470u);
+
+	private static System.Windows.Media.Brush PreviewEmpty => DarkRest.Visuals ? DarkRestPalette.PcField : Freeze(4294111986u);
+
+	private static System.Windows.Media.Brush StatusAvailable => DarkRest.Visuals ? DarkRestPalette.AccentInk : Freeze(4278233685u);
+
+	private static System.Windows.Media.Brush StatusLocked => DarkRest.Visuals ? DarkRestPalette.Ink : Freeze(4292519424u);
 
 	private static readonly (string Name, string? Uri)[] Categories = new(string, string)[14]
 	{
@@ -199,8 +210,8 @@ public sealed class PcSettingsWindow : Window
 		}
 	}
 
-	// Headings and link titles. On the Dark rest page the muted accent tone would be too dark to read, so a light
-	// blue-grey of the same hue is used instead.
+	// Headings and link titles. On the Dark rest page the muted accent tone would be too dark to read, so the light
+	// accent ink of the same hue is used instead.
 	private static System.Windows.Media.Brush TitleAccent => DarkRest.Visuals ? DarkRestPalette.PcAccentInk : new SolidColorBrush(SettingsPane.AccentToneColor(0.46));
 
 	internal static nint LiveHwnd { get; private set; }
@@ -308,7 +319,7 @@ public sealed class PcSettingsWindow : Window
 	}
 
 	// The Dark rest resources of this window (or of a page rendered on its own): the dark token set (so the controls
-	// stay dark even if Windows is switched back to light meanwhile), the blue-grey control family with toggles whose
+	// stay dark even if Windows is switched back to light meanwhile), the black control family with toggles whose
 	// On and Off fills read apart and quiet scrollbars, and the light link style.
 	private static void WriteRestResources(ResourceDictionary target, Style toggleBase)
 	{
@@ -320,11 +331,19 @@ public sealed class PcSettingsWindow : Window
 		}
 	}
 
-	// Dark rest: the page turns dark slate with soft ink, and the Metro controls of this window take the dark resources
+	// The hover and selected washes of the glass navigation (NavTemplate). Dark rest: a wash that can be seen on the
+	// black navigation pane and the accent for the open category (3:1 against the pane).
+	private static readonly System.Windows.Media.Brush NavHoverNormal = Freeze(0x18FFFFFFu);
+
+	private static readonly System.Windows.Media.Brush NavSelectedNormal = Freeze(0x2EFFFFFFu);
+
+	// Dark rest: the page turns black with soft ink, and the Metro controls of this window take the dark resources
 	// above. Normal removes that override again.
 	private void ApplyRestSkin()
 	{
 		_restSkinApplied = DarkRest.Visuals;
+		base.Resources["PcNav.Hover"] = DarkRest.Visuals ? DarkRestPalette.HoverWash : NavHoverNormal;
+		base.Resources["PcNav.Selected"] = DarkRest.Visuals ? DarkRestPalette.NavSelected : NavSelectedNormal;
 		// Whatever this window added before goes first, so the toggle style below is based on the normal one.
 		ShellTheme.RemoveTokens(base.Resources);
 		DarkRestPalette.RemoveRestResources(base.Resources);
@@ -338,6 +357,8 @@ public sealed class PcSettingsWindow : Window
 		if (_leftPaneBorder != null)
 		{
 			_leftPaneBorder.Background = LeftBg;
+			// the navigation's white text and glyphs: the soft ink in Dark rest, white again with Normal
+			DarkRestPalette.RetintWhite(_leftPaneBorder, DarkRest.Visuals);
 		}
 	}
 
@@ -1365,7 +1386,7 @@ public sealed class PcSettingsWindow : Window
 			Child = g,
 			Margin = new Thickness(0.0, 0.0, 10.0, 0.0),
 			BorderThickness = new Thickness(selected ? 2.0 : 0.0),
-			BorderBrush = System.Windows.Media.Brushes.White
+			BorderBrush = DarkRest.Visuals ? DarkRestPalette.Ink : System.Windows.Media.Brushes.White
 		};
 		tile.MouseLeftButtonUp += delegate
 		{
@@ -1385,6 +1406,16 @@ public sealed class PcSettingsWindow : Window
 			Cursor = System.Windows.Input.Cursors.Hand,
 			Background = new SolidColorBrush(primary ? SettingsPane.AccentToneColor(0.5) : SettingsPane.AccentToneColor(0.28))
 		};
+		if (DarkRest.Visuals && !primary)
+		{
+			// on the black page the secondary fill is nearly black: an outline shows the button's edge (4:1), kept on
+			// whole pixels with square corners (on a half pixel it blurs into two faint rows)
+			b.BorderBrush = DarkRestPalette.Boundary;
+			b.BorderThickness = new Thickness(1.0);
+			b.CornerRadius = new CornerRadius(0.0);
+			b.SnapsToDevicePixels = true;
+			b.UseLayoutRounding = true;
+		}
 		b.Child = new TextBlock
 		{
 			Text = label,
@@ -1466,7 +1497,7 @@ public sealed class PcSettingsWindow : Window
 			foreach ((Border ring, string key, TextBlock chk) r in rings)
 			{
 				bool sel = string.Equals(r.key, cur, System.StringComparison.OrdinalIgnoreCase);
-				r.ring.BorderBrush = (sel ? System.Windows.Media.Brushes.White : System.Windows.Media.Brushes.Transparent);
+				r.ring.BorderBrush = (sel ? (DarkRest.Visuals ? DarkRestPalette.Ink : System.Windows.Media.Brushes.White) : System.Windows.Media.Brushes.Transparent);
 				r.chk.Visibility = (sel ? Visibility.Visible : Visibility.Collapsed);
 			}
 		};
@@ -1672,6 +1703,8 @@ public sealed class PcSettingsWindow : Window
 		{
 			TaskbarContextMenu.OpenUri("ms-settings:nightlight");
 		}, wrap: true));
+		// One quiet line once the Metro Tab browser extension's folder is known (ShellLookLink writes the look there).
+		RestNote(panel, ShellLookLink.KnownFolderFound == true, "The Metro Tab browser extension follows Dark rest.");
 	}
 
 	private TextBlock _seasonIconsStatus;
@@ -1957,8 +1990,20 @@ public sealed class PcSettingsWindow : Window
 		{
 			ApplySeason(id);
 		};
+		if (DarkRest.Visuals && !selected)
+		{
+			// Dark rest: the previews of the other looks at 0.6 opacity (full under the mouse), so they do not glare
+			// from the black page
+			tile.Opacity = 0.6;
+			tile.MouseEnter += delegate { tile.Opacity = 1.0; };
+			tile.MouseLeave += delegate { tile.Opacity = 0.6; };
+		}
 		return tile;
 	}
+
+	// QA: the Win8.1 wallpaper row as last built while it was unavailable (its opacity and the inks of its title and of
+	// the sentence that explains it); null when it was not shown that way.
+	internal (double Opacity, System.Windows.Media.Color Title, System.Windows.Media.Color Desc)? QaWallpaperRow { get; private set; }
 
 	// QA: the picker tiles of the page built last (count, the accessible name of the selected one and its frame colour).
 	internal (int Count, string Selected) QaSeasonTiles()
@@ -2080,6 +2125,11 @@ public sealed class PcSettingsWindow : Window
 	{
 		_pageBuilder = build;
 		_content.Child = build();
+		if (DarkRest.Visuals)
+		{
+			// the page's own white text and glyphs: the soft ink (the ink for accent fills on the coloured tiles)
+			DarkRestPalette.RetintWhite(_content.Child, rest: true, DarkRestPalette.CanvasColor);
+		}
 	}
 
 	// ===== Pointers (Appearance) =====
@@ -2402,8 +2452,8 @@ public sealed class PcSettingsWindow : Window
 		};
 		if (DarkRest.Visuals)
 		{
-			// The panel renders unparented, so it gets the window's Dark rest token override here.
-			ShellTheme.WriteTokens(host.Resources, dark: true);
+			// The panel renders unparented, so it gets the window's Dark rest resources here.
+			WriteRestResources(host.Resources, System.Windows.Application.Current?.TryFindResource("Metro81.ToggleSwitch") as Style);
 		}
 		host.Measure(new System.Windows.Size(w, double.PositiveInfinity));
 		double h = Math.Min(8000.0, Math.Max(200.0, host.DesiredSize.Height));
@@ -2879,7 +2929,23 @@ public sealed class PcSettingsWindow : Window
 			if (seasonalOwnsWallpaper)
 			{
 				win81WallpaperRow.IsEnabled = false;
-				win81WallpaperRow.Opacity = 0.5;
+				if (DarkRest.Visuals)
+				{
+					// On the black page a half-transparent row puts its instruction below 3:1. The row stays disabled;
+					// its title takes the hint ink (5.9:1) and the sentence that says what to do keeps the secondary ink.
+					if (win81WallpaperRow is System.Windows.Controls.Panel row && row.Children.Count > 0 && row.Children[0] is TextBlock title)
+					{
+						title.Foreground = DarkRestPalette.Hint;
+					}
+				}
+				else
+				{
+					win81WallpaperRow.Opacity = 0.5;
+				}
+				if (win81WallpaperRow is System.Windows.Controls.Panel shown && shown.Children.Count > 1 && shown.Children[0] is TextBlock t0 && shown.Children[1] is TextBlock t1)
+				{
+					QaWallpaperRow = (win81WallpaperRow.Opacity, (t0.Foreground as SolidColorBrush)?.Color ?? Colors.Transparent, (t1.Foreground as SolidColorBrush)?.Color ?? Colors.Transparent);
+				}
 			}
 			panel.Children.Add(win81WallpaperRow);
 		}
@@ -3909,7 +3975,7 @@ public sealed class PcSettingsWindow : Window
 					Height = 60.0,
 					Margin = new Thickness(0.0, 0.0, 8.0, 8.0),
 					Cursor = System.Windows.Input.Cursors.Hand,
-					BorderBrush = Freeze(4293322470u),
+					BorderBrush = ThumbFrame,
 					BorderThickness = new Thickness(1.0),
 					Background = new ImageBrush(SafeThumb(wp))
 					{
@@ -4037,6 +4103,12 @@ public sealed class PcSettingsWindow : Window
 			Background = TrackBrush,
 			VerticalAlignment = VerticalAlignment.Center
 		};
+		if (DarkRest.Visuals)
+		{
+			// Dark rest: the dark track keeps the control outline (3:1 or more on the black page), so its end shows
+			track.BorderBrush = DarkRestPalette.Boundary;
+			track.BorderThickness = new Thickness(1.0);
+		}
 		Border fill = new Border
 		{
 			Height = 4.0,
@@ -4419,6 +4491,19 @@ public sealed class PcSettingsWindow : Window
 		}
 		box.MouseLeftButtonUp += delegate
 		{
+			if (!popup.IsOpen && DarkRest.Visuals)
+			{
+				// Dark rest: the current value is marked in the open list by a bar in the accent line on its left (the
+				// hover lift alone does not say which one is chosen)
+				for (int i = 0; i < list.Children.Count; i++)
+				{
+					if (list.Children[i] is Border r)
+					{
+						r.BorderBrush = DarkRestPalette.AccentLine;
+						r.BorderThickness = new Thickness(i == sel ? 3.0 : 0.0, 0.0, 0.0, 0.0);
+					}
+				}
+			}
 			popup.IsOpen = !popup.IsOpen;
 		};
 		Grid host = new Grid
@@ -4449,10 +4534,10 @@ public sealed class PcSettingsWindow : Window
 			Width = 360.0,
 			Height = 203.0,
 			HorizontalAlignment = System.Windows.HorizontalAlignment.Left,
-			BorderBrush = Freeze(4293322470u),
+			BorderBrush = ThumbFrame,
 			BorderThickness = new Thickness(1.0),
 			Margin = new Thickness(0.0, 10.0, 0.0, 18.0),
-			Background = Freeze(4294111986u)
+			Background = PreviewEmpty
 		};
 		List<string> presets = Wallpapers.Presets();
 		if (presets.Count > 0)
@@ -4474,7 +4559,7 @@ public sealed class PcSettingsWindow : Window
 				Height = 60.0,
 				Margin = new Thickness(0.0, 0.0, 8.0, 8.0),
 				Cursor = System.Windows.Input.Cursors.Hand,
-				BorderBrush = Freeze(4293322470u),
+				BorderBrush = ThumbFrame,
 				BorderThickness = new Thickness(1.0),
 				Background = new ImageBrush(SafeThumb(wp))
 				{
@@ -4934,7 +5019,7 @@ public sealed class PcSettingsWindow : Window
 		TextBlock state = new TextBlock
 		{
 			Text = status,
-			Foreground = status == "available" ? Freeze(4278233685u) : (status == "locked" ? Freeze(4292519424u) : Text2),
+			Foreground = status == "available" ? StatusAvailable : (status == "locked" ? StatusLocked : Text2),
 			FontFamily = new System.Windows.Media.FontFamily("Segoe UI Semibold"),
 			FontSize = 12.0,
 			VerticalAlignment = VerticalAlignment.Top,
@@ -5305,14 +5390,14 @@ public sealed class PcSettingsWindow : Window
 			Property = UIElement.IsMouseOverProperty,
 			Value = true
 		};
-		hover.Setters.Add(new Setter(Border.BackgroundProperty, new SolidColorBrush(System.Windows.Media.Color.FromArgb(24, byte.MaxValue, byte.MaxValue, byte.MaxValue)), "bd"));
+		hover.Setters.Add(new Setter(Border.BackgroundProperty, new DynamicResourceExtension("PcNav.Hover"), "bd"));
 		t.Triggers.Add(hover);
 		Trigger sel = new Trigger
 		{
 			Property = FrameworkElement.TagProperty,
 			Value = "sel"
 		};
-		sel.Setters.Add(new Setter(Border.BackgroundProperty, new SolidColorBrush(System.Windows.Media.Color.FromArgb(46, byte.MaxValue, byte.MaxValue, byte.MaxValue)), "bd"));
+		sel.Setters.Add(new Setter(Border.BackgroundProperty, new DynamicResourceExtension("PcNav.Selected"), "bd"));
 		t.Triggers.Add(sel);
 		return t;
 	}
@@ -5399,6 +5484,7 @@ public sealed class PcSettingsWindow : Window
 			if (DarkRest.Visuals)
 			{
 				WriteRestResources(scr.Resources, TryFindResource("Metro81.ToggleSwitch") as Style);
+				DarkRestPalette.RetintWhite(scr, rest: true, DarkRestPalette.CanvasColor);
 			}
 			scr.VerticalScrollBarVisibility = ScrollBarVisibility.Disabled;
 			scr.HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled;

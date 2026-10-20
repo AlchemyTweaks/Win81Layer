@@ -13,6 +13,12 @@
   <SolidColorBrush x:Key="M.KbBg" Color="#000000" />
   <SolidColorBrush x:Key="M.KbFg" Color="#FFFFFF" />
   <SolidColorBrush x:Key="M.KbGesture" Color="#C8C8C8" />
+  <!-- A toggle's Off track, its outline and its outline on the keyboard row, and the shortcut text; normally the Off track
+       and the shortcut use M.Dis and the track has no outline (Dark rest gives them their own values). -->
+  <SolidColorBrush x:Key="M.ToggleOff" Color="#767676" />
+  <SolidColorBrush x:Key="M.ToggleBorder" Color="Transparent" />
+  <SolidColorBrush x:Key="M.KbToggleBorder" Color="Transparent" />
+  <SolidColorBrush x:Key="M.Gesture" Color="#767676" />
   <Style x:Key="Win81Separator" TargetType="{x:Type Separator}">
     <Setter Property="FrameworkElement.OverridesDefaultStyle" Value="True" />
     <Setter Property="Template">
@@ -44,10 +50,10 @@
               <ContentPresenter Grid.Column="1" ContentSource="Header" RecognizesAccessKey="True" VerticalAlignment="Center" Margin="4,0,0,0" />
               <Grid Name="Arrow" Column="2" HorizontalAlignment="Right" VerticalAlignment="Center" Visibility="Collapsed"><TextBlock Name="ArrowText" Text="&#x25B8;" FontFamily="Segoe UI Symbol" FontSize="11" Foreground="{DynamicResource M.Arrow}" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,9,0" /></Grid>
               <Grid Name="Toggle" Column="2" Width="32" Height="15" Visibility="Collapsed" HorizontalAlignment="Center" VerticalAlignment="Center">
-                <Border Name="Track" Background="{DynamicResource M.Dis}" BorderBrush="Transparent" BorderThickness="1" SnapsToDevicePixels="True" />
+                <Border Name="Track" Background="{DynamicResource M.ToggleOff}" BorderBrush="{DynamicResource M.ToggleBorder}" BorderThickness="1" SnapsToDevicePixels="True" />
                 <Border Name="Knob" Width="9" Margin="1" Background="{DynamicResource M.Fg}" HorizontalAlignment="Left" SnapsToDevicePixels="True" />
               </Grid>
-              <TextBlock Name="Gesture" Grid.Column="2" Text="{Binding InputGestureText, RelativeSource={RelativeSource TemplatedParent}}" Foreground="{DynamicResource M.Dis}" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,12,0" />
+              <TextBlock Name="Gesture" Grid.Column="2" Text="{Binding InputGestureText, RelativeSource={RelativeSource TemplatedParent}}" Foreground="{DynamicResource M.Gesture}" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,12,0" />
               <Popup Name="PART_Popup" AllowsTransparency="True" Placement="Right" HorizontalOffset="-2" VerticalOffset="-4" Focusable="False" PopupAnimation="None" IsOpen="{Binding IsSubmenuOpen, RelativeSource={RelativeSource TemplatedParent}}">
                 <Border Background="{DynamicResource M.Bg}" BorderBrush="{DynamicResource M.Border}" BorderThickness="2" Padding="0,4" Margin="0,0,6,6">
                   <ItemsPresenter KeyboardNavigation.DirectionalNavigation="Cycle" />
@@ -97,6 +103,7 @@
               <!-- Keep the toggle knob readable on the inverted (white in dark) highlight bar; the checked-state
                    Track=MenuAccent above is left intact since we only retarget the knob, not the track. -->
               <Setter TargetName="Knob" Property="Border.Background" Value="{DynamicResource M.KbFg}" />
+              <Setter TargetName="Track" Property="Border.BorderBrush" Value="{DynamicResource M.KbToggleBorder}" />
             </MultiTrigger>
             <Trigger Property="IsEnabled" Value="False">
               <Setter Value="{DynamicResource M.Dis}" Property="Foreground" />

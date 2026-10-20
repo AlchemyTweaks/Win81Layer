@@ -179,6 +179,19 @@ public sealed class MetroDirectionalArrow81 : Button
 		typeof(MetroDirectionalArrow81),
 		new FrameworkPropertyMetadata(32.0, FrameworkPropertyMetadataOptions.AffectsRender, null, CoerceGlyphSize));
 
+	// The opacity of the ring and arrow, from the application resource Metro81.GlyphOpacity (1 unless Dark rest is on).
+	public static readonly DependencyProperty GlyphOpacityProperty = DependencyProperty.Register(
+		nameof(GlyphOpacity),
+		typeof(double),
+		typeof(MetroDirectionalArrow81),
+		new FrameworkPropertyMetadata(1.0, FrameworkPropertyMetadataOptions.AffectsRender));
+
+	public double GlyphOpacity
+	{
+		get => (double)GetValue(GlyphOpacityProperty);
+		set => SetValue(GlyphOpacityProperty, value);
+	}
+
 	public static readonly DependencyProperty AccentBrushProperty = DependencyProperty.Register(
 		nameof(AccentBrush),
 		typeof(Brush),
@@ -205,6 +218,7 @@ public sealed class MetroDirectionalArrow81 : Button
 
 	public MetroDirectionalArrow81()
 	{
+		SetResourceReference(GlyphOpacityProperty, "Metro81.GlyphOpacity");
 		Background = Brushes.Transparent;
 		BorderThickness = new Thickness(0.0);
 		FocusVisualStyle = null;
@@ -231,9 +245,21 @@ public sealed class MetroDirectionalArrow81 : Button
 				: IsMouseOver
 					? MetroArrowState81.Hover
 					: MetroArrowState81.Normal;
+		// Dark rest lowers the glyph opacity (Metro81.GlyphOpacity), so the white ring and arrow sit at the soft ink's
+		// brightness on the black surfaces.
+		double opacity = GlyphOpacity;
+		bool dimmed = opacity < 1.0;
+		if (dimmed)
+		{
+			drawingContext.PushOpacity(opacity);
+		}
 		drawingContext.DrawImage(
 			MetroDirectionalArrow81Vectors.Draw(Direction, state, ResolveAccent()),
 			new Rect(x, y, size, size));
+		if (dimmed)
+		{
+			drawingContext.Pop();
+		}
 	}
 
 	protected override void OnPropertyChanged(DependencyPropertyChangedEventArgs e)

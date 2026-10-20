@@ -118,6 +118,10 @@ public sealed class AppSwitcher : Window
 
 	private SolidColorBrush _hoverBrush;
 
+	// The ring of the selected and the hovered entry: the hover brush, except in Dark rest, where the hover lift is too
+	// close to the black panel for a ring and the accent line is used.
+	private SolidColorBrush _selectBrush;
+
 	private SolidColorBrush _textBrush;
 
 	// Bottom-pinned Win8.1 "Start" button (docked to _slideRoot, NOT inside the scrolling _list). Built once; its bar/
@@ -179,6 +183,7 @@ public sealed class AppSwitcher : Window
 		_labelBrush = new SolidColorBrush(System.Windows.Media.Color.FromRgb(17, 17, 17));
 		_thumbBrush = new SolidColorBrush(System.Windows.Media.Color.FromRgb(42, 42, 42));
 		_hoverBrush = new SolidColorBrush(System.Windows.Media.Color.FromRgb(85, 85, 85));
+		_selectBrush = _hoverBrush;
 		_textBrush = new SolidColorBrush(Colors.White);
 		base.WindowStyle = WindowStyle.None;
 		base.ResizeMode = ResizeMode.NoResize;
@@ -580,7 +585,7 @@ public sealed class AppSwitcher : Window
 		{
 			if (_list.Children[k] is Border b)
 			{
-				b.BorderBrush = ((k == i) ? _hoverBrush : System.Windows.Media.Brushes.Transparent);
+				b.BorderBrush = ((k == i) ? _selectBrush : System.Windows.Media.Brushes.Transparent);
 			}
 		}
 		if (i >= 0 && i < _list.Children.Count && _list.Children[i] is FrameworkElement fe)
@@ -912,6 +917,11 @@ public sealed class AppSwitcher : Window
 		string seasonalKey = SeasonalAppIcons.KeyForWindow(hwnd, exe, null);
 		ImageSource icon = (seasonalKey != null ? SeasonalAppIcons.Frame(seasonalKey, SeasonalAppIcons.Px(16.0)) : null)
 			?? IconResolver.EnsureNonBlank(WindowList.GetIcon(hwnd, preferLarge: false), title);
+		if (DarkRest.Visuals && icon != null)
+		{
+			// Dark rest: a dark window icon is lifted or outlined, as on the taskbar, so it does not vanish on the strip
+			icon = DarkRestIcons.Visible(icon);
+		}
 		titleRow.Children.Add(new System.Windows.Controls.Image
 		{
 			Source = icon,
@@ -998,7 +1008,7 @@ public sealed class AppSwitcher : Window
 		};
 		entry.MouseEnter += delegate
 		{
-			entry.BorderBrush = _hoverBrush;
+			entry.BorderBrush = _selectBrush;
 			pin.Visibility = Visibility.Visible;
 			close.Visibility = Visibility.Visible;
 		};
@@ -1105,7 +1115,7 @@ public sealed class AppSwitcher : Window
 		};
 		entry.MouseEnter += delegate
 		{
-			entry.BorderBrush = _hoverBrush;
+			entry.BorderBrush = _selectBrush;
 		};
 		entry.MouseLeave += delegate
 		{
@@ -1124,7 +1134,7 @@ public sealed class AppSwitcher : Window
 	// pressed, then dismisses the switcher and opens the Start screen via StartRequested.
 	private void BuildStartBar()
 	{
-		_startGlyphBrush = new SolidColorBrush(System.Windows.Media.Colors.White);
+		_startGlyphBrush = new SolidColorBrush(StartGlyphRest);
 		System.Windows.Shapes.Rectangle glyph = new System.Windows.Shapes.Rectangle
 		{
 			Width = 24.0,
@@ -1190,14 +1200,14 @@ public sealed class AppSwitcher : Window
 			}
 			if (_startGlyphBrush != null)
 			{
-				_startGlyphBrush.Color = System.Windows.Media.Colors.White;
+				_startGlyphBrush.Color = StartGlyphRest;
 			}
 		};
 		_startBar.MouseLeftButtonDown += delegate(object _, MouseButtonEventArgs e)
 		{
 			if (_startGlyphBrush != null)
 			{
-				_startGlyphBrush.Color = StartAccent.Color();   // pressed -> theme accent
+				_startGlyphBrush.Color = DarkRest.Visuals ? DarkRestPalette.AccentLineColor : StartAccent.Color();   // pressed -> theme accent
 			}
 			e.Handled = true;
 		};
@@ -1205,7 +1215,7 @@ public sealed class AppSwitcher : Window
 		{
 			if (_startGlyphBrush != null)
 			{
-				_startGlyphBrush.Color = System.Windows.Media.Colors.White;
+				_startGlyphBrush.Color = StartGlyphRest;
 			}
 			e.Handled = true;
 			HideSwitcher();
@@ -1215,11 +1225,18 @@ public sealed class AppSwitcher : Window
 
 	// The Start bar is built once (unlike the entries, which are rebuilt every show), so keep its bar/text brushes in
 	// step whenever SyncPalette swaps the palette (normal vs high-contrast). Hover/press read the live fields at event time.
+	// The Start logo's resting colour: white, or the soft ink in Dark rest (no pure white on the black strip).
+	private static System.Windows.Media.Color StartGlyphRest => DarkRest.Visuals ? DarkRestPalette.InkColor : System.Windows.Media.Colors.White;
+
 	private void RefreshStartBarPalette()
 	{
 		if (_startBar != null)
 		{
 			_startBar.Background = _labelBrush;
+		}
+		if (_startGlyphBrush != null)
+		{
+			_startGlyphBrush.Color = StartGlyphRest;
 		}
 		if (_startText != null)
 		{
@@ -1425,8 +1442,21 @@ public sealed class AppSwitcher : Window
 			_labelBrush = new SolidColorBrush(System.Windows.SystemColors.ControlColor);
 			_thumbBrush = new SolidColorBrush(System.Windows.SystemColors.ControlDarkColor);
 			_hoverBrush = new SolidColorBrush(System.Windows.SystemColors.HighlightColor);
+			_selectBrush = _hoverBrush;
 			_textBrush = new SolidColorBrush(System.Windows.SystemColors.ControlTextColor);
 			base.Background = new SolidColorBrush(System.Windows.SystemColors.WindowColor);
+		}
+		else if (DarkRest.Visuals)
+		{
+			// Dark rest: neutral near-black panel, label and thumbnail plates, a visible hover lift and soft ink.
+			_panelBrush = new SolidColorBrush(DarkRestPalette.PanelColor);
+			_labelBrush = new SolidColorBrush(DarkRestPalette.FieldColor);
+			_thumbBrush = new SolidColorBrush(DarkRestPalette.HoverColor);
+			// the hover lift at about 1.7:1 on the panel
+			_hoverBrush = new SolidColorBrush(System.Windows.Media.Color.FromRgb(0x3A, 0x3A, 0x3A));
+			_selectBrush = new SolidColorBrush(DarkRestPalette.AccentLineColor);
+			_textBrush = new SolidColorBrush(DarkRestPalette.InkColor);
+			base.Background = new SolidColorBrush(DarkRestPalette.PanelColor);
 		}
 		else
 		{
@@ -1434,6 +1464,7 @@ public sealed class AppSwitcher : Window
 			_labelBrush = new SolidColorBrush(FaintTint(0.72));
 			_thumbBrush = new SolidColorBrush(FaintTint(0.66));
 			_hoverBrush = new SolidColorBrush(FaintTint(0.34));
+			_selectBrush = _hoverBrush;
 			_textBrush = new SolidColorBrush(Colors.White);
 			base.Background = new LinearGradientBrush(FaintTint(0.82), FaintTint(0.94), 90.0);
 		}
@@ -1442,6 +1473,8 @@ public sealed class AppSwitcher : Window
 		bool rest = DarkRest.Visuals;
 		_search.Background = rest ? DarkRestPalette.FieldBox : _searchBgNormal;
 		_search.BorderBrush = rest ? DarkRestPalette.FieldBorder : _searchBorderNormal;
+		_search.Foreground = rest ? DarkRestPalette.FieldInk : _searchInkNormal;
+		_search.CaretBrush = rest ? DarkRestPalette.FieldInk : _searchInkNormal;
 		DarkRestPalette.RemoveRestResources(base.Resources);
 		if (rest)
 		{
@@ -1453,6 +1486,11 @@ public sealed class AppSwitcher : Window
 	private readonly System.Windows.Media.Brush _searchBgNormal;
 
 	private readonly System.Windows.Media.Brush _searchBorderNormal;
+
+	private readonly System.Windows.Media.Brush _searchInkNormal = System.Windows.Media.Brushes.White;
+
+	// QA: the search box's caret brush.
+	internal System.Windows.Media.Brush QaCaretBrush => _search.CaretBrush;
 
 	private void ConfigureNativeSurface()
 	{
@@ -1599,7 +1637,10 @@ public sealed class AppSwitcher : Window
 		return t;
 	}
 
-	public void QaRender(string outPath)
+	// QA: the selected entry's bounds in the last render (empty when nothing was selected).
+	internal Rect QaSelectedBounds { get; private set; }
+
+	public void QaRender(string outPath, int selectIndex = -1)
 	{
 		//IL_00d0: Unknown result type (might be due to invalid IL or missing references)
 		base.Left = -4000.0;
@@ -1610,7 +1651,16 @@ public sealed class AppSwitcher : Window
 		Show();
 		_hwnd = new WindowInteropHelper(this).Handle;
 		BuildEntries();
+		QaSelectedBounds = Rect.Empty;
+		if (selectIndex >= 0 && selectIndex < _list.Children.Count)
+		{
+			SelectIndex(selectIndex);
+		}
 		UpdateLayout();
+		if (selectIndex >= 0 && selectIndex < _list.Children.Count && _list.Children[selectIndex] is FrameworkElement selected)
+		{
+			QaSelectedBounds = selected.TransformToAncestor(_slideRoot).TransformBounds(new Rect(selected.RenderSize));
+		}
 		// Render the FULL window content (_slideRoot: search box on top, the scrolling list, and the docked Start bar at
 		// the bottom) at the real window height, so the Start button is included and the ScrollViewer clips like it does
 		// live. (Rendering just _list omitted the docked chrome.)

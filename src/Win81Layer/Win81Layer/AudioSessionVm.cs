@@ -90,9 +90,9 @@ public sealed class AudioSessionVm : INotifyPropertyChanged
 		_muted = muted;
 	}
 
-	internal static AudioSessionVm Preview(string name, int pct, bool muted = false)
+	internal static AudioSessionVm Preview(string name, int pct, bool muted = false, ImageSource? icon = null)
 	{
-		return new AudioSessionVm(null, name, null, Math.Clamp(pct, 0, 100), muted);
+		return new AudioSessionVm(null, name, icon, Math.Clamp(pct, 0, 100), muted);
 	}
 
 	public void Toggle()

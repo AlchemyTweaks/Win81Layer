@@ -39,6 +39,8 @@ public static class TaskbarContextMenu
 
 	private static bool _themePaletteLight;
 
+	private static bool _themePaletteRest;
+
 	private static bool _preferenceHooked;
 
 	internal static Style ItemStyle => (Style)Application.Current.Resources["Win81MenuItem"];
@@ -615,7 +617,8 @@ public static class TaskbarContextMenu
 	{
 		Image img = new Image
 		{
-			Source = src,
+			// Dark rest: a dark app icon is lifted or outlined, as on the taskbar, so it does not vanish on the menu
+			Source = DarkRest.Visuals ? DarkRestIcons.Visible(src) : src,
 			Width = 16.0,
 			Height = 16.0,
 			SnapsToDevicePixels = true
@@ -628,12 +631,14 @@ public static class TaskbarContextMenu
 	// colour is a deterministic pick from a small Metro palette so the menu shows varied blue/purple/teal/... tiles.
 	internal static FrameworkElement MenuGlyph(int codepoint)
 	{
+		// Dark rest: the coloured squares are toned down like the Action Center tiles and the glyph is in the soft ink
+		bool rest = DarkRest.Visuals;
 		FrameworkElement child;
 		if (codepoint == 57621 || codepoint == 59155)   // E115 / E713 Settings gear -> the ONE canonical launcher gear (white on the tile)
 		{
 			child = new System.Windows.Controls.Image
 			{
-				Source = SettingsGlyph.Gear(Colors.White),
+				Source = SettingsGlyph.Gear(rest ? DarkRestPalette.InkColor : Colors.White),
 				Width = 14.0,
 				Height = 14.0,
 				HorizontalAlignment = HorizontalAlignment.Center,
@@ -648,7 +653,7 @@ public static class TaskbarContextMenu
 				Text = ((char)codepoint).ToString(),
 				FontFamily = new FontFamily(sym ? "Segoe UI Symbol" : "Segoe MDL2 Assets"),
 				FontSize = (sym ? 11.0 : 10.0),
-				Foreground = System.Windows.Media.Brushes.White,
+				Foreground = rest ? DarkRestPalette.Ink : System.Windows.Media.Brushes.White,
 				HorizontalAlignment = HorizontalAlignment.Center,
 				VerticalAlignment = VerticalAlignment.Center
 			};
@@ -657,7 +662,7 @@ public static class TaskbarContextMenu
 		{
 			Width = 18.0,
 			Height = 18.0,
-			Background = TileBrushFor(codepoint),
+			Background = TileBrushFor(codepoint, rest),
 			SnapsToDevicePixels = true,
 			HorizontalAlignment = HorizontalAlignment.Center,
 			VerticalAlignment = VerticalAlignment.Center,
@@ -678,17 +683,20 @@ public static class TaskbarContextMenu
 
 	private static readonly Dictionary<int, Brush> _tileBrushCache = new Dictionary<int, Brush>();
 
-	private static Brush TileBrushFor(int codepoint)
+	private static Brush TileBrushFor(int codepoint, bool rest)
 	{
+		// the Dark rest colours under their own keys (codepoints stay below 0x110000)
+		int key = rest ? codepoint | 0x40000000 : codepoint;
 		lock (_tileBrushCache)
 		{
-			if (_tileBrushCache.TryGetValue(codepoint, out Brush cached))
+			if (_tileBrushCache.TryGetValue(key, out Brush cached))
 			{
 				return cached;
 			}
-			SolidColorBrush b = new SolidColorBrush(TilePalette[(uint)codepoint % (uint)TilePalette.Length]);
+			Color c = TilePalette[(uint)codepoint % (uint)TilePalette.Length];
+			SolidColorBrush b = new SolidColorBrush(rest ? DarkRestPalette.Mute(c) : c);
 			b.Freeze();
-			_tileBrushCache[codepoint] = b;
+			_tileBrushCache[key] = b;
 			return b;
 		}
 	}
@@ -1045,13 +1053,20 @@ public static class TaskbarContextMenu
 		return GetThemePalette().TryGetValue("M.Bg", out Brush b) && b is SolidColorBrush sc ? sc.Color : Colors.Transparent;
 	}
 
+	// QA: one colour of the code-built menu palette (transparent when the key is unknown).
+	internal static Color QaMenuColor(string key)
+	{
+		return GetThemePalette().TryGetValue(key, out Brush b) && b is SolidColorBrush sc ? sc.Color : Colors.Transparent;
+	}
+
 	private static Dictionary<string, Brush> GetThemePalette()
 	{
 		bool glass = ShellSkin.GlassOn;
 		bool light = IsLightTheme();
+		bool rest = DarkRest.Visuals;
 		lock (ThemeGate)
 		{
-			if (_themePalette != null && _themePaletteGlass == glass && _themePaletteLight == light)
+			if (_themePalette != null && _themePaletteGlass == glass && _themePaletteLight == light && _themePaletteRest == rest)
 			{
 				return _themePalette;
 			}
@@ -1067,7 +1082,31 @@ public static class TaskbarContextMenu
 			}
 
 			Dictionary<string, Brush> palette = new Dictionary<string, Brush>(StringComparer.Ordinal);
-			if (glass)
+			if (rest)
+			{
+				// Dark rest (before glass and light): a near-black menu with soft ink, a neutral hover row that can be
+				// seen on it (1.5:1) and the keyboard-highlighted row in the accent fill with near-white text (4.5:1),
+				// in both skins.
+				AddHex("M.Bg", glass ? "#F00F0F0F" : "#FF0F0F0F");
+				AddHex("M.Fg", "#DCDCDC");
+				AddHex("M.Dis", "#888888");
+				AddHex("M.Hover", "#323232");
+				AddHex("M.HoverBorder", "#00000000");
+				AddHex("M.Border", "#4D4D4D");
+				// separators that still show the grouping (1.7:1) and a submenu arrow in the soft ink
+				AddHex("M.Sep", "#3A3A3A");
+				AddHex("M.Arrow", "#DCDCDC");
+				AddHex("M.KbBg", "#4E7179");
+				AddHex("M.KbFg", "#EEEEEE");
+				AddHex("M.KbGesture", "#EEEEEE");
+				// toggles: a dark Off track, an outline on every track (3:1 on the menu and on the hover row) and a
+				// light one on the keyboard row, whose fill is the On colour; shortcut text 4.5:1 on the hover row
+				AddHex("M.ToggleOff", "#141414");
+				AddHex("M.ToggleBorder", "#888888");
+				AddHex("M.KbToggleBorder", "#EEEEEE");
+				AddHex("M.Gesture", "#AAAAAA");
+			}
+			else if (glass)
 			{
 				Color tone = ShellSkin.AccentTone(0.30);
 				Add("M.Bg", Color.FromArgb(0xB0, tone.R, tone.G, tone.B));
@@ -1081,6 +1120,10 @@ public static class TaskbarContextMenu
 				Add("M.KbBg", Color.FromArgb(0xFF, accent.R, accent.G, accent.B));
 				AddHex("M.KbFg", "#FFFFFF");
 				AddHex("M.KbGesture", "#D0D0D0");
+				AddHex("M.ToggleOff", "#8E8E8E");
+				AddHex("M.ToggleBorder", "#00000000");
+				AddHex("M.KbToggleBorder", "#00000000");
+				AddHex("M.Gesture", "#8E8E8E");
 			}
 			else if (light)
 			{
@@ -1098,6 +1141,10 @@ public static class TaskbarContextMenu
 				AddHex("M.KbBg", "#000000");
 				AddHex("M.KbFg", "#FFFFFF");
 				AddHex("M.KbGesture", "#C8C8C8");
+				AddHex("M.ToggleOff", "#767676");
+				AddHex("M.ToggleBorder", "#00000000");
+				AddHex("M.KbToggleBorder", "#00000000");
+				AddHex("M.Gesture", "#767676");
 			}
 			else
 			{
@@ -1115,10 +1162,15 @@ public static class TaskbarContextMenu
 				AddHex("M.KbBg", "#FFFFFF");
 				AddHex("M.KbFg", "#000000");
 				AddHex("M.KbGesture", "#3A3A3A");
+				AddHex("M.ToggleOff", "#8A8A8A");
+				AddHex("M.ToggleBorder", "#00000000");
+				AddHex("M.KbToggleBorder", "#00000000");
+				AddHex("M.Gesture", "#8A8A8A");
 			}
 
 			_themePaletteGlass = glass;
 			_themePaletteLight = light;
+			_themePaletteRest = rest;
 			_themePalette = palette;
 			return palette;
 

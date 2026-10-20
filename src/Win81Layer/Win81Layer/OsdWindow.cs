@@ -193,11 +193,33 @@ public sealed class OsdWindow : Window
 	{
 		pct = Math.Clamp(pct, 0, 100);
 		int filled = (int)Math.Round((double)pct / 100.0 * 16.0);
-		SolidColorBrush fill = (muted ? Freeze(4285164138u) : new SolidColorBrush(SafeAccent()));
+		bool rest = DarkRest.Visuals;
+		// Dark rest: the accent line for the level and a lighter grey when muted, both 3:1 or more against the empty
+		// segments; soft ink for the value and the glyph.
+		System.Windows.Media.Brush fill = rest ? (muted ? DarkRestPalette.OsdMuted : DarkRestPalette.OsdFill) : (muted ? Freeze(4285164138u) : new SolidColorBrush(SafeAccent()));
 		System.Windows.Media.Brush empty = EmptyFor();
+		System.Windows.Media.Brush ink = rest ? DarkRestPalette.Ink : System.Windows.Media.Brushes.White;
+		_value.Foreground = ink;
+		_icon.Foreground = ink;
+		// the white volume picture at the soft ink's brightness
+		_iconImg.Opacity = rest ? 0.86 : 1.0;
 		for (int i = 0; i < 16; i++)
 		{
-			_segs[i].Background = ((i < filled) ? fill : empty);
+			bool on = i < filled;
+			if (rest)
+			{
+				// Dark rest: the empty segments are hollow, outlined in the control grey (3.8:1 against the card), so
+				// the whole scale stays visible and filled differs from empty by shape as well as by colour
+				_segs[i].Background = on ? fill : System.Windows.Media.Brushes.Transparent;
+				_segs[i].BorderBrush = on ? null : DarkRestPalette.Boundary;
+				_segs[i].BorderThickness = new Thickness(on ? 0.0 : 1.0);
+			}
+			else
+			{
+				_segs[i].Background = on ? fill : empty;
+				_segs[i].ClearValue(Border.BorderBrushProperty);
+				_segs[i].ClearValue(Border.BorderThicknessProperty);
+			}
 		}
 		_value.Text = pct.ToString();
 	}

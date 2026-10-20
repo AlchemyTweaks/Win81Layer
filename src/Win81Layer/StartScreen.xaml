@@ -3,6 +3,10 @@
   <FrameworkElement.Resources>
     <ResourceDictionary>
       <local:SeasonalIconConverter x:Key="SeasonalIconPick" />
+      <!-- Dark rest tones solid tile colours down (and keeps the dimming scrim for picture fills only); see DarkRestPalette.MuteTile. -->
+      <local:RestTileFillConverter x:Key="RestTileFill" />
+      <local:RestTilePlateScrimConverter x:Key="RestTilePlateScrim" />
+      <local:RestOverrideArtConverter x:Key="RestOverrideArt" />
       <!-- Start text and all-apps search box. Dark rest swaps these in code (StartScreen.ApplyRestResources); these are the normal values. -->
       <SolidColorBrush x:Key="Start.Ink" Color="#FFFFFFFF" />
       <SolidColorBrush x:Key="Start.SearchField" Color="#FFFFFFFF" />
@@ -11,6 +15,21 @@
       <SolidColorBrush x:Key="Start.SearchGlyph" Color="#FF000000" />
       <SolidColorBrush x:Key="Start.SearchBorder" Color="#FF767676" />
       <SolidColorBrush x:Key="Start.InkSoft" Color="#E6FFFFFF" />
+      <!-- The all-apps search button. Start writes the accent here (the same brush as SearchAccent); Dark rest its selection fill. -->
+      <SolidColorBrush x:Key="Start.SearchButton" Color="#6A2C91" />
+      <SolidColorBrush x:Key="Start.SearchButtonInk" Color="#FFFFFFFF" />
+      <!-- The frame of a selected tile; Dark rest uses its soft ink (the check corner keeps the accent). -->
+      <SolidColorBrush x:Key="Start.SelectBorder" Color="#FF2672EC" />
+      <!-- Tile names, the keyboard focus frame of a tile and the check corner of a selected tile, with its glyph. Dark rest
+           writes its own values while it is on (the names only while the tiles are toned down); these are the normal ones. -->
+      <SolidColorBrush x:Key="Start.TileInk" Color="#FFFFFFFF" />
+      <SolidColorBrush x:Key="Start.TileFocus" Color="#FFFFFFFF" />
+      <SolidColorBrush x:Key="Start.SelectCheck" Color="#FF2672EC" />
+      <SolidColorBrush x:Key="Start.SelectCheckInk" Color="#FFFFFFFF" />
+      <!-- The live tiles' text, glyphs and logo labels. Dark rest writes the soft ink here while the tiles are toned down; these are the normal values. -->
+      <SolidColorBrush x:Key="Start.LiveInk" Color="#FFFFFFFF" />
+      <SolidColorBrush x:Key="Start.LiveInkDD" Color="#DDFFFFFF" />
+      <SolidColorBrush x:Key="Start.LiveInkF2" Color="#F2FFFFFF" />
       <Style x:Key="{x:Type ContextMenu}" TargetType="{x:Type ContextMenu}" BasedOn="{StaticResource MetroContextMenu}">
         <EventSetter Event="Closed" Handler="OnAnyContextMenuClosed" />
       </Style>
@@ -145,7 +164,7 @@
         </Setter>
       </Style>
       <Style x:Key="TileButton" TargetType="{x:Type Button}">
-        <Setter Property="Foreground" Value="#FFFFFFFF" />
+        <Setter Property="Foreground" Value="{DynamicResource Start.TileInk}" />
         <Setter Property="FontFamily" Value="Segoe UI" />
         <Setter Property="FontSize" Value="13" />
         <Setter Property="Focusable" Value="True" />
@@ -154,7 +173,13 @@
         <Setter Property="Template">
           <Setter.Value>
             <ControlTemplate TargetType="{x:Type Button}">
-              <Border Name="Root" RenderTransformOrigin="0.5,0.5" Width="{Binding PixelWidth}" Height="{Binding PixelHeight}" Background="{Binding Entry.TileBrush}">
+              <Border Name="Root" RenderTransformOrigin="0.5,0.5" Width="{Binding PixelWidth}" Height="{Binding PixelHeight}" local:RestFlag.On="{DynamicResource Start.TileMute}">
+                <Border.Background>
+                  <MultiBinding Converter="{StaticResource RestTileFill}">
+                    <Binding Path="Entry.TileBrush" />
+                    <Binding Path="(local:RestFlag.On)" RelativeSource="{RelativeSource Self}" />
+                  </MultiBinding>
+                </Border.Background>
                 <UIElement.RenderTransform>
                   <TransformGroup>
                     <ScaleTransform x:Name="PressScale" ScaleX="1" ScaleY="1" />
@@ -162,33 +187,56 @@
                   </TransformGroup>
                 </UIElement.RenderTransform>
                 <Grid>
-                  <Image Name="TileIcon" HorizontalAlignment="Center" VerticalAlignment="Center" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality" SnapsToDevicePixels="True" Width="{Binding IconSize}" Height="{Binding IconSize}">
+                  <!-- Dark rest with dimmed tiles: a picture fill keeps the dimming scrim, below the icon, so the icon and the name stay clear (a solid fill is toned down instead; nothing is drawn otherwise). -->
+                  <Border Name="RestScrim" IsHitTestVisible="False" local:RestFlag.On="{DynamicResource Start.TileMute}">
+                    <Border.Background>
+                      <MultiBinding Converter="{StaticResource RestTilePlateScrim}">
+                        <Binding Path="Entry.TileBrush" />
+                        <Binding Path="(local:RestFlag.On)" RelativeSource="{RelativeSource Self}" />
+                      </MultiBinding>
+                    </Border.Background>
+                  </Border>
+                  <Image Name="TileIcon" HorizontalAlignment="Center" VerticalAlignment="Center" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality" SnapsToDevicePixels="True" Width="{Binding IconSize}" Height="{Binding IconSize}" Opacity="{DynamicResource Metro81.GlyphOpacity}" local:RestFlag.On="{DynamicResource Start.RestIcons}">
                     <Image.Source>
                       <MultiBinding Converter="{StaticResource SeasonalIconPick}">
                         <Binding Path="Entry.Icon" />
                         <Binding Path="Entry.SeasonalKey" />
                         <Binding Path="IconSize" />
+                        <Binding Path="(local:RestFlag.On)" RelativeSource="{RelativeSource Self}" />
                       </MultiBinding>
                     </Image.Source>
                   </Image>
-                  <Image Name="FolderFace" HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed" RenderOptions.BitmapScalingMode="HighQuality" Width="{Binding FolderFaceSize}" Height="{Binding FolderFaceSize}" local:TileFx.AnimatedSource="{Binding FolderIcon}" />
-                  <Border Name="OverrideBg" Visibility="Collapsed" Background="{Binding Entry.OverrideBrush}" />
-                  <Image Name="OverrideFace" HorizontalAlignment="Center" VerticalAlignment="Center" Stretch="Uniform" Visibility="Collapsed" RenderOptions.BitmapScalingMode="HighQuality" Source="{Binding Entry.Icon}" Width="{Binding OverrideFaceSize}" Height="{Binding OverrideFaceSize}" />
-                  <!-- Dark rest dims the tile fill and icon a little (Start.TileScrim is only set while it is on; otherwise nothing is drawn). The name is drawn above it, so it stays as readable as before. -->
-                  <Border Name="RestScrim" Background="{DynamicResource Start.TileScrim}" IsHitTestVisible="False" />
+                  <Image Name="FolderFace" HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed" RenderOptions.BitmapScalingMode="HighQuality" Width="{Binding FolderFaceSize}" Height="{Binding FolderFaceSize}" local:TileFx.AnimatedSource="{Binding FolderIcon}" Opacity="{DynamicResource Metro81.GlyphOpacity}" />
+                  <Border Name="OverrideBg" Visibility="Collapsed" local:RestFlag.On="{DynamicResource Start.TileMute}">
+                    <Border.Background>
+                      <MultiBinding Converter="{StaticResource RestTileFill}">
+                        <Binding Path="Entry.OverrideBrush" />
+                        <Binding Path="(local:RestFlag.On)" RelativeSource="{RelativeSource Self}" />
+                      </MultiBinding>
+                    </Border.Background>
+                  </Border>
+                  <Image Name="OverrideFace" HorizontalAlignment="Center" VerticalAlignment="Center" Stretch="Uniform" Visibility="Collapsed" RenderOptions.BitmapScalingMode="HighQuality" Width="{Binding OverrideFaceSize}" Height="{Binding OverrideFaceSize}" Opacity="{DynamicResource Metro81.GlyphOpacity}" local:RestFlag.On="{DynamicResource Start.TileMute}">
+                    <Image.Source>
+                      <MultiBinding Converter="{StaticResource RestOverrideArt}">
+                        <Binding Path="Entry.Icon" />
+                        <Binding Path="Entry.OverrideBrush" />
+                        <Binding Path="(local:RestFlag.On)" RelativeSource="{RelativeSource Self}" />
+                      </MultiBinding>
+                    </Image.Source>
+                  </Image>
                   <TextBlock Name="TileName" Margin="12,0,12,9" VerticalAlignment="Bottom" TextTrimming="CharacterEllipsis" Text="{Binding Entry.Name}" />
                   <Grid Name="LiveFlipHost" Visibility="Collapsed" RenderTransformOrigin="0.5,0.5" Loaded="OnLiveContentLoaded" Unloaded="OnLiveContentUnloaded">
                     <UIElement.RenderTransform>
                       <ScaleTransform x:Name="LiveFlip" ScaleY="1" />
                     </UIElement.RenderTransform>
                     <StackPanel Name="LiveContentFace" HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="12,0,0,10">
-                      <TextBlock FontFamily="Segoe UI Light" FontSize="42" Foreground="#FFFFFFFF" Text="{Binding LivePrimary}" />
-                      <TextBlock FontFamily="Segoe UI" FontSize="14" Foreground="#DDFFFFFF" Margin="2,-4,0,0" Text="{Binding LiveSecondary}" />
+                      <TextBlock FontFamily="Segoe UI Light" FontSize="42" Foreground="{DynamicResource Start.LiveInk}" Text="{Binding LivePrimary}" />
+                      <TextBlock FontFamily="Segoe UI" FontSize="14" Foreground="{DynamicResource Start.LiveInkDD}" Margin="2,-4,0,0" Text="{Binding LiveSecondary}" />
                     </StackPanel>
                     <Grid Name="LiveIconFace" Visibility="Collapsed">
-                      <TextBlock Name="LiveGlyphText" FontFamily="Segoe MDL2 Assets" FontSize="46" Foreground="#FFFFFFFF" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,0,0,8" Text="{Binding LiveGlyph}" />
-                      <Image Name="LiveIconImg" Visibility="Collapsed" Stretch="Uniform" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,0,0,8" Width="{Binding LiveIconSize}" Height="{Binding LiveIconSize}" RenderOptions.BitmapScalingMode="HighQuality" SnapsToDevicePixels="True" Source="{Binding LiveIcon}" />
-                      <TextBlock Name="LiveLogoLabel" FontFamily="Segoe UI" FontSize="13" Foreground="#DDFFFFFF" HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="12,0,0,10" Text="{Binding Entry.Name}" />
+                      <TextBlock Name="LiveGlyphText" FontFamily="Segoe MDL2 Assets" FontSize="46" Foreground="{DynamicResource Start.LiveInk}" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,0,0,8" Text="{Binding LiveGlyph}" />
+                      <Image Name="LiveIconImg" Visibility="Collapsed" Stretch="Uniform" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,0,0,8" Width="{Binding LiveIconSize}" Height="{Binding LiveIconSize}" RenderOptions.BitmapScalingMode="HighQuality" SnapsToDevicePixels="True" Source="{Binding LiveIcon}" Opacity="{DynamicResource Metro81.GlyphOpacity}" />
+                      <TextBlock Name="LiveLogoLabel" FontFamily="Segoe UI" FontSize="13" Foreground="{DynamicResource Start.LiveInkDD}" HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="12,0,0,10" Text="{Binding Entry.Name}" />
                     </Grid>
                   </Grid>
                   <Grid Name="MetroFlipHost" Visibility="Collapsed" RenderTransformOrigin="0.5,0.5" Loaded="OnMetroContentLoaded" Unloaded="OnLiveContentUnloaded">
@@ -201,19 +249,19 @@
                       <Border Background="{DynamicResource Start.TileScrim}" IsHitTestVisible="False" />
                     </Grid>
                     <Grid Name="WeatherLogoFace" Visibility="Collapsed">
-                      <TextBlock Name="WeatherLogoGlyph" FontFamily="Segoe MDL2 Assets" FontSize="46" Foreground="#FFFFFFFF" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,0,0,8" Text="{Binding LiveGlyph}" />
-                      <Image Name="WeatherLogoImg" Visibility="Collapsed" Stretch="Uniform" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,0,0,8" Width="{Binding LiveIconSize}" Height="{Binding LiveIconSize}" RenderOptions.BitmapScalingMode="HighQuality" SnapsToDevicePixels="True" Source="{Binding LiveIcon}" />
-                      <TextBlock Name="WeatherLogoLabel" FontFamily="Segoe UI" FontSize="13" Foreground="#F2FFFFFF" HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="12,0,0,10" Text="{Binding Entry.Name}" />
+                      <TextBlock Name="WeatherLogoGlyph" FontFamily="Segoe MDL2 Assets" FontSize="46" Foreground="{DynamicResource Start.LiveInk}" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,0,0,8" Text="{Binding LiveGlyph}" />
+                      <Image Name="WeatherLogoImg" Visibility="Collapsed" Stretch="Uniform" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,0,0,8" Width="{Binding LiveIconSize}" Height="{Binding LiveIconSize}" RenderOptions.BitmapScalingMode="HighQuality" SnapsToDevicePixels="True" Source="{Binding LiveIcon}" Opacity="{DynamicResource Metro81.GlyphOpacity}" />
+                      <TextBlock Name="WeatherLogoLabel" FontFamily="Segoe UI" FontSize="13" Foreground="{DynamicResource Start.LiveInkF2}" HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="12,0,0,10" Text="{Binding Entry.Name}" />
                     </Grid>
                   </Grid>
-                  <TextBlock FontFamily="Segoe UI Symbol" FontSize="26" Foreground="#F2FFFFFF" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,8,10,0" IsHitTestVisible="False" Text="{Binding LiveSymbol}" />
+                  <TextBlock FontFamily="Segoe UI Symbol" FontSize="26" Foreground="{DynamicResource Start.LiveInkF2}" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,8,10,0" IsHitTestVisible="False" Text="{Binding LiveSymbol}" />
                   <Image Name="DesktopSmallFace" Stretch="UniformToFill" Visibility="Collapsed" RenderOptions.BitmapScalingMode="HighQuality" SnapsToDevicePixels="True" Source="{Binding DesktopSmallIcon}" />
                   <Border Background="{DynamicResource Start.TileScrim}" IsHitTestVisible="False" Visibility="{Binding Visibility, ElementName=DesktopSmallFace}" />
                   <Border Name="HoverOverlay" Background="#20FFFFFF" Visibility="Collapsed" />
-                  <Border Name="FocusBorder" BorderBrush="#FFFFFFFF" BorderThickness="2" Visibility="Collapsed" />
-                  <Border Name="SelectBorder" BorderBrush="#FF2672EC" BorderThickness="3" Visibility="Collapsed" />
-                  <Border Name="SelectCheck" Width="26" Height="26" Background="#FF2672EC" HorizontalAlignment="Right" VerticalAlignment="Top" Visibility="Collapsed">
-                    <TextBlock Text="" FontFamily="Segoe MDL2 Assets" FontSize="13" Foreground="#FFFFFFFF" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                  <Border Name="FocusBorder" BorderBrush="{DynamicResource Start.TileFocus}" BorderThickness="2" Visibility="Collapsed" />
+                  <Border Name="SelectBorder" BorderBrush="{DynamicResource Start.SelectBorder}" BorderThickness="3" Visibility="Collapsed" />
+                  <Border Name="SelectCheck" Width="26" Height="26" Background="{DynamicResource Start.SelectCheck}" HorizontalAlignment="Right" VerticalAlignment="Top" Visibility="Collapsed">
+                    <TextBlock Text="" FontFamily="Segoe MDL2 Assets" FontSize="13" Foreground="{DynamicResource Start.SelectCheckInk}" HorizontalAlignment="Center" VerticalAlignment="Center" />
                   </Border>
                 </Grid>
               </Border>
@@ -293,10 +341,42 @@
                 <Grid>
                   <StackPanel Orientation="Horizontal">
                     <Grid Width="32" Height="32">
-                      <Border Background="{Binding TileBrush}" />
-                      <Border Name="ListOverrideBg" Visibility="Collapsed" Background="{Binding OverrideBrush}" />
-                      <Image Name="ListIcon" Width="24" Height="24" HorizontalAlignment="Center" VerticalAlignment="Center" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality" SnapsToDevicePixels="True" Source="{Binding Icon}" />
-                      <Border Name="RestScrim" Background="{DynamicResource Start.TileScrim}" IsHitTestVisible="False" />
+                      <Border local:RestFlag.On="{DynamicResource Start.TileMute}">
+                        <Border.Background>
+                          <MultiBinding Converter="{StaticResource RestTileFill}">
+                            <Binding Path="TileBrush" />
+                            <Binding Path="(local:RestFlag.On)" RelativeSource="{RelativeSource Self}" />
+                          </MultiBinding>
+                        </Border.Background>
+                      </Border>
+                      <Border Name="RestScrim" IsHitTestVisible="False" local:RestFlag.On="{DynamicResource Start.TileMute}">
+                        <Border.Background>
+                          <MultiBinding Converter="{StaticResource RestTilePlateScrim}">
+                            <Binding Path="TileBrush" />
+                            <Binding Path="(local:RestFlag.On)" RelativeSource="{RelativeSource Self}" />
+                          </MultiBinding>
+                        </Border.Background>
+                      </Border>
+                      <Border Name="ListOverrideBg" Visibility="Collapsed" local:RestFlag.On="{DynamicResource Start.TileMute}">
+                        <Border.Background>
+                          <MultiBinding Converter="{StaticResource RestTileFill}">
+                            <Binding Path="OverrideBrush" />
+                            <Binding Path="(local:RestFlag.On)" RelativeSource="{RelativeSource Self}" />
+                          </MultiBinding>
+                        </Border.Background>
+                      </Border>
+                      <Image Name="ListIcon" Width="24" Height="24" HorizontalAlignment="Center" VerticalAlignment="Center" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality" SnapsToDevicePixels="True" Opacity="{DynamicResource Metro81.GlyphOpacity}" local:RestFlag.On="{DynamicResource Start.RestIcons}">
+                        <Image.Source>
+                          <MultiBinding Converter="{StaticResource SeasonalIconPick}">
+                            <Binding Path="Icon" />
+                            <Binding Source="{x:Null}" />
+                            <Binding Source="{x:Null}" />
+                            <Binding Path="(local:RestFlag.On)" RelativeSource="{RelativeSource Self}" />
+                            <Binding Path="OverrideBrush" />
+                            <Binding Path="(local:RestFlag.On)" ElementName="ListOverrideBg" />
+                          </MultiBinding>
+                        </Image.Source>
+                      </Image>
                     </Grid>
                     <TextBlock Margin="10,0,0,0" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Width="150" Text="{Binding Name}" />
                     <TextBlock Text="new" FontFamily="Segoe UI" FontSize="11" Foreground="#FF6CB8FF" VerticalAlignment="Center" Margin="6,0,0,0">
@@ -478,8 +558,8 @@
           <Button Grid.Column="1" Cursor="Hand" FocusVisualStyle="{x:Null}" Click="OnSearchButtonClick">
             <Control.Template>
               <ControlTemplate TargetType="{x:Type Button}">
-                <Border Name="GoBg" Background="{DynamicResource SearchAccent}">
-                  <TextBlock Text="" FontFamily="Segoe MDL2 Assets" FontSize="16" Foreground="#FFFFFFFF" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                <Border Name="GoBg" Background="{DynamicResource Start.SearchButton}">
+                  <TextBlock Text="" FontFamily="Segoe MDL2 Assets" FontSize="16" Foreground="{DynamicResource Start.SearchButtonInk}" HorizontalAlignment="Center" VerticalAlignment="Center" />
                 </Border>
                 <ControlTemplate.Triggers>
                   <Trigger Property="UIElement.IsMouseOver" Value="True">
@@ -496,7 +576,7 @@
             <Control.Template>
               <ControlTemplate TargetType="{x:Type Button}">
                 <Border Name="Bd" Background="#33FFFFFF">
-                  <Image Stretch="UniformToFill" RenderOptions.BitmapScalingMode="HighQuality" Source="{Binding Tag, RelativeSource={RelativeSource TemplatedParent}}" />
+                  <Image Stretch="UniformToFill" RenderOptions.BitmapScalingMode="HighQuality" Source="{Binding Tag, RelativeSource={RelativeSource TemplatedParent}}" Opacity="{DynamicResource Metro81.GlyphOpacity}" />
                 </Border>
                 <ControlTemplate.Triggers>
                   <Trigger Property="UIElement.IsMouseOver" Value="True">
@@ -719,7 +799,7 @@
           <Grid DockPanel.Dock="Top" Margin="20,22,14,10">
             <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
               <local:MetroDirectionalArrow81 x:Name="PersonalizeBack" Width="36" Height="36" GlyphSize="28" Direction="Left" Margin="0,0,8,0" ToolTip="Back" AutomationProperties.Name="Back" Click="OnPersonalizeClose" />
-              <TextBlock Text="Personalize" Foreground="#FFFFFFFF" FontFamily="Segoe UI Light" FontSize="26" VerticalAlignment="Center" />
+              <TextBlock Text="Personalize" Foreground="{DynamicResource Start.Ink}" FontFamily="Segoe UI Light" FontSize="26" VerticalAlignment="Center" />
             </StackPanel>
             <Button Content="" HorizontalAlignment="Right" VerticalAlignment="Center" Width="34" Height="34" Cursor="Hand" Foreground="#CCFFFFFF" FontFamily="Segoe MDL2 Assets" FontSize="13" ToolTip="Close" FocusVisualStyle="{x:Null}" Click="OnPersonalizeClose">
               <Control.Template>

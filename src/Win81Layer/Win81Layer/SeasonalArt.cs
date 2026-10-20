@@ -19,6 +19,15 @@ internal static class SeasonalArt
 
 	public const int WallpaperVersion = 1;
 
+	// Dark rest's drawn scene has its own version (its file name changes when the scene is redrawn); the seasons keep
+	// WallpaperVersion, so their files are not touched.
+	public const int RestWallpaperVersion = 2;
+
+	// Dark rest's fitted copy of the user's picture is decoded without the picture's colour profile (an embedded sRGB
+	// profile run through the imaging codec turns the darkest levels to black). Its file name carries this version, so
+	// a copy fitted the earlier way is fitted again.
+	public const int RestPictureVersion = 2;
+
 	public static readonly string SeasonalDir = Path.Combine(
 		Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
 		"Win81Layer",
@@ -50,10 +59,19 @@ internal static class SeasonalArt
 
 	private static readonly Geometry HollyVeinUnit = Freeze(new LineGeometry(new Point(0.03, 0.0), new Point(0.49, 0.0)));
 
-	// Dark rest: its desktop scene and its Start pattern. "dusk" is not one of the Personalize designs.
+	// Dark rest: its desktop scene and its Start pattern. Neither "nightgrid" nor the earlier "dusk" is one of the
+	// Personalize designs; "dusk" is still recognised so the look of an earlier version is brought up to date.
 	public const string RestArt = "rest";
 
-	public const string RestPattern = "dusk";
+	public const string RestPattern = "nightgrid";
+
+	public const string LegacyRestPattern = "dusk";
+
+	// The Dark rest pattern of this version or of the earlier one.
+	public static bool IsRestPattern(string? pattern)
+	{
+		return pattern == RestPattern || pattern == LegacyRestPattern;
+	}
 
 	public static bool IsSeasonalPattern(string? pattern)
 	{
@@ -63,7 +81,7 @@ internal static class SeasonalArt
 	// The seasonal designs and the Dark rest pattern: the patterns a preset can write.
 	public static bool IsPresetPattern(string? pattern)
 	{
-		return IsSeasonalPattern(pattern) || pattern == RestPattern;
+		return IsSeasonalPattern(pattern) || IsRestPattern(pattern);
 	}
 
 	public static double TileSize(string pattern)
@@ -74,22 +92,21 @@ internal static class SeasonalArt
 			"ornaments" => 440.0,
 			"bats" => 240.0,
 			"webs" => 260.0,
-			"dusk" => 480.0,
+			"nightgrid" => 40.0,
+			"dusk" => 40.0,
 			_ => 220.0,
 		};
 	}
 
 	// The signature tiles leave a clear band at their top and bottom edges (tile y 0-44 and 408-440). Shifting the
 	// tiles down by this much lines that band up with the Start header (y 40-110), so no motif sits behind the title,
-	// the user name or the header buttons. The dusk lines (every 120 DIU) are shifted so that the header row (y 24-88)
-	// falls between two of them.
+	// the user name or the header buttons. The Dark rest grid is too faint to need it.
 	public static double TileOffsetY(string pattern)
 	{
 		return pattern switch
 		{
 			"pumpkins" => 70.0,
 			"ornaments" => 70.0,
-			"dusk" => 50.0,
 			_ => 0.0,
 		};
 	}
@@ -138,37 +155,31 @@ internal static class SeasonalArt
 		case "holly":
 			DrawHollyTile(dc, baseColor, accent);
 			break;
+		case "nightgrid":
 		case "dusk":
-			DrawDuskTile(dc, accent);
+			DrawNightGridTile(dc, accent);
 			break;
 		}
 	}
 
-	// 480 DIU Dark rest tile: four faint, gently waving lines, each with a fainter echo 10 DIU below. Every line leaves
-	// and re-enters the tile at the same height with the same slope, so the repeat is seamless, and no line comes near
-	// the top or bottom edge (tile y 42-448). On the rest colours the lines are barely lighter than the base.
-	private static readonly Geometry DuskWaves = BuildDuskWaves(0.0);
+	// 40 DIU Dark rest tile: a faint square grid with a line every 10 DIU (1 DIU wide, at 5, 15, 25 and 35), in the accent
+	// at a low alpha, so on black it is barely lighter than the base. The lines sit 5 DIU in from each edge, so the repeat
+	// is seamless. Start shows the picture or the drawn scene instead; this tile is used when they are not (High Contrast).
+	private static readonly Geometry NightGridLines = BuildNightGridLines();
 
-	private static readonly Geometry DuskEchoes = BuildDuskWaves(10.0);
-
-	private static void DrawDuskTile(DrawingContext dc, Color accent)
+	private static void DrawNightGridTile(DrawingContext dc, Color accent)
 	{
-		dc.DrawGeometry(null, MakePen(Solid(Color.FromArgb(0x1F, accent.R, accent.G, accent.B)), 1.6), DuskWaves);
-		dc.DrawGeometry(null, MakePen(Solid(Color.FromArgb(0x10, accent.R, accent.G, accent.B)), 1.0), DuskEchoes);
+		dc.DrawGeometry(Solid(Color.FromArgb(0x30, accent.R, accent.G, accent.B)), null, NightGridLines);
 	}
 
-	private static Geometry BuildDuskWaves(double dy)
+	// One filled shape (nonzero fill), so the crossings are not drawn twice.
+	private static Geometry BuildNightGridLines()
 	{
-		StreamGeometry g = new StreamGeometry();
-		using (StreamGeometryContext c = g.Open())
+		GeometryGroup g = new GeometryGroup { FillRule = FillRule.Nonzero };
+		foreach (double p in new double[4] { 5.0, 15.0, 25.0, 35.0 })
 		{
-			foreach (double y0 in new double[4] { 60.0, 180.0, 300.0, 420.0 })
-			{
-				double y = y0 + dy;
-				c.BeginFigure(new Point(0.0, y), isFilled: false, isClosed: false);
-				c.QuadraticBezierTo(new Point(120.0, y - 36.0), new Point(240.0, y), isStroked: true, isSmoothJoin: true);
-				c.QuadraticBezierTo(new Point(360.0, y + 36.0), new Point(480.0, y), isStroked: true, isSmoothJoin: true);
-			}
+			g.Children.Add(new RectangleGeometry(new Rect(p, 0.0, 1.0, 40.0)));
+			g.Children.Add(new RectangleGeometry(new Rect(0.0, p, 40.0, 1.0)));
 		}
 		g.Freeze();
 		return g;
@@ -726,8 +737,16 @@ internal static class SeasonalArt
 
 	private static readonly string[] PictureExtensions = new string[4] { ".jpg", ".jpeg", ".png", ".bmp" };
 
+	// QA hook, honoured only in read-only diagnostics: the only folder pictures are looked up in.
+	internal static string? DiagnosticsPictureDir { get; set; }
+
 	private static IEnumerable<string> PictureDirs()
 	{
+		if (SettingsStore.ReadOnlyDiagnostics && DiagnosticsPictureDir != null)
+		{
+			yield return DiagnosticsPictureDir;
+			yield break;
+		}
 		yield return CustomDir;
 		yield return Path.Combine(AppContext.BaseDirectory, "seasonal");
 	}
@@ -810,7 +829,19 @@ internal static class SeasonalArt
 		catch
 		{
 		}
-		return $"{art}-picture-{hash:x8}-{width}x{height}.png";
+		return art == RestArt ? $"{art}-picture-v{RestPictureVersion}-{hash:x8}-{width}x{height}.png" : $"{art}-picture-{hash:x8}-{width}x{height}.png";
+	}
+
+	// The season's picture fitted to the screen and written as PNG. Dark rest's goes through LoadPictureFilled, the very
+	// decode Start shows, so the desktop and Start carry the same pixels; the seasons keep RenderPicturePng below.
+	public static void RenderPicturePng(string art, string source, int width, int height, string path)
+	{
+		if (art == RestArt)
+		{
+			WritePngAtomic(LoadPictureFilled(source, width, height), path);
+			return;
+		}
+		RenderPicturePng(source, width, height, path);
 	}
 
 	// Crops the picture to fill width x height (centred) and writes it as PNG. Must run on an STA thread.
@@ -852,7 +883,7 @@ internal static class SeasonalArt
 
 	public static string WallpaperFileName(string art, int width, int height)
 	{
-		return $"{art}-v{WallpaperVersion}-{width}x{height}.png";
+		return $"{art}-v{(art == RestArt ? RestWallpaperVersion : WallpaperVersion)}-{width}x{height}.png";
 	}
 
 	public static bool IsSeasonalFile(string? path)
@@ -913,7 +944,33 @@ internal static class SeasonalArt
 
 	private static readonly Dictionary<string, Brush> Previews = new Dictionary<string, Brush>(StringComparer.Ordinal);
 
+	// QA: in read-only diagnostics the Dark rest preview is built at once (so renders are repeatable) unless this is set.
+	internal static bool QaAsyncPreviews;
+
+	// QA: the last Dark rest preview being built in the background.
+	internal static System.Threading.Tasks.Task? QaLastPreviewTask;
+
+	// QA: forgets the previews built so far.
+	internal static void QaClearPreviews()
+	{
+		lock (Previews)
+		{
+			Previews.Clear();
+		}
+	}
+
+	private static readonly BitmapSource PreviewPlaceholder = BlackPixel();
+
+	private static BitmapSource BlackPixel()
+	{
+		BitmapSource b = BitmapSource.Create(1, 1, 96.0, 96.0, PixelFormats.Bgr32, null, new byte[4], 4);
+		b.Freeze();
+		return b;
+	}
+
 	// A small render of the season's desktop scene for the preview tiles and chips, drawn once per process. UI thread.
+	// Dark rest's is built from the screen-sized picture or scene on a worker: the brush shows black (the scene is
+	// nearly black) until it is there, so the page opens without waiting for it.
 	public static Brush PreviewBrush(string art)
 	{
 		string? picture = CustomPictureFor(art);
@@ -925,10 +982,40 @@ internal static class SeasonalArt
 				return hit;
 			}
 		}
+		if (art == RestArt && (!SettingsStore.ReadOnlyDiagnostics || QaAsyncPreviews))
+		{
+			ImageBrush pending = new ImageBrush(PreviewPlaceholder)
+			{
+				Stretch = Stretch.UniformToFill,
+				AlignmentY = AlignmentY.Top
+			};
+			RenderOptions.SetBitmapScalingMode(pending, BitmapScalingMode.HighQuality);
+			lock (Previews)
+			{
+				Previews[key] = pending;
+			}
+			System.Windows.Threading.Dispatcher ui = System.Windows.Threading.Dispatcher.CurrentDispatcher;
+			QaLastPreviewTask = System.Threading.Tasks.Task.Run(delegate
+			{
+				try
+				{
+					BitmapSource built = RestPreview(picture);
+					ui.BeginInvoke((Action)delegate
+					{
+						pending.ImageSource = built;
+					});
+				}
+				catch (Exception ex)
+				{
+					Logger.Log("Seasonal: preview render failed: " + ex.Message);
+				}
+			});
+			return pending;
+		}
 		Brush brush;
 		try
 		{
-			ImageBrush ib = new ImageBrush(picture != null ? LoadPreviewPicture(picture) : RenderWallpaper(art, 480, 270))
+			ImageBrush ib = new ImageBrush(art == RestArt ? RestPreview(picture) : picture != null ? LoadPreviewPicture(picture) : RenderWallpaper(art, 480, 270))
 			{
 				Stretch = Stretch.UniformToFill,
 				// the lower part holds the ground and the caption covers it, so keep the sky and the decorations
@@ -944,7 +1031,7 @@ internal static class SeasonalArt
 			brush = Solid(art switch
 			{
 				"christmas" => Hex("#FF0B3D2C"),
-				RestArt => Hex("#FF121519"),
+				RestArt => Hex("#FF000000"),
 				_ => Hex("#FF22103A"),
 			});
 		}
@@ -953,6 +1040,130 @@ internal static class SeasonalArt
 			Previews[key] = brush;
 		}
 		return brush;
+	}
+
+	// Dark rest's preview: the screen-sized picture (or the drawn scene) averaged down in 8 x 8 blocks to 240 x 135 and
+	// then over 5 x 5 of those blocks (a 40 pixel window, four periods of the fine grid). Its grid (one line about every
+	// 10 pixels) would otherwise turn into an uneven plaid at chip size; averaged, it keeps the calm, nearly black look
+	// with the soft glow. A picture that cannot be decoded shows the drawn scene, which the desktop and Start fall back to
+	// as well.
+	internal static BitmapSource RestPreview(string? picture)
+	{
+		BitmapSource? full = null;
+		if (picture != null)
+		{
+			try
+			{
+				full = LoadPictureFilled(picture, 1920, 1080);
+			}
+			catch (Exception ex) when (ex is NotSupportedException || ex is FileFormatException || ex is ArgumentException || ex is InvalidOperationException || ex is System.Runtime.InteropServices.COMException)
+			{
+				Logger.Log("Seasonal: the Dark rest picture could not be decoded for the preview, so the drawn scene is shown: " + ex.Message);
+			}
+		}
+		full ??= RenderRestScene(1920, 1080, 960.0);
+		return BoxBlur(BoxDownscale(full, 8), 2);
+	}
+
+	// A box average over (2 r + 1) x (2 r + 1) pixels of a Bgr32 bitmap, the edges repeated.
+	internal static BitmapSource BoxBlur(BitmapSource src, int r)
+	{
+		int w = src.PixelWidth;
+		int h = src.PixelHeight;
+		byte[] px = new byte[w * h * 4];
+		src.CopyPixels(px, w * 4, 0);
+		int n = 2 * r + 1;
+		int[] tmp = new int[w * h * 3];
+		for (int y = 0; y < h; y++)
+		{
+			for (int x = 0; x < w; x++)
+			{
+				int b = 0;
+				int g = 0;
+				int rr = 0;
+				for (int k = -r; k <= r; k++)
+				{
+					int i = (y * w + Math.Clamp(x + k, 0, w - 1)) * 4;
+					b += px[i];
+					g += px[i + 1];
+					rr += px[i + 2];
+				}
+				int o = (y * w + x) * 3;
+				tmp[o] = b;
+				tmp[o + 1] = g;
+				tmp[o + 2] = rr;
+			}
+		}
+		byte[] outPx = new byte[w * h * 4];
+		int d = n * n;
+		for (int y = 0; y < h; y++)
+		{
+			for (int x = 0; x < w; x++)
+			{
+				int b = 0;
+				int g = 0;
+				int rr = 0;
+				for (int k = -r; k <= r; k++)
+				{
+					int i = (Math.Clamp(y + k, 0, h - 1) * w + x) * 3;
+					b += tmp[i];
+					g += tmp[i + 1];
+					rr += tmp[i + 2];
+				}
+				int o = (y * w + x) * 4;
+				outPx[o] = (byte)((b + d / 2) / d);
+				outPx[o + 1] = (byte)((g + d / 2) / d);
+				outPx[o + 2] = (byte)((rr + d / 2) / d);
+				outPx[o + 3] = 255;
+			}
+		}
+		BitmapSource result = BitmapSource.Create(w, h, 96.0, 96.0, PixelFormats.Bgr32, null, outPx, w * 4);
+		result.Freeze();
+		return result;
+	}
+
+	// Averages factor x factor blocks of a Bgr32 bitmap (any other format is converted first).
+	internal static BitmapSource BoxDownscale(BitmapSource src, int factor)
+	{
+		BitmapSource bgr = src.Format == PixelFormats.Bgr32 ? src : new FormatConvertedBitmap(src, PixelFormats.Bgr32, null, 0.0);
+		int w = bgr.PixelWidth;
+		int h = bgr.PixelHeight;
+		int ow = Math.Max(1, w / factor);
+		int oh = Math.Max(1, h / factor);
+		byte[] px = new byte[w * h * 4];
+		bgr.CopyPixels(px, w * 4, 0);
+		byte[] outPx = new byte[ow * oh * 4];
+		for (int oy = 0; oy < oh; oy++)
+		{
+			for (int ox = 0; ox < ow; ox++)
+			{
+				int b = 0;
+				int g = 0;
+				int r = 0;
+				int n = 0;
+				for (int y = oy * factor; y < Math.Min(h, (oy + 1) * factor); y++)
+				{
+					int row = y * w * 4;
+					for (int x = ox * factor; x < Math.Min(w, (ox + 1) * factor); x++)
+					{
+						int i = row + x * 4;
+						b += px[i];
+						g += px[i + 1];
+						r += px[i + 2];
+						n++;
+					}
+				}
+				int o = (oy * ow + ox) * 4;
+				int d = Math.Max(1, n);
+				outPx[o] = (byte)((b + d / 2) / d);
+				outPx[o + 1] = (byte)((g + d / 2) / d);
+				outPx[o + 2] = (byte)((r + d / 2) / d);
+				outPx[o + 3] = 255;
+			}
+		}
+		BitmapSource result = BitmapSource.Create(ow, oh, 96.0, 96.0, PixelFormats.Bgr32, null, outPx, ow * 4);
+		result.Freeze();
+		return result;
 	}
 
 	private static BitmapSource LoadPreviewPicture(string path)
@@ -971,7 +1182,7 @@ internal static class SeasonalArt
 	{
 		if (art == RestArt)
 		{
-			return RenderRestWallpaper(width, height);
+			return RenderRestScene(width, height, width / 2.0);
 		}
 		DrawingVisual dv = new DrawingVisual();
 		using (DrawingContext dc = dv.RenderOpen())
@@ -998,7 +1209,8 @@ internal static class SeasonalArt
 				DrawChristmasWallpaper(dc, w, h);
 				break;
 			case RestArt:
-				dc.DrawImage(RenderRestWallpaper(Math.Max(1, (int)Math.Round(w)), Math.Max(1, (int)Math.Round(h))), new Rect(0, 0, w, h));
+				int rw = Math.Max(1, (int)Math.Round(w));
+				dc.DrawImage(RenderRestScene(rw, Math.Max(1, (int)Math.Round(h)), rw / 2.0), new Rect(0, 0, w, h));
 				break;
 			default:
 				DrawHalloweenWallpaper(dc, w, h);
@@ -1010,93 +1222,73 @@ internal static class SeasonalArt
 		return group;
 	}
 
-	// ----- Dark rest "Night hills"
+	// ----- Dark rest "Black grid"
 
-	// Three layers of soft hills under a dark sky with a faint glow and a breath of mist. Low contrast and no bright
-	// element anywhere (the lightest pixel is about #1D232B), so it is calm to look at in a dark room.
-	// Its gradients span only a few colour levels across the whole screen, which 8-bit drawing shows as rings and steps.
-	// So every pixel is computed in floating point and then ordered-dithered with a fixed 8 x 8 Bayer matrix: smooth,
-	// and exactly the same every time (no randomness).
-	private static readonly (double X1, double Y1, double X2, double Y2, double X3, double Y3)[] FarRidge = new (double, double, double, double, double, double)[3]
-	{
-		(0.10, 0.57, 0.18, 0.56, 0.28, 0.59),
-		(0.40, 0.63, 0.50, 0.60, 0.60, 0.61),
-		(0.72, 0.62, 0.82, 0.55, 1.00, 0.58)
-	};
-
-	private static readonly (double X1, double Y1, double X2, double Y2, double X3, double Y3)[] MiddleRidge = new (double, double, double, double, double, double)[3]
-	{
-		(0.14, 0.69, 0.24, 0.67, 0.34, 0.69),
-		(0.48, 0.72, 0.62, 0.71, 0.74, 0.69),
-		(0.84, 0.68, 0.93, 0.71, 1.00, 0.72)
-	};
-
-	private static readonly (double X1, double Y1, double X2, double Y2, double X3, double Y3)[] NearRidge = new (double, double, double, double, double, double)[3]
-	{
-		(0.08, 0.78, 0.16, 0.77, 0.26, 0.79),
-		(0.42, 0.83, 0.56, 0.82, 0.66, 0.81),
-		(0.80, 0.80, 0.90, 0.84, 1.00, 0.83)
-	};
-
+	// True black with a very faint dark-teal square grid (a line every 10 px at 1080 lines) and a soft glow at the top
+	// centre, after the Dark rest picture. Most of the screen is pure black; the brightest line pixel is about #151A1B and
+	// the corners fade to #030303. The glow spans only a few colour levels across the screen, which 8-bit drawing shows
+	// as steps, so every pixel is computed in floating point and then ordered-dithered with a fixed 8 x 8 Bayer matrix:
+	// smooth, and exactly the same every time (no randomness). Pure computation: safe on any thread.
 	private static readonly byte[] Bayer8 = new byte[64]
 	{
 		0, 32, 8, 40, 2, 34, 10, 42, 48, 16, 56, 24, 50, 18, 58, 26, 12, 44, 4, 36, 14, 46, 6, 38, 60, 28, 52, 20, 62, 30, 54, 22,
 		3, 35, 11, 43, 1, 33, 9, 41, 51, 19, 59, 27, 49, 17, 57, 25, 15, 47, 7, 39, 13, 45, 5, 37, 63, 31, 55, 23, 61, 29, 53, 21
 	};
 
-	private static BitmapSource RenderRestWallpaper(int width, int height)
+	// glowCentreX: the glow's horizontal centre in pixels (the middle of the screen for the desktop).
+	public static BitmapSource RenderRestScene(int width, int height, double glowCentreX)
 	{
-		double W = width;
-		double H = height;
-		double[] far = RidgeHeights(width, H, 0.60, FarRidge);
-		double[] middle = RidgeHeights(width, H, 0.72, MiddleRidge);
-		double[] near = RidgeHeights(width, H, 0.80, NearRidge);
-		(double R, double G, double B) sky0 = Rgb("#0B0E12");
-		(double R, double G, double B) sky1 = Rgb("#121821");
-		(double R, double G, double B) sky2 = Rgb("#0E1116");
-		(double R, double G, double B) glow = Rgb("#1B2330");
-		(double R, double G, double B) farFill = Rgb("#141A22");
-		(double R, double G, double B) middleFill = Rgb("#10151C");
-		(double R, double G, double B) nearFill = Rgb("#0B0E13");
-		double gx = 0.70 * W;
-		double gy = 0.26 * H;
-		double gr = 0.30 * Math.Max(W, H);
-		// The mist lies on the far hills and follows their outline: it starts at their top edge, is densest a little below
-		// it and is gone 7 % of the height further down, before the middle hills begin. So it never shows as a straight
-		// band or as a light rim along the next ridge.
-		double mistDepth = 0.07 * H;
+		width = Math.Max(1, width);
+		height = Math.Max(1, height);
+		int unit = Math.Max(1, (int)Math.Round(height / 1080.0));
+		int spacing = 10 * unit;
+		int lineWidth = unit;
+		// a vertical line through the horizontal centre
+		int originX = (width / 2) % spacing;
+		double sx = 0.35 * width;
+		double sy = 0.55 * height;
+		// the glow is separable: one factor per column and one per row
+		double[] gx = new double[width];
+		bool[] lineColumn = new bool[width];
+		for (int x = 0; x < width; x++)
+		{
+			double dx = x + 0.5 - glowCentreX;
+			gx[x] = Math.Exp(-(dx * dx) / (2.0 * sx * sx));
+			lineColumn[x] = ((x - originX) % spacing + spacing) % spacing < lineWidth;
+		}
 		int stride = width * 4;
 		byte[] px = new byte[stride * height];
 		for (int y = 0; y < height; y++)
 		{
-			double cy = y + 0.5;
-			// sky: a vertical gradient with stops at 0, 0.55 and 1 of the height
-			double t = cy / H;
-			(double R, double G, double B) row = t < 0.55 ? Mix(sky0, sky1, t / 0.55) : Mix(sky1, sky2, (t - 0.55) / 0.45);
+			double dy = y + 0.5;
+			double gy = Math.Exp(-(dy * dy) / (2.0 * sy * sy));
+			bool lineRow = y % spacing < lineWidth;
+			int row = y * stride;
+			int by = (y & 7) * 8;
 			for (int x = 0; x < width; x++)
 			{
-				// mist: white, at most 4 %, fading in below the far ridge's edge and out again
-				double mist = (10.0 / 255.0) * Haze((cy - far[x]) / mistDepth);
-				(double R, double G, double B) c = row;
-				double dx = x + 0.5 - gx;
-				double dy = cy - gy;
-				double d = Math.Sqrt(dx * dx + dy * dy);
-				if (d < gr)
+				double g = gx[x] * gy;
+				double r;
+				double gg;
+				double b;
+				if (lineRow || lineColumn[x])
 				{
-					c = Mix(c, glow, 0.4 * (1.0 - d / gr));
+					double v = 3.0 + 23.0 * g;
+					r = 0.82 * v;
+					gg = v;
+					b = 1.02 * v;
 				}
-				c = Mix(c, farFill, Coverage(far[x], y));
-				if (mist > 0.0)
+				else
 				{
-					c = Mix(c, (255.0, 255.0, 255.0), mist);
+					r = 1.0 * g;
+					gg = 1.4 * g;
+					b = 2.4 * g;
 				}
-				c = Mix(c, middleFill, Coverage(middle[x], y));
-				c = Mix(c, nearFill, Coverage(near[x], y));
-				double dither = (Bayer8[(y & 7) * 8 + (x & 7)] + 0.5) / 64.0;
-				int i = y * stride + x * 4;
-				px[i] = Quantize(c.B, dither);
-				px[i + 1] = Quantize(c.G, dither);
-				px[i + 2] = Quantize(c.R, dither);
+				double dither = (Bayer8[by + (x & 7)] + 0.5) / 64.0;
+				int i = row + x * 4;
+				px[i] = Quantize(b, dither);
+				px[i + 1] = Quantize(gg, dither);
+				px[i + 2] = Quantize(r, dither);
 				px[i + 3] = 255;
 			}
 		}
@@ -1105,81 +1297,54 @@ internal static class SeasonalArt
 		return bmp;
 	}
 
-	// The height of a hill's top edge at the centre of every pixel column. The hill starts at (0, y0 H) and follows three
-	// cubic segments (fractions of the size) whose x only grows, so each column has exactly one height.
-	private static double[] RidgeHeights(int width, double H, double y0, (double X1, double Y1, double X2, double Y2, double X3, double Y3)[] segments)
-	{
-		List<Point> pts = new List<Point> { new Point(0.0, y0 * H) };
-		Point p0 = pts[0];
-		foreach ((double x1, double y1, double x2, double y2, double x3, double y3) in segments)
-		{
-			Point p1 = new Point(x1 * width, y1 * H);
-			Point p2 = new Point(x2 * width, y2 * H);
-			Point p3 = new Point(x3 * width, y3 * H);
-			for (int k = 1; k <= 512; k++)
-			{
-				double u = k / 512.0;
-				double a = (1 - u) * (1 - u) * (1 - u);
-				double b = 3 * (1 - u) * (1 - u) * u;
-				double c = 3 * (1 - u) * u * u;
-				double e = u * u * u;
-				pts.Add(new Point(a * p0.X + b * p1.X + c * p2.X + e * p3.X, a * p0.Y + b * p1.Y + c * p2.Y + e * p3.Y));
-			}
-			p0 = p3;
-		}
-		double[] heights = new double[width];
-		int j = 0;
-		for (int x = 0; x < width; x++)
-		{
-			double cx = x + 0.5;
-			while (j < pts.Count - 2 && pts[j + 1].X < cx)
-			{
-				j++;
-			}
-			Point a = pts[j];
-			Point b = pts[j + 1];
-			double f = b.X - a.X > 1e-9 ? Math.Clamp((cx - a.X) / (b.X - a.X), 0.0, 1.0) : 0.0;
-			heights[x] = a.Y + (b.Y - a.Y) * f;
-		}
-		return heights;
-	}
-
-	// The mist's density at depth d below the far ridge's edge (0 at the edge, 1 at the mist's lower end): a smooth rise
-	// to its densest point at 0.35 and a longer smooth fall; 0 outside.
-	private static double Haze(double d)
-	{
-		if (d <= 0.0 || d >= 1.0)
-		{
-			return 0.0;
-		}
-		double t = d < 0.35 ? d / 0.35 : 1.0 - (d - 0.35) / 0.65;
-		return t * t * (3.0 - 2.0 * t);
-	}
-
-	// How much of the pixel row y lies below a hill edge at height top (0..1): a soft, anti-aliased edge.
-	private static double Coverage(double top, int y)
-	{
-		return Math.Clamp(y + 1.0 - top, 0.0, 1.0);
-	}
-
-	private static (double R, double G, double B) Rgb(string hex)
-	{
-		Color c = Hex("#FF" + hex.TrimStart('#'));
-		return (c.R, c.G, c.B);
-	}
-
-	private static (double R, double G, double B) Mix((double R, double G, double B) a, (double R, double G, double B) b, double t)
-	{
-		if (t <= 0.0)
-		{
-			return a;
-		}
-		return (a.R + (b.R - a.R) * t, a.G + (b.G - a.G) * t, a.B + (b.B - a.B) * t);
-	}
-
 	private static byte Quantize(double v, double dither)
 	{
 		return (byte)Math.Clamp((int)Math.Floor(v + dither), 0, 255);
+	}
+
+	// The picture decoded to exactly width x height pixels, scaled to fill and cropped in the middle (the same fit as
+	// RenderPicturePng), as one frozen Bgr32 bitmap. Decoding and scaling happen in the imaging codec, so this is safe on
+	// a worker thread. The picture's colour profile is ignored: the Dark rest pictures are near-black sRGB images, and the
+	// codec's colour transform crushes their darkest levels (1 to 3 of 255) to black, which wipes out the faint grid.
+	// Throws when the picture cannot be read.
+	public static BitmapSource LoadPictureFilled(string path, int width, int height)
+	{
+		Uri uri = new Uri(path, UriKind.Absolute);
+		int pw;
+		int ph;
+		using (FileStream fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+		{
+			BitmapDecoder probe = BitmapDecoder.Create(fs, BitmapCreateOptions.DelayCreation | BitmapCreateOptions.IgnoreImageCache | BitmapCreateOptions.IgnoreColorProfile, BitmapCacheOption.None);
+			pw = probe.Frames[0].PixelWidth;
+			ph = probe.Frames[0].PixelHeight;
+		}
+		if (pw <= 0 || ph <= 0)
+		{
+			throw new InvalidOperationException("The picture has no pixels.");
+		}
+		double scale = Math.Max(width / (double)pw, height / (double)ph);
+		int dw = Math.Max(width, (int)Math.Ceiling(pw * scale - 1e-6));
+		int dh = Math.Max(height, (int)Math.Ceiling(ph * scale - 1e-6));
+		BitmapImage img = new BitmapImage();
+		img.BeginInit();
+		img.UriSource = uri;
+		img.DecodePixelWidth = dw;
+		img.DecodePixelHeight = dh;
+		img.CacheOption = BitmapCacheOption.OnLoad;
+		img.CreateOptions = BitmapCreateOptions.IgnoreImageCache | BitmapCreateOptions.IgnoreColorProfile;
+		img.EndInit();
+		img.Freeze();
+		int ox = Math.Max(0, (img.PixelWidth - width) / 2);
+		int oy = Math.Max(0, (img.PixelHeight - height) / 2);
+		int cw = Math.Min(width, img.PixelWidth - ox);
+		int ch = Math.Min(height, img.PixelHeight - oy);
+		FormatConvertedBitmap bgr = new FormatConvertedBitmap(new CroppedBitmap(img, new Int32Rect(ox, oy, cw, ch)), PixelFormats.Bgr32, null, 0.0);
+		int stride = width * 4;
+		byte[] px = new byte[stride * height];
+		bgr.CopyPixels(new Int32Rect(0, 0, cw, ch), px, stride, 0);
+		BitmapSource result = BitmapSource.Create(width, height, 96.0, 96.0, PixelFormats.Bgr32, null, px, stride);
+		result.Freeze();
+		return result;
 	}
 
 	// ----- Halloween "Moonlit hill"

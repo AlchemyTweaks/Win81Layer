@@ -57,7 +57,8 @@ public sealed class ToastWindow : Window
 		{
 			Image img = new Image
 			{
-				Source = icon,
+				// Dark rest: a dark app icon is lifted or outlined so it does not vanish on the dark card
+				Source = rest ? DarkRestIcons.Visible(icon) : icon,
 				Width = 32.0,
 				Height = 32.0,
 				HorizontalAlignment = HorizontalAlignment.Center,

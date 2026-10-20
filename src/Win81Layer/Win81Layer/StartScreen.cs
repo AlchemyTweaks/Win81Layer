@@ -603,6 +603,18 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 			// A newer background always wins: an image decode still running from an earlier refresh is discarded.
 			_bgAppliedToken = ++_bgToken;
 			AppSettings s = SettingsStore.Load();
+			// Dark rest with its own look in place: the Dark rest picture (or its drawn scene), the same as the desktop.
+			bool restBg = RestBackgroundWanted(s);
+			if (!restBg)
+			{
+				// the Dark rest picture is not shown: its screen-sized bitmap is released (decoded again when needed)
+				ReleaseRestBackground();
+			}
+			if (restBg)
+			{
+				ApplyRestBgAsync();
+			}
+			else
 			switch (s.StartBgMode)
 			{
 			case "custom":
@@ -636,12 +648,19 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 			{
 				SolidColorBrush accent = new SolidColorBrush(StartAccent.Color());
 				base.Resources["SearchAccent"] = accent;
+				base.Resources["Start.SearchButton"] = accent;
 				System.Windows.Application.Current.Resources["MenuAccent"] = accent;
 				System.Windows.Application.Current.Resources["MenuAccentLight"] = new SolidColorBrush(StartAccent.Tint(0.55));
 				System.Windows.Media.Color acPress = StartAccent.Color();
 				SolidColorBrush pressed = new SolidColorBrush(System.Windows.Media.Color.FromRgb((byte)(acPress.R * 0.78), (byte)(acPress.G * 0.78), (byte)(acPress.B * 0.78)));
 				pressed.Freeze();
 				System.Windows.Application.Current.Resources["MenuAccentPressed"] = pressed;   // primary-button press/hover (pattern 1) - live with the accent
+				// The accent roles of the Metro controls (focus borders, links, slider fills) follow the accent too.
+				System.Windows.Application.Current.Resources["Metro81.FocusBorder"] = accent;
+				System.Windows.Application.Current.Resources["Metro81.LinkInk"] = accent;
+				System.Windows.Application.Current.Resources["Metro81.SliderFill"] = accent;
+				System.Windows.Application.Current.Resources["Metro81.TextSelection"] = accent;
+				System.Windows.Application.Current.Resources["Metro81.LinkInkHover"] = pressed;
 				SolidColorBrush headerAccent = new SolidColorBrush(StartAccent.Tint(0.6));
 				base.Resources["HeaderAccent"] = headerAccent;
 				System.Windows.Application.Current.Resources["HeaderAccent"] = headerAccent;
@@ -668,11 +687,35 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 		}
 	}
 
-	// Dark rest: softer Start text, a dark all-apps search box and (optionally) slightly dimmed tiles. With Normal (or
-	// under High Contrast) the XAML values come back exactly and nothing dims the tiles.
+	// Dark rest: softer Start text, a dark all-apps search box, neutral hover washes, the accent family for focus and
+	// selection, and (optionally) slightly dimmed tiles. With Normal (or under High Contrast) the XAML values come back
+	// exactly (the accent block above rewrites the shared keys on every refresh) and nothing dims the tiles.
 	private void ApplyRestResources(AppSettings s)
 	{
 		bool rest = DarkRest.VisualsFor(s);
+		if (rest)
+		{
+			base.Resources["HoverTint"] = DarkRestPalette.StartHover;
+			System.Windows.Application.Current.Resources["HoverTint"] = DarkRestPalette.StartHover;
+			base.Resources["ZoomHover"] = DarkRestPalette.StartZoomHover;
+			base.Resources["SearchAccent"] = DarkRestPalette.AccentLine;
+			base.Resources["Start.FocusRing"] = DarkRestPalette.StartFocusRing;
+			base.Resources["Start.NewInk"] = DarkRestPalette.StartNewInk;
+			// The same brushes the application-scope overlay holds (DarkRestPalette.WriteAppResources).
+			ResourceDictionary app = System.Windows.Application.Current.Resources;
+			foreach (string key in new string[7] { "MenuAccent", "MenuAccentPressed", "Metro81.FocusBorder", "Metro81.LinkInk", "Metro81.LinkInkHover", "Metro81.SliderFill", "Metro81.TextSelection" })
+			{
+				if (DarkRestPalette.Token(key) is System.Windows.Media.Brush b)
+				{
+					app[key] = b;
+				}
+			}
+		}
+		else
+		{
+			base.Resources.Remove("Start.FocusRing");
+			base.Resources.Remove("Start.NewInk");
+		}
 		base.Resources["Start.Ink"] = rest ? DarkRestPalette.Ink : DarkRestPalette.NormalInk;
 		base.Resources["Start.InkSoft"] = rest ? DarkRestPalette.InkSoft : DarkRestPalette.NormalInkSoft;
 		base.Resources["Start.SearchField"] = rest ? DarkRestPalette.SearchField : DarkRestPalette.NormalSearchField;
@@ -680,7 +723,20 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 		base.Resources["Start.SearchInk"] = rest ? DarkRestPalette.SearchInk : DarkRestPalette.NormalSearchInk;
 		base.Resources["Start.SearchHint"] = rest ? DarkRestPalette.SearchHint : DarkRestPalette.NormalSearchHint;
 		base.Resources["Start.SearchGlyph"] = rest ? DarkRestPalette.SearchGlyph : DarkRestPalette.NormalSearchGlyph;
-		// Quiet blue-grey scrollbars (the board's bottom rail and the Personalize pane) instead of the bright grey ones.
+		// The all-apps search button: the selection fill with the ink for accent fills (the accent block above writes
+		// the accent there otherwise), and the frame of a selected tile in the soft ink.
+		if (rest)
+		{
+			base.Resources["Start.SearchButton"] = DarkRestPalette.AccentFill;
+		}
+		base.Resources["Start.SearchButtonInk"] = rest ? DarkRestPalette.InkOnAccent : DarkRestPalette.NormalInk;
+		base.Resources["Start.SelectBorder"] = rest ? DarkRestPalette.Ink : NormalSelectBorder;
+		// A tile's keyboard focus frame in the soft ink, and the check corner of a selected tile in the selection fill
+		// with the ink for accent fills (white and the vivid blue otherwise).
+		base.Resources["Start.TileFocus"] = rest ? DarkRestPalette.Ink : DarkRestPalette.NormalInk;
+		base.Resources["Start.SelectCheck"] = rest ? DarkRestPalette.AccentFill : NormalSelectBorder;
+		base.Resources["Start.SelectCheckInk"] = rest ? DarkRestPalette.InkOnAccent : DarkRestPalette.NormalInk;
+		// Quiet grey scrollbars on black (the board's bottom rail and the Personalize pane) instead of the bright grey ones.
 		DarkRestPalette.RemoveRestResources(base.Resources);
 		if (rest)
 		{
@@ -688,6 +744,14 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 			DarkRestPalette.WriteScrollBarDarkStyle(base.Resources);
 		}
 		bool dim = rest && s.RestDimTiles;
+		// Tile names: the soft ink on the toned-down tiles (4.5:1 or more on each), white on full-colour tiles (with
+		// "Dim Start tiles" off the fills keep their brightness, and the soft ink would fall below 3:1 on some of them).
+		base.Resources["Start.TileInk"] = dim ? DarkRestPalette.Ink : DarkRestPalette.NormalInk;
+		// The live tiles' text, glyphs and logo labels follow the names: the soft ink (at the same alphas) on the
+		// toned-down tiles, the normal white otherwise.
+		base.Resources["Start.LiveInk"] = dim ? DarkRestPalette.Ink : DarkRestPalette.NormalInk;
+		base.Resources["Start.LiveInkDD"] = dim ? RestLiveInkDD : NormalLiveInkDD;
+		base.Resources["Start.LiveInkF2"] = dim ? RestLiveInkF2 : NormalLiveInkF2;
 		if (dim)
 		{
 			base.Resources["Start.TileScrim"] = DarkRestPalette.TileScrim;
@@ -696,19 +760,47 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 		{
 			base.Resources.Remove("Start.TileScrim");
 		}
-		// The all-apps rows are drawn in code and read these resources when they render: repaint them on a change.
+		// The tile templates read these flags: dimmed tiles take a toned-down colour (TileMute), and dark icons are
+		// lifted or outlined on the black board (RestIcons). Both false with Normal, so the templates draw as before.
+		base.Resources["Start.TileMute"] = dim ? BoxedTrue : BoxedFalse;
+		base.Resources["Start.RestIcons"] = rest ? BoxedTrue : BoxedFalse;
+		// The all-apps rows are drawn in code and read these resources (and the hover wash) when they render: repaint
+		// them on a change.
 		int restLook = (rest ? 1 : 0) | (dim ? 2 : 0);
 		if (restLook != _restLook)
 		{
 			_restLook = restLook;
+			System.Windows.Media.Brush hoverTint = (System.Windows.Media.Brush)FindResource("HoverTint");
+			System.Windows.Media.Brush searchAccent = (System.Windows.Media.Brush)FindResource("SearchAccent");
 			foreach (System.Windows.Controls.Button row in _appButtons.Values)
 			{
-				row.InvalidateVisual();
+				if (row is AppListItem item)
+				{
+					item.SetTheme(hoverTint, searchAccent);
+				}
+				else
+				{
+					row.InvalidateVisual();
+				}
 			}
 		}
 	}
 
 	private int _restLook;
+
+	private static readonly object BoxedTrue = true;
+
+	private static readonly object BoxedFalse = false;
+
+	private static readonly SolidColorBrush NormalSelectBorder = ColorMath.Frozen(System.Windows.Media.Color.FromRgb(0x26, 0x72, 0xEC));
+
+	private static readonly SolidColorBrush NormalLiveInkDD = ColorMath.Frozen(System.Windows.Media.Color.FromArgb(0xDD, 0xFF, 0xFF, 0xFF));
+
+	private static readonly SolidColorBrush NormalLiveInkF2 = ColorMath.Frozen(System.Windows.Media.Color.FromArgb(0xF2, 0xFF, 0xFF, 0xFF));
+
+	private static readonly SolidColorBrush RestLiveInkDD = ColorMath.Frozen(System.Windows.Media.Color.FromArgb(0xDD, 0xDC, 0xDC, 0xDC));
+
+	private static readonly SolidColorBrush RestLiveInkF2 = ColorMath.Frozen(System.Windows.Media.Color.FromArgb(0xF2, 0xDC, 0xDC, 0xDC));
 
 	// Attaches the seasonal effect only while it can be seen: a season with effects on, Start visible, the background
 	// layer shown and no semantic-zoom overlay covering it. Otherwise every animation and child is released. Dark rest
@@ -787,10 +879,26 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 		Height = height;
 		Left = -4000.0;
 		Top = -4000.0;
+		// Never activated (so no deactivation can hide Start mid-render), and any pending background work (a picture
+		// decode, a hide) is finished first, as QaRenderSeason does, so the render is the same every run.
+		base.ShowActivated = false;
 		if (!IsVisible)
 		{
 			Show();
 		}
+		Stopwatch settle = Stopwatch.StartNew();
+		do
+		{
+			((DispatcherObject)this).Dispatcher.Invoke(DispatcherPriority.Background, (Action)delegate
+			{
+			});
+			if (_bgAppliedToken == _bgToken)
+			{
+				break;
+			}
+			System.Threading.Thread.Sleep(10);
+		}
+		while (settle.ElapsedMilliseconds < 4000);
 		PersonalizeHost.Visibility = Visibility.Visible;
 		PersonalizeSlide.BeginAnimation(TranslateTransform.XProperty, null);
 		PersonalizeSlide.X = 0.0;
@@ -956,6 +1064,120 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 
 	internal bool QaBackgroundSettled => _bgAppliedToken == _bgToken;
 
+	// QA: the Start background brush and the zoom overlay's brush right now.
+	internal System.Windows.Media.Brush QaBgLayerBrush => BgLayer.Background;
+
+	internal System.Windows.Media.Brush QaZoomOverlayBrush => ZoomOverlay.Background;
+
+	internal static System.Windows.Media.Brush QaRestCanvasBrush => RestCanvasBrush;
+
+	// QA: whether the zoom overlay shows the very bitmap of the board (no copy), whether a Dark rest picture is still
+	// held (the brush or a cache entry), and how many times a Dark rest picture decode was started.
+	internal bool QaRestOverlaySharesBitmap => ZoomOverlay.Background is ImageBrush o && BgLayer.Background is ImageBrush b && ReferenceEquals(o.ImageSource, b.ImageSource);
+
+	internal bool QaRestBackgroundHeld => _restBgBrush != null || _bgBrushCache.Keys.Any(k => k.StartsWith("rest-", StringComparison.Ordinal));
+
+	internal static int QaRestPictureDecodes;
+
+	// QA: the cache keys of the Dark rest backgrounds held now.
+	internal string QaRestBgKeys => string.Join(",", _bgBrushCache.Keys.Where(k => k.StartsWith("rest-", StringComparison.Ordinal)));
+
+	// QA: Start placed on a screen of the given scale (0: the window's own), as PositionOnActiveScreen does.
+	internal void QaSetScreenScale(double scale)
+	{
+		_startScreenScale = scale;
+		SyncRestBackgroundSize();
+	}
+
+	// QA: the board with its first tile selected and the app bar for it open (no animation), rendered like
+	// QaRenderSeason; both are put back afterwards.
+	internal void QaRenderTileAppBar(string outPath, double width, double height)
+	{
+		TileVm? tile = _groups.SelectMany(g => g.Tiles).FirstOrDefault();
+		if (tile == null)
+		{
+			return;
+		}
+		tile.IsSelected = true;
+		BuildAppEntryAppBarCommands(tile.Entry);
+		TileAppBar.Background = AppBarThemeBrush();
+		TileAppBar.BorderBrush = AppBarSeparatorBrush();
+		TileAppBar.Visibility = Visibility.Visible;
+		TileAppBarSlide.BeginAnimation(TranslateTransform.YProperty, null);
+		TileAppBarSlide.Y = 0.0;
+		try
+		{
+			QaRenderSeason(outPath, width, height, withAmbient: false);
+		}
+		finally
+		{
+			tile.IsSelected = false;
+			TileAppBar.Visibility = Visibility.Collapsed;
+			TileAppBarSlide.Y = 92.0;
+			TileAppBarCommands.Children.Clear();
+			TileAppBarCustomise.Children.Clear();
+		}
+	}
+
+	// QA: refreshes the background and returns right away (no wait for a decode), for the no-flash check.
+	internal void QaRefreshBackgroundNoWait()
+	{
+		RefreshBackground();
+	}
+
+	// QA: drops the cached picture brushes, so the next refresh decodes again.
+	internal static void QaClearBackgroundCache()
+	{
+		_bgBrushCache.Clear();
+	}
+
+	// QA: waits (pumping the dispatcher) until the background decode has landed or the time is up.
+	internal void QaWaitBackground(int milliseconds = 4000)
+	{
+		Stopwatch wait = Stopwatch.StartNew();
+		while (_bgAppliedToken != _bgToken && wait.ElapsedMilliseconds < milliseconds)
+		{
+			((DispatcherObject)this).Dispatcher.Invoke(DispatcherPriority.Background, (Action)delegate
+			{
+			});
+			System.Threading.Thread.Sleep(10);
+		}
+	}
+
+	// QA: Start with the semantic zoom overview shown (no animation), rendered to outPath, then the zoom closed again.
+	// Returns the overlay's top in the render (-1 when the overview could not be built).
+	internal double QaRenderZoom(string outPath, double width, double height)
+	{
+		QaRenderSeason(outPath, width, height, withAmbient: false);
+		double top = -1.0;
+		if (ZoomOverlay.Visibility != Visibility.Visible && BuildZoomOverview())
+		{
+			SyncRestOverlays();
+			ZoomOverlay.Visibility = Visibility.Visible;
+			ZoomOverlay.RenderTransform = null;
+			ZoomOverlay.BeginAnimation(UIElement.OpacityProperty, null);
+			FrameworkElement root = (FrameworkElement)Content;
+			root.Measure(new System.Windows.Size(width, height));
+			root.Arrange(new Rect(0.0, 0.0, width, height));
+			root.UpdateLayout();
+			top = ZoomOverlay.TranslatePoint(new System.Windows.Point(0.0, 0.0), root).Y;
+			RenderTargetBitmap bitmap = new RenderTargetBitmap((int)width, (int)height, 96.0, 96.0, PixelFormats.Pbgra32);
+			bitmap.Render(root);
+			PngBitmapEncoder encoder = new PngBitmapEncoder();
+			encoder.Frames.Add(BitmapFrame.Create(bitmap));
+			using (FileStream stream = File.Create(outPath))
+			{
+				encoder.Save(stream);
+			}
+			ZoomOverlay.Visibility = Visibility.Collapsed;
+			ZoomHost.Children.Clear();
+			_semanticZoomed = false;
+			RefreshZoomButton();
+			SyncSeasonalAmbient();
+		}
+		return top;
+	}
+
 	internal void QaHideForAmbientCheck()
 	{
 		Hide();
@@ -1091,7 +1313,7 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 		RefreshPersonalizeSelection(s);
 		try
 		{
-			PersonalizePane.Background = new SolidColorBrush(SettingsPane.AccentToneColor(0.3));
+			PersonalizePane.Background = DarkRest.Visuals ? DarkRestPalette.StartPane : new SolidColorBrush(SettingsPane.AccentToneColor(0.3));
 		}
 		catch
 		{
@@ -1192,6 +1414,7 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 			if (element is Border chip && chip.Tag is PersonalizeChoice choice)
 			{
 				SetSeasonSelected(chip, choice.Value == SeasonalTheme.Normal ? season.Length == 0 : season == choice.Value);
+				RestQuietChoice(chip, choice.Value == SeasonalTheme.Normal ? season.Length == 0 : season == choice.Value);
 				if (choice.Value == SeasonalTheme.Normal)
 				{
 					chip.Background = SeasonalTheme.NormalPreviewBrush(0.4);
@@ -1337,9 +1560,23 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 		{
 			foreach (UIElement child in grid.Children)
 			{
+				if (child is TextBlock text)
+				{
+					// the chip's label and glyphs: white, or the soft ink in Dark rest
+					System.Windows.Media.Brush ink = DarkRest.Visuals ? DarkRestPalette.Ink : System.Windows.Media.Brushes.White;
+					if (!ReferenceEquals(text.Foreground, ink))
+					{
+						text.Foreground = ink;
+					}
+				}
 				if (child is FrameworkElement fe && (fe.Tag as string == "check" || fe.Tag as string == "sel"))
 				{
 					fe.Visibility = selected ? Visibility.Visible : Visibility.Collapsed;
+					if (fe is Border frame)
+					{
+						// the selection frame: white, or the soft ink in Dark rest
+						frame.BorderBrush = DarkRest.Visuals ? DarkRestPalette.Ink : System.Windows.Media.Brushes.White;
+					}
 				}
 			}
 		}
@@ -1393,12 +1630,59 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 
 	private static void SetPersonalizeSelected(Border border, bool selected, System.Windows.Media.Color ink, bool shadow, bool useBorder)
 	{
+		bool rest = DarkRest.Visuals;
 		if (useBorder)
 		{
-			border.BorderBrush = selected ? System.Windows.Media.Brushes.White : new SolidColorBrush(System.Windows.Media.Color.FromArgb(68, byte.MaxValue, byte.MaxValue, byte.MaxValue));
+			// Dark rest: every choice has an outline that can be seen on the black pane (a dark choice would otherwise
+			// have no edge), and the selected one the soft ink.
+			border.BorderBrush = rest
+				? (selected ? DarkRestPalette.Ink : DarkRestPalette.Boundary)
+				: (selected ? System.Windows.Media.Brushes.White : new SolidColorBrush(System.Windows.Media.Color.FromArgb(68, byte.MaxValue, byte.MaxValue, byte.MaxValue)));
 			border.BorderThickness = new Thickness(selected ? 2.5 : 1.0);
 		}
 		border.Child = selected ? SelectionGlyph(ink, shadow) : null;
+		RestQuietChoice(border, selected);
+	}
+
+	// Dark rest: the choices that are not selected are shown at 0.6 opacity (full under the mouse), so the bright
+	// previews of other looks do not glare from the black pane. Full opacity with Normal.
+	private static readonly System.Collections.Generic.HashSet<Border> QuietChoices = new System.Collections.Generic.HashSet<Border>();
+
+	private static void RestQuietChoice(Border choice, bool selected)
+	{
+		bool quiet = DarkRest.Visuals && !selected;
+		choice.Opacity = quiet && !choice.IsMouseOver ? 0.6 : 1.0;
+		if (quiet && QuietChoices.Add(choice))
+		{
+			choice.MouseEnter += delegate { choice.Opacity = 1.0; };
+			choice.MouseLeave += delegate
+			{
+				bool sel = choice.Tag is PersonalizeChoice c && IsChoiceSelected(c);
+				choice.Opacity = DarkRest.Visuals && !sel ? 0.6 : 1.0;
+			};
+			choice.Unloaded += delegate { QuietChoices.Remove(choice); };
+		}
+	}
+
+	private static bool IsChoiceSelected(PersonalizeChoice c)
+	{
+		AppSettings s = SettingsStore.FastSnapshot;
+		switch (c.Kind)
+		{
+		case "season":
+		{
+			string season = SeasonalTheme.NormalizeId(s.SeasonalActive);
+			return c.Value == SeasonalTheme.Normal ? season.Length == 0 : season == c.Value;
+		}
+		case "design":
+			return s.StartBgMode == "pattern" && s.StartPattern == c.Value && string.Equals(s.StartBgColor, c.Secondary, StringComparison.OrdinalIgnoreCase);
+		case "background":
+			return s.StartBgMode == "pattern" && s.StartPattern == "none" && string.Equals(s.StartBgColor, c.Value, StringComparison.OrdinalIgnoreCase);
+		case "accent":
+			return !string.IsNullOrEmpty(s.StartAccentColor) && string.Equals(s.StartAccentColor, c.Value, StringComparison.OrdinalIgnoreCase);
+		default:
+			return s.StartBgMode == "custom" && string.Equals(s.StartBgCustomPath, c.Value, StringComparison.OrdinalIgnoreCase);
+		}
 	}
 
 	private static TextBlock SelectionGlyph(System.Windows.Media.Color ink, bool shadow)
@@ -1640,14 +1924,319 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 	private void SetStartBg(System.Windows.Media.Brush brush)
 	{
 		BgLayer.Background = brush;
+		// Dark rest: the zoom overlays show the same picture, lined up with the board behind them.
+		System.Windows.Media.Brush overlay = DarkRest.Visuals && (ReferenceEquals(brush, _restBgBrush) || ReferenceEquals(brush, RestCanvasBrush)) ? RestOverlayBrush() : brush;
 		if (AppsZoomOverlay != null)
 		{
-			AppsZoomOverlay.Background = brush;
+			AppsZoomOverlay.Background = overlay;
 		}
 		if (ZoomOverlay != null)
 		{
-			ZoomOverlay.Background = brush;
+			ZoomOverlay.Background = overlay;
 		}
+	}
+
+	// ----- Dark rest background: the Dark rest picture (the user's, or the drawn black grid when there is none) at the
+	// primary screen's size, so Start shows the very pixels of the desktop and opening it causes no jump. Decoded once per
+	// picture on a worker and cached; until it lands Start shows plain black, which the near-black picture follows
+	// without a visible change, so no other background ever flashes.
+
+	// The brush on screen while Dark rest shows its picture (null while the decode is still running).
+	private ImageBrush _restBgBrush;
+
+	private static readonly SolidColorBrush RestCanvasBrush = ColorMath.Frozen(Colors.Black);
+
+	// QA hook, honoured only in read-only diagnostics: the screen size the picture is prepared for.
+	internal static (int Width, int Height)? QaRestScreenPixels { get; set; }
+
+	private static bool RestBackgroundWanted(AppSettings s)
+	{
+		return DarkRest.VisualsFor(s) && s.StartBgMode == "pattern" && SeasonalArt.IsRestPattern(s.StartPattern);
+	}
+
+	// The size and scale of the screen Start was last placed on (PositionOnActiveScreen); zero before the first show.
+	private (int Width, int Height) _startScreenPixels;
+
+	private double _startScreenScale;
+
+	// The screen size and scale the shown Dark rest picture was prepared for.
+	private (int Width, int Height) _restBgSize;
+
+	private double _restBgScale;
+
+	// The screen Start is shown on (the primary screen before Start was first placed), in physical pixels.
+	private (int Width, int Height) RestScreenPixels()
+	{
+		if (SettingsStore.ReadOnlyDiagnostics && QaRestScreenPixels is (int qw, int qh))
+		{
+			return (qw, qh);
+		}
+		if (_startScreenPixels.Width > 0 && _startScreenPixels.Height > 0)
+		{
+			return (Math.Min(_startScreenPixels.Width, 7680), Math.Min(_startScreenPixels.Height, 4320));
+		}
+		try
+		{
+			System.Drawing.Rectangle b = Screen.PrimaryScreen?.Bounds ?? new System.Drawing.Rectangle(0, 0, 1920, 1080);
+			if (b.Width > 0 && b.Height > 0)
+			{
+				return (Math.Min(b.Width, 7680), Math.Min(b.Height, 4320));
+			}
+		}
+		catch
+		{
+		}
+		return (1920, 1080);
+	}
+
+	// The display scale of the screen Start is shown on (the window's own before Start was first placed).
+	private double RestScreenScale()
+	{
+		double scale = _startScreenScale;
+		try
+		{
+			if (!(scale > 0.0))
+			{
+				scale = VisualTreeHelper.GetDpi(this).DpiScaleX;
+			}
+		}
+		catch
+		{
+		}
+		return scale > 0.0 ? scale : 1.0;
+	}
+
+	// After Start moved to a screen of another size or scale, or the display settings changed: only the Dark rest
+	// picture is prepared again for that screen (a cached size costs nothing); the colours and the rest of the
+	// background stay as they are. Nothing happens when its picture is not shown.
+	private void SyncRestBackgroundSize()
+	{
+		try
+		{
+			if (_restBgSize.Width > 0 && RestBackgroundWanted(SettingsStore.FastSnapshot) && (RestScreenPixels() != _restBgSize || Math.Abs(RestScreenScale() - _restBgScale) > 0.001))
+			{
+				ApplyRestBgAsync();
+			}
+		}
+		catch
+		{
+		}
+	}
+
+	// Forgets the Dark rest picture: the brush on screen, the overlay built from it and its cache entries.
+	private void ReleaseRestBackground()
+	{
+		_restBgBrush = null;
+		_restOverlayBrush = null;
+		_restOverlaySource = null;
+		_restBgSize = default;
+		_restBgScale = 0.0;
+		foreach (string key in new System.Collections.Generic.List<string>(_bgBrushCache.Keys))
+		{
+			if (key.StartsWith("rest-", StringComparison.Ordinal))
+			{
+				_bgBrushCache.Remove(key);
+			}
+		}
+	}
+
+	// Puts a decoded background into the two-entry cache, evicting an older entry (never one of the keys kept).
+	private static void CacheBgBrush(string key, ImageBrush ib, string keep = null)
+	{
+		if (_bgBrushCache.Count >= 2 && !_bgBrushCache.ContainsKey(key))
+		{
+			foreach (string oldKey in new System.Collections.Generic.List<string>(_bgBrushCache.Keys))
+			{
+				if (oldKey != key && oldKey != keep)
+				{
+					_bgBrushCache.Remove(oldKey);
+					break;
+				}
+			}
+		}
+		_bgBrushCache[key] = ib;
+	}
+
+	private void ApplyRestBgAsync()
+	{
+		int token = ++_bgToken;
+		(int wPx, int hPx) = RestScreenPixels();
+		double scale = RestScreenScale();
+		_restBgSize = (wPx, hPx);
+		_restBgScale = scale;
+		// the key carries the scale too: the brush's viewport is in device-independent units
+		string size = wPx + "x" + hPx + "@" + scale.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture);
+		string picture = SeasonalArt.CustomPictureFor(SeasonalArt.RestArt);
+		string drawnKey = $"rest-drawn|v{SeasonalArt.RestWallpaperVersion}|{size}";
+		string key = drawnKey;
+		if (picture != null)
+		{
+			long ticks = 0L;
+			try
+			{
+				ticks = File.GetLastWriteTimeUtc(picture).Ticks;
+			}
+			catch
+			{
+			}
+			key = $"rest-pic|{picture}|{ticks}|{size}";
+		}
+		if (_bgBrushCache.TryGetValue(key, out ImageBrush cached))
+		{
+			_restBgBrush = cached;
+			SetStartBg(cached);
+			_bgAppliedToken = token;
+			return;
+		}
+		_restBgBrush = null;
+		SetStartBg(RestCanvasBrush);
+		// the drawn scene already decoded for this size (used when the picture cannot be read)
+		_bgBrushCache.TryGetValue(drawnKey, out ImageBrush drawnCached);
+		double wDiu = wPx / scale;
+		double hDiu = hPx / scale;
+		Task.Run(delegate
+		{
+			BitmapSource bmp = null;
+			bool pictureFailed = false;
+			bool pictureBusy = false;
+			if (picture != null)
+			{
+				System.Threading.Interlocked.Increment(ref QaRestPictureDecodes);
+				try
+				{
+					bmp = SeasonalArt.LoadPictureFilled(picture, wPx, hPx);
+				}
+				catch (Exception ex)
+				{
+					pictureFailed = true;
+					// a file that is locked or still being written is tried again at the next refresh; one that cannot
+					// be decoded at all is remembered as such (below)
+					pictureBusy = ex is IOException || ex is UnauthorizedAccessException;
+					Logger.Log("Dark rest: the Start picture could not be decoded, so the drawn scene is shown: " + ex.Message);
+				}
+			}
+			ImageBrush ib = null;
+			if (bmp == null && drawnCached != null)
+			{
+				ib = drawnCached;
+			}
+			else if (bmp == null)
+			{
+				try
+				{
+					bmp = SeasonalArt.RenderRestScene(wPx, hPx, wPx / 2.0);
+				}
+				catch (Exception ex)
+				{
+					Logger.Log("Dark rest: the Start scene could not be drawn: " + ex.Message);
+				}
+			}
+			if (bmp != null)
+			{
+				// Start's top-left is the screen's top-left: the picture spans exactly one screen there. The parallax
+				// overscan at the right shows its mirror image, so there is never an edge.
+				ib = new ImageBrush(bmp)
+				{
+					Stretch = Stretch.Fill,
+					ViewportUnits = BrushMappingMode.Absolute,
+					Viewport = new Rect(0.0, 0.0, wDiu, hDiu),
+					TileMode = TileMode.FlipX
+				};
+				ib.Freeze();
+			}
+			((DispatcherObject)this).Dispatcher.BeginInvoke((Delegate)(Action)delegate
+			{
+				// A decode that finishes after Dark rest was left is not kept (Normal released the picture).
+				bool keep = token == _bgToken || RestBackgroundWanted(SettingsStore.FastSnapshot);
+				if (ib != null && keep)
+				{
+					if (picture != null && !pictureFailed)
+					{
+						CacheBgBrush(key, ib);
+					}
+					else
+					{
+						// A picture that cannot be decoded is remembered with the drawn scene under its own key (which
+						// includes its time stamp), so it is not decoded again on every refresh; a fixed or replaced
+						// file has a new key and is tried again. A picture that was only locked keeps no entry.
+						CacheBgBrush(drawnKey, ib, keep: key);
+						if (picture != null && !pictureBusy)
+						{
+							CacheBgBrush(key, ib, keep: drawnKey);
+						}
+					}
+				}
+				if (token == _bgToken)
+				{
+					if (ib != null)
+					{
+						_restBgBrush = ib;
+						SetStartBg(ib);
+					}
+					_bgAppliedToken = token;
+				}
+			}, Array.Empty<object>());
+		});
+	}
+
+	// The last overlay brush and what it was built from (reused while nothing moved).
+	private ImageBrush _restOverlayBrush;
+
+	private ImageBrush _restOverlaySource;
+
+	private double _restOverlayX;
+
+	private double _restOverlayTop;
+
+	// The Dark rest picture for the zoom overlays, shifted so it lines up with the board behind them (the overlays start
+	// below the header row; the board's background moves with the parallax). Plain black until the picture is there.
+	private System.Windows.Media.Brush RestOverlayBrush()
+	{
+		ImageBrush b = _restBgBrush;
+		if (b == null)
+		{
+			return RestCanvasBrush;
+		}
+		try
+		{
+			double top = RootGrid.RowDefinitions.Count > 0 ? RootGrid.RowDefinitions[0].ActualHeight : 0.0;
+			double x = BgParallax.X;
+			if (_restOverlayBrush != null && ReferenceEquals(_restOverlaySource, b) && _restOverlayX == x && _restOverlayTop == top)
+			{
+				return _restOverlayBrush;
+			}
+			// A new brush around the same frozen picture: no pixels are copied (Clone would copy the whole screen-sized
+			// bitmap on every Start open).
+			ImageBrush c = new ImageBrush(b.ImageSource)
+			{
+				Stretch = b.Stretch,
+				ViewportUnits = BrushMappingMode.Absolute,
+				Viewport = new Rect(x, -top, b.Viewport.Width, b.Viewport.Height),
+				TileMode = b.TileMode
+			};
+			c.Freeze();
+			_restOverlayBrush = c;
+			_restOverlaySource = b;
+			_restOverlayX = x;
+			_restOverlayTop = top;
+			return c;
+		}
+		catch
+		{
+			return RestCanvasBrush;
+		}
+	}
+
+	// Re-lines the zoom overlays up with the board right before one is shown (the parallax may have moved).
+	private void SyncRestOverlays()
+	{
+		if (!DarkRest.Visuals || _restBgBrush == null || !ReferenceEquals(BgLayer.Background, _restBgBrush))
+		{
+			return;
+		}
+		System.Windows.Media.Brush overlay = RestOverlayBrush();
+		AppsZoomOverlay.Background = overlay;
+		ZoomOverlay.Background = overlay;
 	}
 
 	private void ApplyImageBgAsync(string path)
@@ -2707,6 +3296,7 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 		//IL_0076: Unknown result type (might be due to invalid IL or missing references)
 		if (ZoomOverlay.Visibility != Visibility.Visible && BuildZoomOverview())
 		{
+			SyncRestOverlays();
 			ZoomOverlay.Visibility = Visibility.Visible;
 			ScaleTransform scale = new ScaleTransform(1.22, 1.22);
 			ZoomOverlay.RenderTransform = scale;
@@ -2757,6 +3347,18 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 		{
 			GroupVm g2 = item.Item1;
 			FrameworkElement el2 = item.Item2;
+			// Dark rest names the group above its snapshot in readable ink (below), so the snapshot leaves out the group's
+			// own header row instead of showing the name a second time a few pixels high.
+			bool restNamed = DarkRest.Visuals && !string.IsNullOrWhiteSpace(g2.Name);
+			double skip = 0.0;
+			if (restNamed && el2 is System.Windows.Controls.Panel { Children.Count: > 1 } groupPanel && groupPanel.Children[0] is FrameworkElement header && header.Visibility == Visibility.Visible)
+			{
+				skip = Math.Floor(header.ActualHeight + header.Margin.Top + header.Margin.Bottom);
+				if (skip >= el2.ActualHeight - 1.0)
+				{
+					skip = 0.0;
+				}
+			}
 			ImageSource snap = null;
 			try
 			{
@@ -2764,15 +3366,22 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 				rtb.Render(el2);
 				((Freezable)rtb).Freeze();
 				snap = rtb;
+				if (skip > 0.0)
+				{
+					CroppedBitmap tiles = new CroppedBitmap(rtb, new Int32Rect(0, (int)skip, rtb.PixelWidth, rtb.PixelHeight - (int)skip));
+					((Freezable)tiles).Freeze();
+					snap = tiles;
+				}
 			}
 			catch
 			{
+				skip = 0.0;
 			}
 			System.Windows.Controls.Image img = new System.Windows.Controls.Image
 			{
 				Source = snap,
 				Width = el2.ActualWidth * zoom,
-				Height = el2.ActualHeight * zoom,
+				Height = (el2.ActualHeight - skip) * zoom,
 				Stretch = Stretch.Fill,
 				VerticalAlignment = VerticalAlignment.Top
 			};
@@ -2784,9 +3393,28 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 			Grid host = new Grid();
 			host.Children.Add(img);
 			host.Children.Add(hover);
+			FrameworkElement content = host;
+			if (restNamed)
+			{
+				// Dark rest: a readable group name sits above the snapshot of its tiles.
+				StackPanel named = new StackPanel();
+				TextBlock name = new TextBlock
+				{
+					Text = g2.Name,
+					FontFamily = new System.Windows.Media.FontFamily("Segoe UI"),
+					FontSize = 15.0,
+					Margin = new Thickness(0.0, 0.0, 0.0, 6.0),
+					TextTrimming = TextTrimming.CharacterEllipsis,
+					MaxWidth = Math.Max(60.0, img.Width)
+				};
+				name.SetResourceReference(TextBlock.ForegroundProperty, "Start.Ink");
+				named.Children.Add(name);
+				named.Children.Add(host);
+				content = named;
+			}
 			System.Windows.Controls.Button btn = new System.Windows.Controls.Button
 			{
-				Content = host,
+				Content = content,
 				Margin = new Thickness(0.0, 0.0, 16.0, 0.0),
 				Cursor = System.Windows.Input.Cursors.Hand,
 				Background = System.Windows.Media.Brushes.Transparent,
@@ -3727,6 +4355,9 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 		base.Top = (double)b.Top / sy;
 		base.Width = (double)b.Width / sx;
 		base.Height = (double)b.Height / sy;
+		_startScreenPixels = (b.Width, b.Height);
+		_startScreenScale = sx;
+		SyncRestBackgroundSize();
 	}
 
 	private void OnDisplaySettingsChanged(object? sender, EventArgs e)
@@ -3734,6 +4365,17 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 		if (base.IsVisible)
 		{
 			((DispatcherObject)this).Dispatcher.BeginInvoke((Delegate)new Action(PositionOnActiveScreen), Array.Empty<object>());
+		}
+		else
+		{
+			// a resolution change while Start is hidden: the Dark rest picture is prepared for the primary screen's new
+			// size now, and for the screen Start opens on at the next placement
+			((DispatcherObject)this).Dispatcher.BeginInvoke((Delegate)(Action)delegate
+			{
+				_startScreenPixels = default;
+				_startScreenScale = 0.0;
+				SyncRestBackgroundSize();
+			}, Array.Empty<object>());
 		}
 	}
 
@@ -5415,6 +6057,16 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 	{
 		try
 		{
+			if (DarkRest.Visuals)
+			{
+				// Dark rest: near-black panes in both skins, and the zoom overlays show the board's own picture.
+				SelectionBar.Background = DarkRestPalette.StartPane;
+				PersonalizePane.Background = DarkRestPalette.StartPane;
+				System.Windows.Media.Brush overlay = (_restBgBrush != null && ReferenceEquals(BgLayer.Background, _restBgBrush)) ? RestOverlayBrush() : (System.Windows.Media.Brush)RestCanvasBrush;
+				AppsZoomOverlay.Background = overlay;
+				ZoomOverlay.Background = overlay;
+				return;
+			}
 			bool glass = ShellSkin.GlassOn;
 			SelectionBar.Background = glass
 				? ShellSkin.PanelBg()
@@ -5442,6 +6094,10 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 
 	private static SolidColorBrush AppBarThemeBrush()
 	{
+		if (DarkRest.Visuals)
+		{
+			return (SolidColorBrush)DarkRestPalette.AppBar;
+		}
 		System.Windows.Media.Color c;
 		try
 		{
@@ -5469,6 +6125,10 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 
 	private static SolidColorBrush AppBarSeparatorBrush()
 	{
+		if (DarkRest.Visuals)
+		{
+			return (SolidColorBrush)DarkRestPalette.AppBarLine;
+		}
 		System.Windows.Media.Color c;
 		try
 		{
@@ -6001,6 +6661,12 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 		var button = MetroPatternTheme.CreateAppBarButton(icon, label,
 			() => TaskbarContextMenu.QueueCommand(onClick));
 		button.Foreground = System.Windows.Media.Brushes.White;
+		if (DarkRest.Visuals)
+		{
+			// Dark rest: the label and the white glyph in the soft ink on the dark app bar
+			button.Foreground = DarkRestPalette.Ink;
+			DarkRestPalette.RetintWhite(icon, rest: true, DarkRestPalette.PopupColor);
+		}
 		return button;
 	}
 
@@ -8685,6 +9351,7 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 			};
 			AlphabetGrid.Children.Add(btn);
 		}
+		SyncRestOverlays();
 		AppsZoomOverlay.Visibility = Visibility.Visible;
 		ScaleTransform scale = new ScaleTransform(1.15, 1.15);
 		AlphabetGrid.RenderTransform = scale;

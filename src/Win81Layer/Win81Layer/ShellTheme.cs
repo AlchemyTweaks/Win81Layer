@@ -119,6 +119,23 @@ public static class ShellTheme
 		RaiseChanged();
 	}
 
+	// Set while the Dark rest overlay is applied at Application scope.
+	private static bool _restApplied;
+
+	// After Dark rest turned on or off (or High Contrast changed while it is on): writes or removes the Dark rest control
+	// family at Application scope, rebuilds the code-built menu palette and the code-behind brushes, and tells the
+	// subscribers. Does nothing when the state did not change. Light/dark itself is not re-read. UI thread.
+	public static void SyncRest(bool force = false)
+	{
+		bool now = DarkRest.Visuals;
+		if (now == _restApplied && !force) return;
+		_restApplied = now;
+		lock (Gate) { _brushes = null; }
+		try { TaskbarContextMenu.InvalidateTheme(); } catch { }
+		ApplyResourceTokens();
+		RaiseChanged();
+	}
+
 	private static void RaiseChanged()
 	{
 		try { Changed?.Invoke(null, EventArgs.Empty); } catch (Exception ex) { Logger.Log("ShellTheme.Changed handler failed: " + ex.Message); }
@@ -159,6 +176,13 @@ public static class ShellTheme
 		("Metro81.ToggleTrack",      "#B0B0B0", "#5A5A5A"),
 		("Metro81.ToggleThumb",      "#000000", "#F2F2F2"),
 		("Metro81.SliderThumbFill",  "#000000", "#F2F2F2"),
+		// the Metro slider's empty track (the same values as Metro81.Border, so nothing changes outside Dark rest)
+		("Metro81.SliderTrack",      "#A6A6A6", "#3F3F3F"),
+		// the progress track and the tooltip (the same values as Metro81.HoverSurface, Metro81.Surface and
+		// Metro81.FieldBorder, so nothing changes outside Dark rest)
+		("Metro81.ProgressTrack",    "#DEDEDE", "#3F3F3F"),
+		("Metro81.TooltipSurface",   "#FFFFFF", "#1F1F1F"),
+		("Metro81.TooltipBorder",    "#767676", "#6A6A6A"),
 		// menu surfaces (default WPF menus; the code-built shell menus use the parallel M.* palette in GetThemePalette)
 		("Metro81.MenuSurface",      "#FFFFFF", "#2B2B2B"),
 		("Metro81.MenuBorder",       "#000000", "#5A5A5A"),
@@ -180,6 +204,9 @@ public static class ShellTheme
 
 	// Writes the current-theme color into each token at Application scope. Because every template consumes these via
 	// {DynamicResource}, all open instances repaint instantly with no per-window subscription (WPF re-resolves).
+	// While Dark rest is applied (SyncRest), its black control family is written on top (DarkRestPalette.WriteAppResources);
+	// otherwise whatever that overlay replaced is put back (nothing to do when it never ran). The Dark rest state is the
+	// one SyncRest last saw, so this never reads the settings itself (it also runs before they are loaded).
 	public static void ApplyResourceTokens()
 	{
 		Application? app = Application.Current;
@@ -187,6 +214,8 @@ public static class ShellTheme
 		void Do()
 		{
 			WriteTokens(app.Resources, IsDark);
+			if (_restApplied) DarkRestPalette.WriteAppResources(app.Resources);
+			else DarkRestPalette.RemoveAppResources(app.Resources);
 		}
 		Dispatcher d = app.Dispatcher;
 		if (d.CheckAccess()) Do();
@@ -236,13 +265,14 @@ public static class ShellTheme
 		}
 	}
 
-	public static Brush Surface => Brush("#FFFFFF", "#1F1F1F");
-	public static Brush Ink => Brush("#000000", "#FFFFFF");
-	public static Brush Ink2 => Brush("#5A5A5A", "#B4B4B4");
-	public static Brush FieldSurface => Brush("#FFFFFF", "#2A2A2A");
-	public static Brush Hover => Brush("#DEDEDE", "#3F3F3F");
-	public static Brush Separator => Brush("#CFD8E3", "#3F3F3F");
-	public static Brush Border => Brush("#A6A6A6", "#3F3F3F");
+	// Dark rest returns its black family instead (the light/dark values come back with it off).
+	public static Brush Surface => DarkRest.Visuals ? DarkRestPalette.ShellSurface : Brush("#FFFFFF", "#1F1F1F");
+	public static Brush Ink => DarkRest.Visuals ? DarkRestPalette.Ink : Brush("#000000", "#FFFFFF");
+	public static Brush Ink2 => DarkRest.Visuals ? DarkRestPalette.Ink2 : Brush("#5A5A5A", "#B4B4B4");
+	public static Brush FieldSurface => DarkRest.Visuals ? DarkRestPalette.Field : Brush("#FFFFFF", "#2A2A2A");
+	public static Brush Hover => DarkRest.Visuals ? DarkRestPalette.Hover : Brush("#DEDEDE", "#3F3F3F");
+	public static Brush Separator => DarkRest.Visuals ? DarkRestPalette.Separator : Brush("#CFD8E3", "#3F3F3F");
+	public static Brush Border => DarkRest.Visuals ? DarkRestPalette.ShellBorder : Brush("#A6A6A6", "#3F3F3F");
 
 	[DllImport("user32.dll", CharSet = CharSet.Auto)]
 	private static extern nint SendMessageTimeout(nint hWnd, uint msg, nint wParam, string lParam, uint flags, uint timeout, out nint result);

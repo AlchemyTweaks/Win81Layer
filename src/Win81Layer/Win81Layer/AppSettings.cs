@@ -130,6 +130,10 @@ public sealed class AppSettings
 
 	public bool RestDimTiles { get; set; } = true;
 
+	// The Metro Tab browser extension's folder, where the launcher writes shell-look.json (ShellLookLink). Empty = find
+	// it next to the launcher (<parent of the launcher folder>\ChromeExtension). Not profile-owned.
+	public string ShellLookExtensionDir { get; set; } = "";
+
 	// Notification-area icons with a seasonal picture: "live" keeps the app's status visible (badges on the picture, the
 	// app's own icon during calls and other states, SeasonalTrayIcons); "original" always shows the app's own icon.
 	public string SeasonalTrayIcons { get; set; } = "live";

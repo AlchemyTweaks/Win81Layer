@@ -4,6 +4,21 @@
     <ResourceDictionary>
       <BooleanToVisibilityConverter x:Key="B2V" />
       <SolidColorBrush x:Key="TB.Accent" Color="#8AB4F8" />
+      <!-- The ink of the clock and of the clock, volume and network flyouts. Dark rest swaps in its soft ink in code. -->
+      <SolidColorBrush x:Key="TB.Ink" Color="#FFFFFFFF" />
+      <SolidColorBrush x:Key="TB.DayInk" Color="#F2FFFFFF" />
+      <SolidColorBrush x:Key="TB.ChevronInk" Color="#F2FFFFFF" />
+      <!-- More inks Dark rest swaps in code (TaskbarWindow.ApplyTaskbarInk): the tray glyphs and running-app labels, the
+           volume section headers, the toolbar chevron, the address box outline, the selected calendar day, and the
+           volume slider's track and its outline. -->
+      <SolidColorBrush x:Key="TB.GlyphInk" Color="#EEFFFFFF" />
+      <SolidColorBrush x:Key="TB.HeadInk" Color="#F2FFFFFF" />
+      <SolidColorBrush x:Key="TB.InkSoft" Color="#BBFFFFFF" />
+      <SolidColorBrush x:Key="TB.AddressBorder" Color="#55FFFFFF" />
+      <SolidColorBrush x:Key="TB.DaySelectedInk" Color="#F2FFFFFF" />
+      <SolidColorBrush x:Key="TB.SliderTrack" Color="#66FFFFFF" />
+      <SolidColorBrush x:Key="TB.SliderTrackBorder" Color="#00FFFFFF" />
+      <local:RestIconEdgeConverter x:Key="RestIconEdge" />
       <SolidColorBrush x:Key="TB.AccentDim" Color="#B48AB4F8" />
       <SolidColorBrush x:Key="TB.StartSurface" Color="#00FFFFFF" />
       <SolidColorBrush x:Key="TB.StartSurfaceHover" Color="#00FFFFFF" />
@@ -26,6 +41,9 @@
       <SolidColorBrush x:Key="TB.SoundOutputOther" Color="#FF0A4D83" />
       <SolidColorBrush x:Key="TB.SoundInputDefault" Color="#FF743EC4" />
       <SolidColorBrush x:Key="TB.SoundInputOther" Color="#FF236F73" />
+      <!-- The outline of the default and of the other device rows (Dark rest gives the other rows the control outline). -->
+      <SolidColorBrush x:Key="TB.SoundRowEdgeDefault" Color="#24FFFFFF" />
+      <SolidColorBrush x:Key="TB.SoundRowEdgeOther" Color="#24FFFFFF" />
       <SolidColorBrush x:Key="TB.SoundApp" Color="#FF0D8EA5" />
       <SolidColorBrush x:Key="TB.SoundSystemApp" Color="#FF0A9A83" />
       <SolidColorBrush x:Key="TB.SoundPlaybackTile" Color="#FF078FEF" />
@@ -48,7 +66,14 @@
               <Grid>
                 <Border Name="Bd" Background="#00FFFFFF" Padding="0" MinWidth="{DynamicResource TB.TraySlotWidth}" MinHeight="{DynamicResource TB.TraySlotWidth}">
                   <Grid>
-                    <Image Name="IconImg" Width="{DynamicResource TB.TrayAppIconSize}" Height="{DynamicResource TB.TrayAppIconSize}" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality" SnapsToDevicePixels="True" Source="{Binding Image}" />
+                    <Image Name="IconImg" Width="{DynamicResource TB.TrayAppIconSize}" Height="{DynamicResource TB.TrayAppIconSize}" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality" SnapsToDevicePixels="True" local:RestFlag.On="{DynamicResource TB.RestIcons}">
+                      <Image.Source>
+                        <MultiBinding Converter="{StaticResource RestIconEdge}">
+                          <Binding Path="Image" />
+                          <Binding Path="(local:RestFlag.On)" RelativeSource="{RelativeSource Self}" />
+                        </MultiBinding>
+                      </Image.Source>
+                    </Image>
                     <ContentPresenter Name="HostHolder" Content="{Binding HostElement}" Visibility="Collapsed" VerticalAlignment="Center" />
                   </Grid>
                 </Border>
@@ -81,7 +106,14 @@
             <ControlTemplate TargetType="{x:Type Button}">
               <Border Name="Bd" Background="#00FFFFFF" Height="{DynamicResource TB.BarHeight}">
                 <Grid>
-                  <Image Width="{DynamicResource TB.IconSize}" Height="{DynamicResource TB.IconSize}" Stretch="Uniform" HorizontalAlignment="Center" VerticalAlignment="Center" RenderOptions.BitmapScalingMode="HighQuality" SnapsToDevicePixels="True" Source="{Binding Icon}" />
+                  <Image Width="{DynamicResource TB.IconSize}" Height="{DynamicResource TB.IconSize}" Stretch="Uniform" HorizontalAlignment="Center" VerticalAlignment="Center" RenderOptions.BitmapScalingMode="HighQuality" SnapsToDevicePixels="True" local:RestFlag.On="{DynamicResource TB.RestIcons}">
+                    <Image.Source>
+                      <MultiBinding Converter="{StaticResource RestIconEdge}">
+                        <Binding Path="Icon" />
+                        <Binding Path="(local:RestFlag.On)" RelativeSource="{RelativeSource Self}" />
+                      </MultiBinding>
+                    </Image.Source>
+                  </Image>
                   <StackPanel Name="Ind" Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="0,0,0,2" Visibility="Collapsed">
                     <Border Name="Seg1" Height="3" Width="22" Background="{DynamicResource TB.AccentDim}" />
                     <Border Name="Seg2" Height="3" Width="0" Background="{DynamicResource TB.AccentDim}" />
@@ -121,8 +153,15 @@
               <Border Name="Bd" Background="{DynamicResource TB.BtnRunning}" Height="{DynamicResource TB.BarHeight}">
                 <Grid>
                   <StackPanel Orientation="Horizontal" Margin="10,0" VerticalAlignment="Center">
-                    <Image Width="{DynamicResource TB.IconSize}" Height="{DynamicResource TB.IconSize}" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality" SnapsToDevicePixels="True" Source="{Binding Icon}" />
-                    <TextBlock Foreground="#EEFFFFFF" FontFamily="Segoe UI" FontSize="12" Margin="8,0,0,0" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Text="{Binding Title}" Visibility="{Binding ShowLabel, Converter={StaticResource B2V}}" />
+                    <Image Width="{DynamicResource TB.IconSize}" Height="{DynamicResource TB.IconSize}" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality" SnapsToDevicePixels="True" local:RestFlag.On="{DynamicResource TB.RestIcons}">
+                      <Image.Source>
+                        <MultiBinding Converter="{StaticResource RestIconEdge}">
+                          <Binding Path="Icon" />
+                          <Binding Path="(local:RestFlag.On)" RelativeSource="{RelativeSource Self}" />
+                        </MultiBinding>
+                      </Image.Source>
+                    </Image>
+                    <TextBlock Foreground="{DynamicResource TB.GlyphInk}" FontFamily="Segoe UI" FontSize="12" Margin="8,0,0,0" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Text="{Binding Title}" Visibility="{Binding ShowLabel, Converter={StaticResource B2V}}" />
                   </StackPanel>
                   <Border Name="Ul" Height="3" Background="{DynamicResource TB.AccentDim}" VerticalAlignment="Bottom" HorizontalAlignment="Stretch" Margin="6,0,6,2" />
                 </Grid>
@@ -150,7 +189,7 @@
         <Setter Property="Foreground" Value="#EEFFFFFF" />
       </Style>
       <Style x:Key="DeviceRow" TargetType="{x:Type Button}">
-        <Setter Property="Foreground" Value="#FFFFFFFF" />
+        <Setter Property="Foreground" Value="{DynamicResource TB.Ink}" />
         <Setter Property="FontFamily" Value="Segoe UI" />
         <Setter Property="FontSize" Value="13" />
         <Setter Property="FrameworkElement.Cursor" Value="Hand" />
@@ -159,10 +198,11 @@
         <Setter Property="VerticalContentAlignment" Value="Stretch" />
         <Setter Property="MinHeight" Value="58" />
         <Setter Property="Background" Value="#FF0A4D83" />
+        <Setter Property="BorderBrush" Value="#24FFFFFF" />
         <Setter Property="Template">
           <Setter.Value>
             <ControlTemplate TargetType="{x:Type Button}">
-              <Border Name="Bd" Background="{TemplateBinding Control.Background}" BorderBrush="#24FFFFFF" BorderThickness="1" SnapsToDevicePixels="True">
+              <Border Name="Bd" Background="{TemplateBinding Control.Background}" BorderBrush="{TemplateBinding Control.BorderBrush}" BorderThickness="1" SnapsToDevicePixels="True">
                 <ContentPresenter HorizontalAlignment="Stretch" VerticalAlignment="Stretch" />
               </Border>
               <ControlTemplate.Triggers>
@@ -179,7 +219,7 @@
         </Setter>
       </Style>
       <Style x:Key="MetroSoundActionTile" TargetType="{x:Type Button}">
-        <Setter Property="Foreground" Value="#FFFFFFFF" />
+        <Setter Property="Foreground" Value="{DynamicResource TB.Ink}" />
         <Setter Property="Background" Value="#FF078FEF" />
         <Setter Property="BorderThickness" Value="0" />
         <Setter Property="FrameworkElement.Cursor" Value="Hand" />
@@ -221,7 +261,7 @@
       </Style>
       <Style x:Key="MetroSoundActionChevron" TargetType="{x:Type Path}">
         <Setter Property="Data" Value="M 0,0 L 4,4 L 0,8" />
-        <Setter Property="Stroke" Value="#F2FFFFFF" />
+        <Setter Property="Stroke" Value="{DynamicResource TB.ChevronInk}" />
         <Setter Property="StrokeThickness" Value="1.6" />
         <Setter Property="StrokeStartLineCap" Value="Square" />
         <Setter Property="StrokeEndLineCap" Value="Square" />
@@ -248,7 +288,7 @@
               <ControlTemplate.Triggers>
                 <Trigger Property="UIElement.IsMouseOver" Value="True">
                   <Setter TargetName="Bd" Property="Border.Background" Value="#20FFFFFF" />
-                  <Setter Property="Foreground" Value="#FFFFFFFF" />
+                  <Setter Property="Foreground" Value="{DynamicResource TB.Ink}" />
                 </Trigger>
                 <Trigger Property="ButtonBase.IsPressed" Value="True">
                   <Setter TargetName="Bd" Property="Border.Background" Value="#38FFFFFF" />
@@ -259,7 +299,7 @@
         </Setter>
       </Style>
       <Style x:Key="MetroTrayCommandButton" TargetType="{x:Type Button}">
-        <Setter Property="Foreground" Value="#FFFFFFFF" />
+        <Setter Property="Foreground" Value="{DynamicResource TB.Ink}" />
         <Setter Property="Background" Value="#14000000" />
         <Setter Property="BorderThickness" Value="0" />
         <Setter Property="Height" Value="64" />
@@ -340,7 +380,7 @@
         </Setter>
       </Style>
       <Style x:Key="MetroCalendarDay" TargetType="{x:Type Button}">
-        <Setter Property="Foreground" Value="#F2FFFFFF" />
+        <Setter Property="Foreground" Value="{DynamicResource TB.DayInk}" />
         <Setter Property="Background" Value="#00FFFFFF" />
         <Setter Property="FontFamily" Value="Segoe UI" />
         <Setter Property="FontSize" Value="15" />
@@ -403,7 +443,8 @@
               <Grid Height="24" VerticalAlignment="Center">
                 <!-- Unfilled track: was #59FFFFFF (35% white) which read as a faint line on the dark flyout; raised to
                      ~60% white and 3px so the bar is clearly visible in every state (shared by the main + per-app sliders). -->
-                <Border Height="8" Background="#66FFFFFF" VerticalAlignment="Center" />
+                <Border Height="8" Background="{DynamicResource TB.SliderTrack}" VerticalAlignment="Center" />
+                <Border Height="8" BorderBrush="{DynamicResource TB.SliderTrackBorder}" BorderThickness="1" VerticalAlignment="Center" />
                 <Track Name="PART_Track">
                   <Track.DecreaseRepeatButton>
                     <RepeatButton Command="{x:Static Slider.DecreaseLarge}" Focusable="False" OverridesDefaultStyle="True">
@@ -427,7 +468,7 @@
                     <Thumb Focusable="False" OverridesDefaultStyle="True">
                       <Control.Template>
                         <ControlTemplate TargetType="{x:Type Thumb}">
-                          <Rectangle Width="10" Height="24" Fill="#FFFFFFFF" />
+                          <Rectangle Width="10" Height="24" Fill="{DynamicResource TB.Ink}" />
                         </ControlTemplate>
                       </Control.Template>
                     </Thumb>
@@ -441,7 +482,7 @@
       <Style x:Key="TrayGlyph" TargetType="{x:Type Button}">
         <Setter Property="FrameworkElement.FocusVisualStyle" Value="{x:Null}" />
         <Setter Property="FrameworkElement.Cursor" Value="Hand" />
-        <Setter Property="Foreground" Value="#EEFFFFFF" />
+        <Setter Property="Foreground" Value="{DynamicResource TB.GlyphInk}" />
         <Setter Property="FontFamily" Value="Segoe MDL2 Assets" />
         <Setter Property="FontSize" Value="{DynamicResource TB.GlyphSize}" />
         <Setter Property="Padding" Value="9,7" />
@@ -568,8 +609,8 @@
     <StackPanel Name="TrayRoot" Grid.Column="6" Orientation="Horizontal" UseLayoutRounding="True" SnapsToDevicePixels="True">
       <!-- Classic taskbar "Toolbars": Address box + one shortcuts button per enabled folder, sitting next to the tray. -->
       <TextBox Name="AddressBox" Width="160" Margin="4,4,8,4" VerticalAlignment="Center" VerticalContentAlignment="Center"
-               Visibility="Collapsed" Background="#22FFFFFF" Foreground="#FFFFFFFF" CaretBrush="#FFFFFFFF"
-               BorderBrush="#55FFFFFF" BorderThickness="2" Padding="5,1" FontFamily="Segoe UI" FontSize="12"
+               Visibility="Collapsed" Background="#22FFFFFF" Foreground="{DynamicResource TB.Ink}" CaretBrush="{DynamicResource TB.Ink}"
+               BorderBrush="{DynamicResource TB.AddressBorder}" BorderThickness="2" Padding="5,1" FontFamily="Segoe UI" FontSize="12"
                ToolTip="Type a path, app name, or URL and press Enter" KeyUp="OnAddressBoxKeyUp" />
       <ItemsControl Name="ToolbarHost" VerticalAlignment="Stretch">
         <ItemsControl.ItemsPanel>
@@ -583,8 +624,8 @@
                 <ControlTemplate TargetType="Button">
                   <Border Name="bd" Background="Transparent" Padding="8,0" VerticalAlignment="Stretch">
                     <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                      <TextBlock Text="{Binding Name}" Foreground="#FFFFFFFF" FontFamily="Segoe UI" FontSize="12" VerticalAlignment="Center" />
-                      <TextBlock Text="&#187;" Foreground="#BBFFFFFF" FontFamily="Segoe UI" FontSize="12" FontWeight="Bold" Margin="5,0,0,0" VerticalAlignment="Center" />
+                      <TextBlock Text="{Binding Name}" Foreground="{DynamicResource TB.Ink}" FontFamily="Segoe UI" FontSize="12" VerticalAlignment="Center" />
+                      <TextBlock Text="&#187;" Foreground="{DynamicResource TB.InkSoft}" FontFamily="Segoe UI" FontSize="12" FontWeight="Bold" Margin="5,0,0,0" VerticalAlignment="Center" />
                     </StackPanel>
                   </Border>
                   <ControlTemplate.Triggers>
@@ -624,7 +665,7 @@
           </ItemsControl.ItemsPanel>
         </ItemsControl>
         <Button Name="NetButton" Style="{StaticResource TrayIcon}" ToolTip="{Binding NetTip}" Click="OnNetworkClick" MouseRightButtonUp="OnNetworkRightClick">
-          <Image Width="{DynamicResource TB.Win81TrayIconSize}" RenderOptions.BitmapScalingMode="HighQuality" SnapsToDevicePixels="True" Source="{Binding NetImage}" />
+          <Image Width="{DynamicResource TB.Win81TrayIconSize}" RenderOptions.BitmapScalingMode="HighQuality" SnapsToDevicePixels="True" Source="{Binding NetImage}" Opacity="{DynamicResource TB.SystemGlyphOpacity}" />
         </Button>
         <Popup Name="NetPopup" Placement="Custom" StaysOpen="True" AllowsTransparency="True" PopupAnimation="None" PlacementTarget="{Binding ElementName=NetButton}" Opened="OnNetworkPopupOpened" Closed="OnNetworkPopupClosed">
           <Border Name="NetworkFlyoutRoot" Width="420" Height="500" Background="#00000000" BorderBrush="{DynamicResource TB.NetworkBorder}" BorderThickness="1" CornerRadius="0" SnapsToDevicePixels="True" UseLayoutRounding="True" TextOptions.TextFormattingMode="Display" TextOptions.TextRenderingMode="ClearType">
@@ -649,7 +690,7 @@
                   </Grid.ColumnDefinitions>
                   <Image Name="NetHeroImage" Grid.Column="0" Width="62" Height="58" HorizontalAlignment="Left" VerticalAlignment="Center" Stretch="Uniform" SnapsToDevicePixels="True" RenderOptions.BitmapScalingMode="HighQuality" />
                   <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                    <TextBlock Name="NetTitle" Text="Network" Foreground="#FFFFFFFF" FontFamily="Segoe UI Light" FontSize="29" TextTrimming="CharacterEllipsis" />
+                    <TextBlock Name="NetTitle" Text="Network" Foreground="{DynamicResource TB.Ink}" FontFamily="Segoe UI Light" FontSize="29" TextTrimming="CharacterEllipsis" />
                     <TextBlock Name="NetConnectionStatus" Text="Checking connection" Foreground="#D6FFFFFF" FontFamily="Segoe UI Light" FontSize="17" Margin="1,-2,0,0" />
                     <TextBlock Name="NetAdapter" Text="Detecting network adapter..." Foreground="#AFFFFFFF" FontFamily="Segoe UI" FontSize="10.5" TextTrimming="CharacterEllipsis" Margin="2,1,0,0" />
                   </StackPanel>
@@ -690,7 +731,7 @@
                 </ScrollViewer.Resources>
                 <StackPanel Name="NetworkBodyPanel">
                   <Border Name="NetStateBanner" Background="{DynamicResource TB.NetworkState}" BorderBrush="#36FFFFFF" BorderThickness="1" Padding="10,7" Margin="0,0,0,8" Visibility="Collapsed">
-                    <TextBlock Name="NetStateMessage" Foreground="#FFFFFFFF" FontFamily="Segoe UI Semilight" FontSize="12" TextWrapping="Wrap" />
+                    <TextBlock Name="NetStateMessage" Foreground="{DynamicResource TB.Ink}" FontFamily="Segoe UI Semilight" FontSize="12" TextWrapping="Wrap" />
                   </Border>
                   <Grid>
                     <Grid.ColumnDefinitions><ColumnDefinition Width="116" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
@@ -699,19 +740,19 @@
                       <RowDefinition Height="28" /><RowDefinition Height="28" /><RowDefinition Height="28" />
                     </Grid.RowDefinitions>
                     <TextBlock Name="NetPrimaryLabel" Grid.Row="0" Text="SSID" Foreground="#C8FFFFFF" FontFamily="Segoe UI Light" FontSize="13" VerticalAlignment="Center" />
-                    <TextBlock Name="NetPrimaryValue" Grid.Row="0" Grid.Column="1" Text="—" Foreground="#FFFFFFFF" FontFamily="Segoe UI Semilight" FontSize="13" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                    <TextBlock Name="NetPrimaryValue" Grid.Row="0" Grid.Column="1" Text="—" Foreground="{DynamicResource TB.Ink}" FontFamily="Segoe UI Semilight" FontSize="13" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
                     <TextBlock Grid.Row="1" Text="Link speed" Foreground="#C8FFFFFF" FontFamily="Segoe UI Light" FontSize="13" VerticalAlignment="Center" />
-                    <TextBlock Name="NetSpeed" Grid.Row="1" Grid.Column="1" Text="—" Foreground="#FFFFFFFF" FontFamily="Segoe UI Semilight" FontSize="13" VerticalAlignment="Center" />
+                    <TextBlock Name="NetSpeed" Grid.Row="1" Grid.Column="1" Text="—" Foreground="{DynamicResource TB.Ink}" FontFamily="Segoe UI Semilight" FontSize="13" VerticalAlignment="Center" />
                     <TextBlock Grid.Row="2" Text="Signal strength" Foreground="#C8FFFFFF" FontFamily="Segoe UI Light" FontSize="13" VerticalAlignment="Center" />
-                    <TextBlock Name="NetSignalStrength" Grid.Row="2" Grid.Column="1" Text="—" Foreground="#FFFFFFFF" FontFamily="Segoe UI Semilight" FontSize="13" VerticalAlignment="Center" />
+                    <TextBlock Name="NetSignalStrength" Grid.Row="2" Grid.Column="1" Text="—" Foreground="{DynamicResource TB.Ink}" FontFamily="Segoe UI Semilight" FontSize="13" VerticalAlignment="Center" />
                     <TextBlock Grid.Row="3" Text="IPv4 address" Foreground="#C8FFFFFF" FontFamily="Segoe UI Light" FontSize="13" VerticalAlignment="Center" />
-                    <TextBlock Name="NetLocalIp" Grid.Row="3" Grid.Column="1" Text="—" Foreground="#FFFFFFFF" FontFamily="Segoe UI Semilight" FontSize="13" VerticalAlignment="Center" />
+                    <TextBlock Name="NetLocalIp" Grid.Row="3" Grid.Column="1" Text="—" Foreground="{DynamicResource TB.Ink}" FontFamily="Segoe UI Semilight" FontSize="13" VerticalAlignment="Center" />
                     <TextBlock Grid.Row="4" Text="Gateway" Foreground="#C8FFFFFF" FontFamily="Segoe UI Light" FontSize="13" VerticalAlignment="Center" />
-                    <TextBlock Name="NetGateway" Grid.Row="4" Grid.Column="1" Text="—" Foreground="#FFFFFFFF" FontFamily="Segoe UI Semilight" FontSize="13" VerticalAlignment="Center" />
+                    <TextBlock Name="NetGateway" Grid.Row="4" Grid.Column="1" Text="—" Foreground="{DynamicResource TB.Ink}" FontFamily="Segoe UI Semilight" FontSize="13" VerticalAlignment="Center" />
                     <TextBlock Grid.Row="5" Text="DNS" Foreground="#C8FFFFFF" FontFamily="Segoe UI Light" FontSize="13" VerticalAlignment="Center" />
-                    <TextBlock Name="NetDns" Grid.Row="5" Grid.Column="1" Text="—" Foreground="#FFFFFFFF" FontFamily="Segoe UI Semilight" FontSize="13" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                    <TextBlock Name="NetDns" Grid.Row="5" Grid.Column="1" Text="—" Foreground="{DynamicResource TB.Ink}" FontFamily="Segoe UI Semilight" FontSize="13" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
                     <TextBlock Grid.Row="6" Text="Public IP" Foreground="#C8FFFFFF" FontFamily="Segoe UI Light" FontSize="13" VerticalAlignment="Center" />
-                    <TextBlock Name="NetPublicIp" Grid.Row="6" Grid.Column="1" Text="—" Foreground="#FFFFFFFF" FontFamily="Segoe UI Semilight" FontSize="13" VerticalAlignment="Center" />
+                    <TextBlock Name="NetPublicIp" Grid.Row="6" Grid.Column="1" Text="—" Foreground="{DynamicResource TB.Ink}" FontFamily="Segoe UI Semilight" FontSize="13" VerticalAlignment="Center" />
                   </Grid>
                 </StackPanel>
               </ScrollViewer>
@@ -721,13 +762,13 @@
                   <Grid Name="NetworkActionGrid">
                     <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
                     <Button Name="WifiSettingsButton" Grid.Column="0" Style="{StaticResource MetroSoundActionTile}" Background="{DynamicResource TB.NetworkWifiTile}" Margin="0,0,4,0" Click="OnOpenWifiSettings" ToolTip="Wi-Fi settings">
-                      <Grid Margin="7,6,7,5"><Grid.RowDefinitions><RowDefinition Height="36" /><RowDefinition Height="*" /></Grid.RowDefinitions><Viewbox Grid.Row="0" Style="{StaticResource MetroSoundActionIcon}"><Canvas Width="32" Height="32"><Path Data="F0 M 13,1 L 19,1 L 19.8,5.1 L 22.1,6 L 25.6,3.6 L 29.4,7.4 L 27,10.9 L 27.9,13.2 L 31,14 L 31,18 L 27.9,18.8 L 27,21.1 L 29.4,24.6 L 25.6,28.4 L 22.1,26 L 19.8,26.9 L 19,31 L 13,31 L 12.2,26.9 L 9.9,26 L 6.4,28.4 L 2.6,24.6 L 5,21.1 L 4.1,18.8 L 1,18 L 1,14 L 4.1,13.2 L 5,10.9 L 2.6,7.4 L 6.4,3.6 L 9.9,6 L 12.2,5.1 Z M 16,11 A 5,5 0 1 0 16,21 A 5,5 0 1 0 16,11 Z" Fill="#FFFFFFFF" /></Canvas></Viewbox><TextBlock Grid.Row="1" Text="Wi-Fi settings" FontFamily="Segoe UI Semilight" FontSize="11" TextWrapping="Wrap" VerticalAlignment="Bottom" Margin="0,0,10,1" /><Path Grid.Row="1" Style="{StaticResource MetroSoundActionChevron}" Margin="0,0,0,4" /></Grid>
+                      <Grid Margin="7,6,7,5"><Grid.RowDefinitions><RowDefinition Height="36" /><RowDefinition Height="*" /></Grid.RowDefinitions><Viewbox Grid.Row="0" Style="{StaticResource MetroSoundActionIcon}"><Canvas Width="32" Height="32"><Path Data="F0 M 13,1 L 19,1 L 19.8,5.1 L 22.1,6 L 25.6,3.6 L 29.4,7.4 L 27,10.9 L 27.9,13.2 L 31,14 L 31,18 L 27.9,18.8 L 27,21.1 L 29.4,24.6 L 25.6,28.4 L 22.1,26 L 19.8,26.9 L 19,31 L 13,31 L 12.2,26.9 L 9.9,26 L 6.4,28.4 L 2.6,24.6 L 5,21.1 L 4.1,18.8 L 1,18 L 1,14 L 4.1,13.2 L 5,10.9 L 2.6,7.4 L 6.4,3.6 L 9.9,6 L 12.2,5.1 Z M 16,11 A 5,5 0 1 0 16,21 A 5,5 0 1 0 16,11 Z" Fill="{DynamicResource TB.Ink}" /></Canvas></Viewbox><TextBlock Grid.Row="1" Text="Wi-Fi settings" FontFamily="Segoe UI Semilight" FontSize="11" TextWrapping="Wrap" VerticalAlignment="Bottom" Margin="0,0,10,1" /><Path Grid.Row="1" Style="{StaticResource MetroSoundActionChevron}" Margin="0,0,0,4" /></Grid>
                     </Button>
                     <Button Name="NetworkConnectionsButton" Grid.Column="1" Style="{StaticResource MetroSoundActionTile}" Background="{DynamicResource TB.NetworkConnectionsTile}" Margin="0,0,4,0" Click="OnOpenNetworkConnections" ToolTip="Network connections">
-                      <Grid Margin="7,6,7,5"><Grid.RowDefinitions><RowDefinition Height="36" /><RowDefinition Height="*" /></Grid.RowDefinitions><Viewbox Grid.Row="0" Style="{StaticResource MetroSoundActionIcon}"><Canvas Width="32" Height="32"><Path Data="M 2,4 L 22,4 L 22,19 L 2,19 Z M 9,19 L 9,25 M 5,25 L 15,25 M 19,18 L 30,18 L 30,28 L 19,28 Z" Fill="Transparent" Stroke="#FFFFFFFF" StrokeThickness="2.2" StrokeLineJoin="Miter" /></Canvas></Viewbox><TextBlock Grid.Row="1" Text="Network&#x0a;connections" FontFamily="Segoe UI Semilight" FontSize="11" LineHeight="13" VerticalAlignment="Bottom" Margin="0,0,10,0" /><Path Grid.Row="1" Style="{StaticResource MetroSoundActionChevron}" Margin="0,0,0,4" /></Grid>
+                      <Grid Margin="7,6,7,5"><Grid.RowDefinitions><RowDefinition Height="36" /><RowDefinition Height="*" /></Grid.RowDefinitions><Viewbox Grid.Row="0" Style="{StaticResource MetroSoundActionIcon}"><Canvas Width="32" Height="32"><Path Data="M 2,4 L 22,4 L 22,19 L 2,19 Z M 9,19 L 9,25 M 5,25 L 15,25 M 19,18 L 30,18 L 30,28 L 19,28 Z" Fill="Transparent" Stroke="{DynamicResource TB.Ink}" StrokeThickness="2.2" StrokeLineJoin="Miter" /></Canvas></Viewbox><TextBlock Grid.Row="1" Text="Network&#x0a;connections" FontFamily="Segoe UI Semilight" FontSize="11" LineHeight="13" VerticalAlignment="Bottom" Margin="0,0,10,0" /><Path Grid.Row="1" Style="{StaticResource MetroSoundActionChevron}" Margin="0,0,0,4" /></Grid>
                     </Button>
                     <Button Name="NetworkTroubleshootButton" Grid.Column="2" Style="{StaticResource MetroSoundActionTile}" Background="{DynamicResource TB.NetworkTroubleshootTile}" Click="OnTroubleshootNetwork" ToolTip="Troubleshoot network problems">
-                      <Grid Margin="7,6,7,5"><Grid.RowDefinitions><RowDefinition Height="36" /><RowDefinition Height="*" /></Grid.RowDefinitions><Viewbox Grid.Row="0" Style="{StaticResource MetroSoundActionIcon}"><Canvas Width="32" Height="32"><Path Data="M 20,3 C 16,3 13,6 13,10 C 13,11.5 13.4,12.8 14.2,14 L 4,24.2 C 2.7,25.5 2.7,27.5 4,28.8 C 5.3,30.1 7.3,30.1 8.6,28.8 L 18.8,18.6 C 20,19.4 21.4,19.8 22.8,19.8 C 27,19.8 30,16.5 30,12.5 C 30,11.2 29.7,10 29.1,8.9 L 24.7,13.3 L 20.1,12.1 L 18.9,7.5 L 23.3,3.1 C 22.2,3 21.1,3 20,3 Z" Fill="#FFFFFFFF" /></Canvas></Viewbox><TextBlock Grid.Row="1" Text="Troubleshoot&#x0a;problems" FontFamily="Segoe UI Semilight" FontSize="11" LineHeight="13" VerticalAlignment="Bottom" Margin="0,0,10,0" /><Path Grid.Row="1" Style="{StaticResource MetroSoundActionChevron}" Margin="0,0,0,4" /></Grid>
+                      <Grid Margin="7,6,7,5"><Grid.RowDefinitions><RowDefinition Height="36" /><RowDefinition Height="*" /></Grid.RowDefinitions><Viewbox Grid.Row="0" Style="{StaticResource MetroSoundActionIcon}"><Canvas Width="32" Height="32"><Path Data="M 20,3 C 16,3 13,6 13,10 C 13,11.5 13.4,12.8 14.2,14 L 4,24.2 C 2.7,25.5 2.7,27.5 4,28.8 C 5.3,30.1 7.3,30.1 8.6,28.8 L 18.8,18.6 C 20,19.4 21.4,19.8 22.8,19.8 C 27,19.8 30,16.5 30,12.5 C 30,11.2 29.7,10 29.1,8.9 L 24.7,13.3 L 20.1,12.1 L 18.9,7.5 L 23.3,3.1 C 22.2,3 21.1,3 20,3 Z" Fill="{DynamicResource TB.Ink}" /></Canvas></Viewbox><TextBlock Grid.Row="1" Text="Troubleshoot&#x0a;problems" FontFamily="Segoe UI Semilight" FontSize="11" LineHeight="13" VerticalAlignment="Bottom" Margin="0,0,10,0" /><Path Grid.Row="1" Style="{StaticResource MetroSoundActionChevron}" Margin="0,0,0,4" /></Grid>
                     </Button>
                   </Grid>
                   <Button Grid.Row="1" Foreground="{DynamicResource TB.NetworkLink}" Style="{StaticResource MetroSoundFooterLink}" Click="OnOpenNetworkSharingCenter" ToolTip="Open Network and Sharing Center">
@@ -744,26 +785,26 @@
             <StackPanel Name="NetworkCommandList">
               <Button Name="NetworkCommandSharingCenter" Style="{StaticResource MetroTrayCommandButton}" Height="72" Background="{DynamicResource TB.NetworkWifiTile}" Click="OnOpenNetworkSharingCenter" ToolTip="Open Network and Sharing Center">
                 <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="54" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-                  <Viewbox Grid.Column="0" Style="{StaticResource MetroTrayCommandIcon}"><Canvas Width="32" Height="32"><Path Data="F0 M 13,1 L 19,1 L 19.8,5.1 L 22.1,6 L 25.6,3.6 L 29.4,7.4 L 27,10.9 L 27.9,13.2 L 31,14 L 31,18 L 27.9,18.8 L 27,21.1 L 29.4,24.6 L 25.6,28.4 L 22.1,26 L 19.8,26.9 L 19,31 L 13,31 L 12.2,26.9 L 9.9,26 L 6.4,28.4 L 2.6,24.6 L 5,21.1 L 4.1,18.8 L 1,18 L 1,14 L 4.1,13.2 L 5,10.9 L 2.6,7.4 L 6.4,3.6 L 9.9,6 L 12.2,5.1 Z M 16,11 A 5,5 0 1 0 16,21 A 5,5 0 1 0 16,11 Z" Fill="#FFFFFFFF" /></Canvas></Viewbox>
-                  <TextBlock Grid.Column="1" Text="Open Network and&#x0a;Sharing Center" Foreground="#FFFFFFFF" FontFamily="Segoe UI Semilight" FontSize="14" LineHeight="18" VerticalAlignment="Center" TextWrapping="Wrap" />
+                  <Viewbox Grid.Column="0" Style="{StaticResource MetroTrayCommandIcon}"><Canvas Width="32" Height="32"><Path Data="F0 M 13,1 L 19,1 L 19.8,5.1 L 22.1,6 L 25.6,3.6 L 29.4,7.4 L 27,10.9 L 27.9,13.2 L 31,14 L 31,18 L 27.9,18.8 L 27,21.1 L 29.4,24.6 L 25.6,28.4 L 22.1,26 L 19.8,26.9 L 19,31 L 13,31 L 12.2,26.9 L 9.9,26 L 6.4,28.4 L 2.6,24.6 L 5,21.1 L 4.1,18.8 L 1,18 L 1,14 L 4.1,13.2 L 5,10.9 L 2.6,7.4 L 6.4,3.6 L 9.9,6 L 12.2,5.1 Z M 16,11 A 5,5 0 1 0 16,21 A 5,5 0 1 0 16,11 Z" Fill="{DynamicResource TB.Ink}" /></Canvas></Viewbox>
+                  <TextBlock Grid.Column="1" Text="Open Network and&#x0a;Sharing Center" Foreground="{DynamicResource TB.Ink}" FontFamily="Segoe UI Semilight" FontSize="14" LineHeight="18" VerticalAlignment="Center" TextWrapping="Wrap" />
                 </Grid>
               </Button>
               <Button Name="NetworkCommandConnections" Style="{StaticResource MetroTrayCommandButton}" Click="OnOpenNetworkConnections" ToolTip="Network connections">
                 <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="54" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-                  <Viewbox Grid.Column="0" Style="{StaticResource MetroTrayCommandIcon}"><Canvas Width="32" Height="32"><Rectangle Canvas.Left="2" Canvas.Top="22" Width="4" Height="8" Fill="#FFFFFFFF" /><Rectangle Canvas.Left="8" Canvas.Top="17" Width="4" Height="13" Fill="#FFFFFFFF" /><Rectangle Canvas.Left="14" Canvas.Top="12" Width="4" Height="18" Fill="#FFFFFFFF" /><Rectangle Canvas.Left="20" Canvas.Top="7" Width="4" Height="23" Fill="#FFFFFFFF" /><Rectangle Canvas.Left="26" Canvas.Top="2" Width="4" Height="28" Fill="#FFFFFFFF" /></Canvas></Viewbox>
-                  <TextBlock Grid.Column="1" Text="Network connections" Foreground="#FFFFFFFF" FontFamily="Segoe UI Semilight" FontSize="14" VerticalAlignment="Center" />
+                  <Viewbox Grid.Column="0" Style="{StaticResource MetroTrayCommandIcon}"><Canvas Width="32" Height="32"><Rectangle Canvas.Left="2" Canvas.Top="22" Width="4" Height="8" Fill="{DynamicResource TB.Ink}" /><Rectangle Canvas.Left="8" Canvas.Top="17" Width="4" Height="13" Fill="{DynamicResource TB.Ink}" /><Rectangle Canvas.Left="14" Canvas.Top="12" Width="4" Height="18" Fill="{DynamicResource TB.Ink}" /><Rectangle Canvas.Left="20" Canvas.Top="7" Width="4" Height="23" Fill="{DynamicResource TB.Ink}" /><Rectangle Canvas.Left="26" Canvas.Top="2" Width="4" Height="28" Fill="{DynamicResource TB.Ink}" /></Canvas></Viewbox>
+                  <TextBlock Grid.Column="1" Text="Network connections" Foreground="{DynamicResource TB.Ink}" FontFamily="Segoe UI Semilight" FontSize="14" VerticalAlignment="Center" />
                 </Grid>
               </Button>
               <Button Name="NetworkCommandTroubleshoot" Style="{StaticResource MetroTrayCommandButton}" Click="OnTroubleshootNetwork" ToolTip="Troubleshoot network problems">
                 <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="54" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-                  <Viewbox Grid.Column="0" Style="{StaticResource MetroTrayCommandIcon}"><Canvas Width="32" Height="32"><Path Data="M 16,2 L 30,28 L 2,28 Z" Fill="Transparent" Stroke="#FFFFFFFF" StrokeThickness="2.2" StrokeLineJoin="Miter" /><Path Data="M 16,9 L 16,19" Stroke="#FFFFFFFF" StrokeThickness="2.5" StrokeStartLineCap="Square" StrokeEndLineCap="Square" /><Rectangle Canvas.Left="14.7" Canvas.Top="22.5" Width="2.6" Height="2.6" Fill="#FFFFFFFF" /></Canvas></Viewbox>
-                  <TextBlock Grid.Column="1" Text="Troubleshoot problems" Foreground="#FFFFFFFF" FontFamily="Segoe UI Semilight" FontSize="14" VerticalAlignment="Center" />
+                  <Viewbox Grid.Column="0" Style="{StaticResource MetroTrayCommandIcon}"><Canvas Width="32" Height="32"><Path Data="M 16,2 L 30,28 L 2,28 Z" Fill="Transparent" Stroke="{DynamicResource TB.Ink}" StrokeThickness="2.2" StrokeLineJoin="Miter" /><Path Data="M 16,9 L 16,19" Stroke="{DynamicResource TB.Ink}" StrokeThickness="2.5" StrokeStartLineCap="Square" StrokeEndLineCap="Square" /><Rectangle Canvas.Left="14.7" Canvas.Top="22.5" Width="2.6" Height="2.6" Fill="{DynamicResource TB.Ink}" /></Canvas></Viewbox>
+                  <TextBlock Grid.Column="1" Text="Troubleshoot problems" Foreground="{DynamicResource TB.Ink}" FontFamily="Segoe UI Semilight" FontSize="14" VerticalAlignment="Center" />
                 </Grid>
               </Button>
               <Button Name="NetworkCommandSettings" Style="{StaticResource MetroTrayCommandButton}" Height="72" Click="OnOpenNetworkSettings" ToolTip="Network and Internet settings">
                 <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="54" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-                  <Viewbox Grid.Column="0" Style="{StaticResource MetroTrayCommandIcon}"><Canvas Width="32" Height="32"><Path Data="F0 M 13,1 L 19,1 L 19.8,5.1 L 22.1,6 L 25.6,3.6 L 29.4,7.4 L 27,10.9 L 27.9,13.2 L 31,14 L 31,18 L 27.9,18.8 L 27,21.1 L 29.4,24.6 L 25.6,28.4 L 22.1,26 L 19.8,26.9 L 19,31 L 13,31 L 12.2,26.9 L 9.9,26 L 6.4,28.4 L 2.6,24.6 L 5,21.1 L 4.1,18.8 L 1,18 L 1,14 L 4.1,13.2 L 5,10.9 L 2.6,7.4 L 6.4,3.6 L 9.9,6 L 12.2,5.1 Z M 16,11 A 5,5 0 1 0 16,21 A 5,5 0 1 0 16,11 Z" Fill="#FFFFFFFF" /></Canvas></Viewbox>
-                  <TextBlock Grid.Column="1" Text="Network and&#x0a;Internet settings" Foreground="#FFFFFFFF" FontFamily="Segoe UI Semilight" FontSize="14" LineHeight="18" VerticalAlignment="Center" TextWrapping="Wrap" />
+                  <Viewbox Grid.Column="0" Style="{StaticResource MetroTrayCommandIcon}"><Canvas Width="32" Height="32"><Path Data="F0 M 13,1 L 19,1 L 19.8,5.1 L 22.1,6 L 25.6,3.6 L 29.4,7.4 L 27,10.9 L 27.9,13.2 L 31,14 L 31,18 L 27.9,18.8 L 27,21.1 L 29.4,24.6 L 25.6,28.4 L 22.1,26 L 19.8,26.9 L 19,31 L 13,31 L 12.2,26.9 L 9.9,26 L 6.4,28.4 L 2.6,24.6 L 5,21.1 L 4.1,18.8 L 1,18 L 1,14 L 4.1,13.2 L 5,10.9 L 2.6,7.4 L 6.4,3.6 L 9.9,6 L 12.2,5.1 Z M 16,11 A 5,5 0 1 0 16,21 A 5,5 0 1 0 16,11 Z" Fill="{DynamicResource TB.Ink}" /></Canvas></Viewbox>
+                  <TextBlock Grid.Column="1" Text="Network and&#x0a;Internet settings" Foreground="{DynamicResource TB.Ink}" FontFamily="Segoe UI Semilight" FontSize="14" LineHeight="18" VerticalAlignment="Center" TextWrapping="Wrap" />
                 </Grid>
               </Button>
             </StackPanel>
@@ -771,8 +812,8 @@
         </Popup>
         <Button Name="VolumeButton" Style="{StaticResource TrayIcon}" ToolTip="{Binding VolumeTip}" Click="OnVolumeClick" MouseWheel="OnVolumeWheel" MouseRightButtonUp="OnVolumeRightClick">
           <Grid>
-            <Image Name="VolumeIcon81" Width="{DynamicResource TB.Win81TrayIconSize}" RenderOptions.BitmapScalingMode="HighQuality" SnapsToDevicePixels="True" Source="{Binding TrayVolumeImage}" Visibility="{Binding VolumeImageVis}" />
-            <TextBlock Name="VolumeGlyphText" Text="{Binding VolumeGlyph}" Visibility="{Binding VolumeGlyphVis}" FontFamily="Segoe MDL2 Assets" FontSize="{DynamicResource TB.GlyphSize}" Foreground="#EEFFFFFF" HorizontalAlignment="Center" VerticalAlignment="Center" />
+            <Image Name="VolumeIcon81" Width="{DynamicResource TB.Win81TrayIconSize}" RenderOptions.BitmapScalingMode="HighQuality" SnapsToDevicePixels="True" Source="{Binding TrayVolumeImage}" Opacity="{DynamicResource TB.SystemGlyphOpacity}" Visibility="{Binding VolumeImageVis}" />
+            <TextBlock Name="VolumeGlyphText" Text="{Binding VolumeGlyph}" Visibility="{Binding VolumeGlyphVis}" FontFamily="Segoe MDL2 Assets" FontSize="{DynamicResource TB.GlyphSize}" Foreground="{DynamicResource TB.GlyphInk}" HorizontalAlignment="Center" VerticalAlignment="Center" />
           </Grid>
         </Button>
         <Button Name="BatteryButton" Style="{StaticResource TrayIcon}" Content="{Binding BatteryGlyph}" ToolTip="{Binding BatteryTip}" Visibility="{Binding BatteryVisible, Converter={StaticResource B2V}}" Click="OnBatteryClick" MouseRightButtonUp="OnBatteryRightClick" />
@@ -802,8 +843,8 @@
                       <ColumnDefinition Width="*" />
                       <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
-                    <TextBlock Name="VolumeTitle" Text="Volume" Foreground="#FFFFFFFF" FontFamily="Segoe UI Light" FontSize="29" VerticalAlignment="Center" />
-                    <TextBlock Name="VolumePercent" Grid.Column="1" Foreground="#FFFFFFFF" FontFamily="Segoe UI Light" FontSize="43" VerticalAlignment="Center">
+                    <TextBlock Name="VolumeTitle" Text="Volume" Foreground="{DynamicResource TB.Ink}" FontFamily="Segoe UI Light" FontSize="29" VerticalAlignment="Center" />
+                    <TextBlock Name="VolumePercent" Grid.Column="1" Foreground="{DynamicResource TB.Ink}" FontFamily="Segoe UI Light" FontSize="43" VerticalAlignment="Center">
                       <Run Text="{Binding VolumePct, Mode=OneWay}" />
                       <Run Text="%" FontSize="20" />
                     </TextBlock>
@@ -820,8 +861,8 @@
                     <Button Name="MuteToggle" Grid.Column="0" Style="{StaticResource FlyoutGlyph}" Width="52" Padding="6,3" VerticalAlignment="Stretch" Click="OnMuteToggle" ToolTip="Mute or unmute">
                       <Viewbox Stretch="Uniform" MaxHeight="34" MaxWidth="40" HorizontalAlignment="Center" VerticalAlignment="Center">
                         <Grid Width="40" Height="40">
-                          <Image Source="{Binding VolumeImage}" Visibility="{Binding VolumeImageVis}" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality" SnapsToDevicePixels="True" HorizontalAlignment="Center" VerticalAlignment="Center" />
-                          <TextBlock Name="MuteToggleGlyph" Text="{Binding VolumeGlyph}" Visibility="{Binding VolumeGlyphVis}" FontFamily="Segoe MDL2 Assets" FontSize="28" Foreground="#FFFFFFFF" TextAlignment="Center" HorizontalAlignment="Center" VerticalAlignment="Center" ClipToBounds="False" TextOptions.TextFormattingMode="Ideal" />
+                          <Image Name="VolumeHeroImage" Source="{Binding VolumeImage}" Visibility="{Binding VolumeImageVis}" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality" SnapsToDevicePixels="True" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                          <TextBlock Name="MuteToggleGlyph" Text="{Binding VolumeGlyph}" Visibility="{Binding VolumeGlyphVis}" FontFamily="Segoe MDL2 Assets" FontSize="28" Foreground="{DynamicResource TB.Ink}" TextAlignment="Center" HorizontalAlignment="Center" VerticalAlignment="Center" ClipToBounds="False" TextOptions.TextFormattingMode="Ideal" />
                         </Grid>
                       </Viewbox>
                     </Button>
@@ -873,13 +914,13 @@
                 </ScrollViewer.Resources>
                 <StackPanel Name="VolumeBodyPanel">
                   <Grid Margin="0,0,0,5">
-                    <TextBlock Text="Output" Foreground="#F2FFFFFF" FontFamily="Segoe UI Light" FontSize="15" />
+                    <TextBlock Text="Output" Foreground="{DynamicResource TB.HeadInk}" FontFamily="Segoe UI Light" FontSize="15" />
                     <TextBlock Name="VolumeRefreshStatus" Text="Updating..." Foreground="#90FFFFFF" FontFamily="Segoe UI" FontSize="11" HorizontalAlignment="Right" VerticalAlignment="Bottom" Visibility="Collapsed" />
                   </Grid>
                   <StackPanel Name="OutputList" />
-                  <TextBlock Text="Input" Foreground="#F2FFFFFF" FontFamily="Segoe UI Light" FontSize="15" Margin="0,7,0,4" />
+                  <TextBlock Text="Input" Foreground="{DynamicResource TB.HeadInk}" FontFamily="Segoe UI Light" FontSize="15" Margin="0,7,0,4" />
                   <StackPanel Name="InputList" />
-                  <TextBlock Name="AppsHeader" Text="App volume" Foreground="#F2FFFFFF" FontFamily="Segoe UI Light" FontSize="15" Margin="0,7,0,4" />
+                  <TextBlock Name="AppsHeader" Text="App volume" Foreground="{DynamicResource TB.HeadInk}" FontFamily="Segoe UI Light" FontSize="15" Margin="0,7,0,4" />
                   <TextBlock Name="VolumeEmptyApps" Text="No active audio apps" Foreground="#A8FFFFFF" FontFamily="Segoe UI" FontSize="12" Margin="2,3,0,8" Visibility="Collapsed" />
                   <ItemsControl Name="AppVolumeHost">
                     <ItemsControl.ItemTemplate>
@@ -893,14 +934,21 @@
                             </Grid.ColumnDefinitions>
                             <Grid Grid.Column="0" Background="#26000000">
                               <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE767;" FontSize="22" Foreground="#D8FFFFFF" HorizontalAlignment="Center" VerticalAlignment="Center" />
-                              <Image Width="27" Height="27" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality" SnapsToDevicePixels="True" Source="{Binding Icon}" />
+                              <Image Width="27" Height="27" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality" SnapsToDevicePixels="True" local:RestFlag.On="{DynamicResource TB.RestIcons}">
+                                <Image.Source>
+                                  <MultiBinding Converter="{StaticResource RestIconEdge}">
+                                    <Binding Path="Icon" />
+                                    <Binding Path="(local:RestFlag.On)" RelativeSource="{RelativeSource Self}" />
+                                  </MultiBinding>
+                                </Image.Source>
+                              </Image>
                             </Grid>
                             <Grid Grid.Column="1" Margin="10,5,7,4">
                               <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="*" />
                               </Grid.RowDefinitions>
-                              <TextBlock Foreground="#FFFFFFFF" FontFamily="Segoe UI" FontSize="12" TextTrimming="CharacterEllipsis" Text="{Binding Name}" />
+                              <TextBlock Foreground="{DynamicResource TB.Ink}" FontFamily="Segoe UI" FontSize="12" TextTrimming="CharacterEllipsis" Text="{Binding Name}" />
                               <Grid Grid.Row="1">
                                 <Grid.ColumnDefinitions>
                                   <ColumnDefinition Width="Auto" />
@@ -939,16 +987,16 @@
                       <ColumnDefinition Width="*" />
                     </Grid.ColumnDefinitions>
                     <Button Name="PlaybackDevicesButton" Grid.Column="0" Style="{StaticResource MetroSoundActionTile}" Background="{DynamicResource TB.SoundPlaybackTile}" Margin="0,0,4,0" Click="OnOpenPlaybackDevices" ToolTip="Playback devices">
-                      <Grid Margin="6,6,6,5"><Grid.RowDefinitions><RowDefinition Height="34" /><RowDefinition Height="*" /></Grid.RowDefinitions><Viewbox Grid.Row="0" Style="{StaticResource MetroSoundActionIcon}"><Canvas Width="32" Height="32"><Path Data="M 8,4 L 26,16 L 8,28 Z" Fill="Transparent" Stroke="#FFFFFFFF" StrokeThickness="2.3" StrokeLineJoin="Miter" /></Canvas></Viewbox><TextBlock Grid.Row="1" Text="Playback&#x0a;devices" FontFamily="Segoe UI Semilight" FontSize="10.5" LineHeight="13" VerticalAlignment="Bottom" Margin="0,0,10,0" /><Path Grid.Row="1" Style="{StaticResource MetroSoundActionChevron}" Margin="0,0,0,4" /></Grid>
+                      <Grid Margin="6,6,6,5"><Grid.RowDefinitions><RowDefinition Height="34" /><RowDefinition Height="*" /></Grid.RowDefinitions><Viewbox Grid.Row="0" Style="{StaticResource MetroSoundActionIcon}"><Canvas Width="32" Height="32"><Path Data="M 8,4 L 26,16 L 8,28 Z" Fill="Transparent" Stroke="{DynamicResource TB.Ink}" StrokeThickness="2.3" StrokeLineJoin="Miter" /></Canvas></Viewbox><TextBlock Grid.Row="1" Text="Playback&#x0a;devices" FontFamily="Segoe UI Semilight" FontSize="10.5" LineHeight="13" VerticalAlignment="Bottom" Margin="0,0,10,0" /><Path Grid.Row="1" Style="{StaticResource MetroSoundActionChevron}" Margin="0,0,0,4" /></Grid>
                     </Button>
                     <Button Name="RecordingDevicesButton" Grid.Column="1" Style="{StaticResource MetroSoundActionTile}" Background="{DynamicResource TB.SoundRecordingTile}" Margin="0,0,4,0" Click="OnOpenRecordingDevices" ToolTip="Recording devices">
-                      <Grid Margin="6,6,6,5"><Grid.RowDefinitions><RowDefinition Height="34" /><RowDefinition Height="*" /></Grid.RowDefinitions><Viewbox Grid.Row="0" Style="{StaticResource MetroSoundActionIcon}"><Canvas Width="32" Height="32"><Path Data="M 16,3 C 12.9,3 11,5.3 11,8 L 11,16 C 11,19.1 13.1,21 16,21 C 18.9,21 21,19.1 21,16 L 21,8 C 21,5.3 19.1,3 16,3 Z M 7,15 C 7,21 10.8,25 16,25 C 21.2,25 25,21 25,15 M 16,25 L 16,29 M 11,29 L 21,29" Fill="Transparent" Stroke="#FFFFFFFF" StrokeThickness="2.15" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" /></Canvas></Viewbox><TextBlock Grid.Row="1" Text="Recording&#x0a;devices" FontFamily="Segoe UI Semilight" FontSize="10.5" LineHeight="13" VerticalAlignment="Bottom" Margin="0,0,10,0" /><Path Grid.Row="1" Style="{StaticResource MetroSoundActionChevron}" Margin="0,0,0,4" /></Grid>
+                      <Grid Margin="6,6,6,5"><Grid.RowDefinitions><RowDefinition Height="34" /><RowDefinition Height="*" /></Grid.RowDefinitions><Viewbox Grid.Row="0" Style="{StaticResource MetroSoundActionIcon}"><Canvas Width="32" Height="32"><Path Data="M 16,3 C 12.9,3 11,5.3 11,8 L 11,16 C 11,19.1 13.1,21 16,21 C 18.9,21 21,19.1 21,16 L 21,8 C 21,5.3 19.1,3 16,3 Z M 7,15 C 7,21 10.8,25 16,25 C 21.2,25 25,21 25,15 M 16,25 L 16,29 M 11,29 L 21,29" Fill="Transparent" Stroke="{DynamicResource TB.Ink}" StrokeThickness="2.15" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" /></Canvas></Viewbox><TextBlock Grid.Row="1" Text="Recording&#x0a;devices" FontFamily="Segoe UI Semilight" FontSize="10.5" LineHeight="13" VerticalAlignment="Bottom" Margin="0,0,10,0" /><Path Grid.Row="1" Style="{StaticResource MetroSoundActionChevron}" Margin="0,0,0,4" /></Grid>
                     </Button>
                     <Button Name="SoundsButton" Grid.Column="2" Style="{StaticResource MetroSoundActionTile}" Background="{DynamicResource TB.SoundSoundsTile}" Margin="0,0,4,0" Click="OnOpenSounds" ToolTip="Sounds">
-                      <Grid Margin="6,6,6,5"><Grid.RowDefinitions><RowDefinition Height="34" /><RowDefinition Height="*" /></Grid.RowDefinitions><Viewbox Grid.Row="0" Style="{StaticResource MetroSoundActionIcon}"><Canvas Width="32" Height="32"><Path Data="M 13,8 L 26,5 L 26,20 M 13,8 L 13,23 M 13,11 L 26,8" Fill="Transparent" Stroke="#FFFFFFFF" StrokeThickness="2.3" StrokeStartLineCap="Square" StrokeEndLineCap="Square" StrokeLineJoin="Miter" /><Ellipse Canvas.Left="5" Canvas.Top="20" Width="9" Height="6" Fill="#FFFFFFFF" /><Ellipse Canvas.Left="18" Canvas.Top="17" Width="9" Height="6" Fill="#FFFFFFFF" /></Canvas></Viewbox><TextBlock Grid.Row="1" Text="Sounds" FontFamily="Segoe UI Semilight" FontSize="10.5" VerticalAlignment="Bottom" Margin="0,0,10,1" /><Path Grid.Row="1" Style="{StaticResource MetroSoundActionChevron}" Margin="0,0,0,4" /></Grid>
+                      <Grid Margin="6,6,6,5"><Grid.RowDefinitions><RowDefinition Height="34" /><RowDefinition Height="*" /></Grid.RowDefinitions><Viewbox Grid.Row="0" Style="{StaticResource MetroSoundActionIcon}"><Canvas Width="32" Height="32"><Path Data="M 13,8 L 26,5 L 26,20 M 13,8 L 13,23 M 13,11 L 26,8" Fill="Transparent" Stroke="{DynamicResource TB.Ink}" StrokeThickness="2.3" StrokeStartLineCap="Square" StrokeEndLineCap="Square" StrokeLineJoin="Miter" /><Ellipse Canvas.Left="5" Canvas.Top="20" Width="9" Height="6" Fill="{DynamicResource TB.Ink}" /><Ellipse Canvas.Left="18" Canvas.Top="17" Width="9" Height="6" Fill="{DynamicResource TB.Ink}" /></Canvas></Viewbox><TextBlock Grid.Row="1" Text="Sounds" FontFamily="Segoe UI Semilight" FontSize="10.5" VerticalAlignment="Bottom" Margin="0,0,10,1" /><Path Grid.Row="1" Style="{StaticResource MetroSoundActionChevron}" Margin="0,0,0,4" /></Grid>
                     </Button>
                     <Button Name="SoundSettingsButton" Grid.Column="3" Style="{StaticResource MetroSoundActionTile}" Background="{DynamicResource TB.SoundSettingsTile}" Click="OnOpenSoundSettings" ToolTip="Sound settings">
-                      <Grid Margin="6,6,6,5"><Grid.RowDefinitions><RowDefinition Height="34" /><RowDefinition Height="*" /></Grid.RowDefinitions><Viewbox Grid.Row="0" Style="{StaticResource MetroSoundActionIcon}"><Canvas Width="32" Height="32"><Path Data="F0 M 13,1 L 19,1 L 19.8,5.1 L 22.1,6 L 25.6,3.6 L 29.4,7.4 L 27,10.9 L 27.9,13.2 L 31,14 L 31,18 L 27.9,18.8 L 27,21.1 L 29.4,24.6 L 25.6,28.4 L 22.1,26 L 19.8,26.9 L 19,31 L 13,31 L 12.2,26.9 L 9.9,26 L 6.4,28.4 L 2.6,24.6 L 5,21.1 L 4.1,18.8 L 1,18 L 1,14 L 4.1,13.2 L 5,10.9 L 2.6,7.4 L 6.4,3.6 L 9.9,6 L 12.2,5.1 Z M 16,11 A 5,5 0 1 0 16,21 A 5,5 0 1 0 16,11 Z" Fill="#FFFFFFFF" /></Canvas></Viewbox><TextBlock Grid.Row="1" Text="Sound&#x0a;settings" FontFamily="Segoe UI Semilight" FontSize="10.5" LineHeight="13" VerticalAlignment="Bottom" Margin="0,0,10,0" /><Path Grid.Row="1" Style="{StaticResource MetroSoundActionChevron}" Margin="0,0,0,4" /></Grid>
+                      <Grid Margin="6,6,6,5"><Grid.RowDefinitions><RowDefinition Height="34" /><RowDefinition Height="*" /></Grid.RowDefinitions><Viewbox Grid.Row="0" Style="{StaticResource MetroSoundActionIcon}"><Canvas Width="32" Height="32"><Path Data="F0 M 13,1 L 19,1 L 19.8,5.1 L 22.1,6 L 25.6,3.6 L 29.4,7.4 L 27,10.9 L 27.9,13.2 L 31,14 L 31,18 L 27.9,18.8 L 27,21.1 L 29.4,24.6 L 25.6,28.4 L 22.1,26 L 19.8,26.9 L 19,31 L 13,31 L 12.2,26.9 L 9.9,26 L 6.4,28.4 L 2.6,24.6 L 5,21.1 L 4.1,18.8 L 1,18 L 1,14 L 4.1,13.2 L 5,10.9 L 2.6,7.4 L 6.4,3.6 L 9.9,6 L 12.2,5.1 Z M 16,11 A 5,5 0 1 0 16,21 A 5,5 0 1 0 16,11 Z" Fill="{DynamicResource TB.Ink}" /></Canvas></Viewbox><TextBlock Grid.Row="1" Text="Sound&#x0a;settings" FontFamily="Segoe UI Semilight" FontSize="10.5" LineHeight="13" VerticalAlignment="Bottom" Margin="0,0,10,0" /><Path Grid.Row="1" Style="{StaticResource MetroSoundActionChevron}" Margin="0,0,0,4" /></Grid>
                     </Button>
                   </Grid>
                   <Button Grid.Row="1" Style="{StaticResource MetroSoundFooterLink}" Click="OnOpenClassicVolumeMixer" ToolTip="Open classic volume mixer">
@@ -965,32 +1013,32 @@
             <StackPanel Name="SoundCommandList">
               <Button Name="SoundCommandMixer" Style="{StaticResource MetroTrayCommandButton}" Background="{DynamicResource TB.SoundPlaybackTile}" Click="OnOpenClassicVolumeMixer" ToolTip="Open volume mixer">
                 <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="54" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-                  <Viewbox Grid.Column="0" Style="{StaticResource MetroTrayCommandIcon}"><Canvas Width="32" Height="32"><Path Data="M 3,12 L 9,12 L 16,6 L 16,26 L 9,20 L 3,20 Z M 21,11 C 24,14 24,18 21,21 M 25,7 C 31,12 31,20 25,25" Fill="Transparent" Stroke="#FFFFFFFF" StrokeThickness="2.2" StrokeStartLineCap="Square" StrokeEndLineCap="Square" StrokeLineJoin="Miter" /></Canvas></Viewbox>
-                  <TextBlock Grid.Column="1" Text="Open volume mixer" Foreground="#FFFFFFFF" FontFamily="Segoe UI Semilight" FontSize="14" VerticalAlignment="Center" />
+                  <Viewbox Grid.Column="0" Style="{StaticResource MetroTrayCommandIcon}"><Canvas Width="32" Height="32"><Path Data="M 3,12 L 9,12 L 16,6 L 16,26 L 9,20 L 3,20 Z M 21,11 C 24,14 24,18 21,21 M 25,7 C 31,12 31,20 25,25" Fill="Transparent" Stroke="{DynamicResource TB.Ink}" StrokeThickness="2.2" StrokeStartLineCap="Square" StrokeEndLineCap="Square" StrokeLineJoin="Miter" /></Canvas></Viewbox>
+                  <TextBlock Grid.Column="1" Text="Open volume mixer" Foreground="{DynamicResource TB.Ink}" FontFamily="Segoe UI Semilight" FontSize="14" VerticalAlignment="Center" />
                 </Grid>
               </Button>
               <Button Name="SoundCommandPlayback" Style="{StaticResource MetroTrayCommandButton}" Click="OnOpenPlaybackDevices" ToolTip="Playback devices">
                 <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="54" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-                  <Viewbox Grid.Column="0" Style="{StaticResource MetroTrayCommandIcon}"><Canvas Width="32" Height="32"><Path Data="M 7,4 L 27,16 L 7,28 Z" Fill="Transparent" Stroke="#FFFFFFFF" StrokeThickness="2.3" StrokeLineJoin="Miter" /></Canvas></Viewbox>
-                  <TextBlock Grid.Column="1" Text="Playback devices" Foreground="#FFFFFFFF" FontFamily="Segoe UI Semilight" FontSize="14" VerticalAlignment="Center" />
+                  <Viewbox Grid.Column="0" Style="{StaticResource MetroTrayCommandIcon}"><Canvas Width="32" Height="32"><Path Data="M 7,4 L 27,16 L 7,28 Z" Fill="Transparent" Stroke="{DynamicResource TB.Ink}" StrokeThickness="2.3" StrokeLineJoin="Miter" /></Canvas></Viewbox>
+                  <TextBlock Grid.Column="1" Text="Playback devices" Foreground="{DynamicResource TB.Ink}" FontFamily="Segoe UI Semilight" FontSize="14" VerticalAlignment="Center" />
                 </Grid>
               </Button>
               <Button Name="SoundCommandRecording" Style="{StaticResource MetroTrayCommandButton}" Click="OnOpenRecordingDevices" ToolTip="Recording devices">
                 <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="54" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-                  <Viewbox Grid.Column="0" Style="{StaticResource MetroTrayCommandIcon}"><Canvas Width="32" Height="32"><Path Data="M 16,3 C 12.9,3 11,5.3 11,8 L 11,16 C 11,19.1 13.1,21 16,21 C 18.9,21 21,19.1 21,16 L 21,8 C 21,5.3 19.1,3 16,3 Z M 7,15 C 7,21 10.8,25 16,25 C 21.2,25 25,21 25,15 M 16,25 L 16,29 M 11,29 L 21,29" Fill="Transparent" Stroke="#FFFFFFFF" StrokeThickness="2.15" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" /></Canvas></Viewbox>
-                  <TextBlock Grid.Column="1" Text="Recording devices" Foreground="#FFFFFFFF" FontFamily="Segoe UI Semilight" FontSize="14" VerticalAlignment="Center" />
+                  <Viewbox Grid.Column="0" Style="{StaticResource MetroTrayCommandIcon}"><Canvas Width="32" Height="32"><Path Data="M 16,3 C 12.9,3 11,5.3 11,8 L 11,16 C 11,19.1 13.1,21 16,21 C 18.9,21 21,19.1 21,16 L 21,8 C 21,5.3 19.1,3 16,3 Z M 7,15 C 7,21 10.8,25 16,25 C 21.2,25 25,21 25,15 M 16,25 L 16,29 M 11,29 L 21,29" Fill="Transparent" Stroke="{DynamicResource TB.Ink}" StrokeThickness="2.15" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" /></Canvas></Viewbox>
+                  <TextBlock Grid.Column="1" Text="Recording devices" Foreground="{DynamicResource TB.Ink}" FontFamily="Segoe UI Semilight" FontSize="14" VerticalAlignment="Center" />
                 </Grid>
               </Button>
               <Button Name="SoundCommandSounds" Style="{StaticResource MetroTrayCommandButton}" Click="OnOpenSounds" ToolTip="Sounds">
                 <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="54" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-                  <Viewbox Grid.Column="0" Style="{StaticResource MetroTrayCommandIcon}"><Canvas Width="32" Height="32"><Path Data="F0 M 13,1 L 19,1 L 19.8,5.1 L 22.1,6 L 25.6,3.6 L 29.4,7.4 L 27,10.9 L 27.9,13.2 L 31,14 L 31,18 L 27.9,18.8 L 27,21.1 L 29.4,24.6 L 25.6,28.4 L 22.1,26 L 19.8,26.9 L 19,31 L 13,31 L 12.2,26.9 L 9.9,26 L 6.4,28.4 L 2.6,24.6 L 5,21.1 L 4.1,18.8 L 1,18 L 1,14 L 4.1,13.2 L 5,10.9 L 2.6,7.4 L 6.4,3.6 L 9.9,6 L 12.2,5.1 Z M 16,11 A 5,5 0 1 0 16,21 A 5,5 0 1 0 16,11 Z" Fill="#FFFFFFFF" /></Canvas></Viewbox>
-                  <TextBlock Grid.Column="1" Text="Sounds" Foreground="#FFFFFFFF" FontFamily="Segoe UI Semilight" FontSize="14" VerticalAlignment="Center" />
+                  <Viewbox Grid.Column="0" Style="{StaticResource MetroTrayCommandIcon}"><Canvas Width="32" Height="32"><Path Data="F0 M 13,1 L 19,1 L 19.8,5.1 L 22.1,6 L 25.6,3.6 L 29.4,7.4 L 27,10.9 L 27.9,13.2 L 31,14 L 31,18 L 27.9,18.8 L 27,21.1 L 29.4,24.6 L 25.6,28.4 L 22.1,26 L 19.8,26.9 L 19,31 L 13,31 L 12.2,26.9 L 9.9,26 L 6.4,28.4 L 2.6,24.6 L 5,21.1 L 4.1,18.8 L 1,18 L 1,14 L 4.1,13.2 L 5,10.9 L 2.6,7.4 L 6.4,3.6 L 9.9,6 L 12.2,5.1 Z M 16,11 A 5,5 0 1 0 16,21 A 5,5 0 1 0 16,11 Z" Fill="{DynamicResource TB.Ink}" /></Canvas></Viewbox>
+                  <TextBlock Grid.Column="1" Text="Sounds" Foreground="{DynamicResource TB.Ink}" FontFamily="Segoe UI Semilight" FontSize="14" VerticalAlignment="Center" />
                 </Grid>
               </Button>
               <Button Name="SoundCommandSettings" Style="{StaticResource MetroTrayCommandButton}" Click="OnOpenSoundSettings" ToolTip="Sound settings">
                 <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="54" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-                  <Viewbox Grid.Column="0" Style="{StaticResource MetroTrayCommandIcon}"><Canvas Width="32" Height="32"><Path Data="M 4,8 L 28,8 M 4,16 L 28,16 M 4,24 L 28,24" Stroke="#FFFFFFFF" StrokeThickness="2" StrokeStartLineCap="Square" StrokeEndLineCap="Square" /><Rectangle Canvas.Left="10" Canvas.Top="4" Width="3" Height="8" Fill="#FFFFFFFF" /><Rectangle Canvas.Left="21" Canvas.Top="12" Width="3" Height="8" Fill="#FFFFFFFF" /><Rectangle Canvas.Left="7" Canvas.Top="20" Width="3" Height="8" Fill="#FFFFFFFF" /></Canvas></Viewbox>
-                  <TextBlock Grid.Column="1" Text="Sound settings" Foreground="#FFFFFFFF" FontFamily="Segoe UI Semilight" FontSize="14" VerticalAlignment="Center" />
+                  <Viewbox Grid.Column="0" Style="{StaticResource MetroTrayCommandIcon}"><Canvas Width="32" Height="32"><Path Data="M 4,8 L 28,8 M 4,16 L 28,16 M 4,24 L 28,24" Stroke="{DynamicResource TB.Ink}" StrokeThickness="2" StrokeStartLineCap="Square" StrokeEndLineCap="Square" /><Rectangle Canvas.Left="10" Canvas.Top="4" Width="3" Height="8" Fill="{DynamicResource TB.Ink}" /><Rectangle Canvas.Left="21" Canvas.Top="12" Width="3" Height="8" Fill="{DynamicResource TB.Ink}" /><Rectangle Canvas.Left="7" Canvas.Top="20" Width="3" Height="8" Fill="{DynamicResource TB.Ink}" /></Canvas></Viewbox>
+                  <TextBlock Grid.Column="1" Text="Sound settings" Foreground="{DynamicResource TB.Ink}" FontFamily="Segoe UI Semilight" FontSize="14" VerticalAlignment="Center" />
                 </Grid>
               </Button>
             </StackPanel>
@@ -998,7 +1046,7 @@
         </Popup>
       </StackPanel>
       <StackPanel Name="ClockPanel" VerticalAlignment="Center" Margin="12,0" MinWidth="70" Cursor="Hand" ToolTip="Date and time" MouseLeftButtonUp="OnClockClick" MouseRightButtonUp="OnClockRightClick">
-        <TextBlock Name="ClockTime" Foreground="#FFFFFFFF" FontFamily="Segoe UI" FontSize="13" HorizontalAlignment="Right" />
+        <TextBlock Name="ClockTime" Foreground="{DynamicResource TB.Ink}" FontFamily="Segoe UI" FontSize="13" HorizontalAlignment="Right" />
         <TextBlock Name="ClockDate" Foreground="#CCFFFFFF" FontFamily="Segoe UI" FontSize="11" HorizontalAlignment="Right" />
       </StackPanel>
       <Popup Name="ClockPopup" Placement="Custom" StaysOpen="True" AllowsTransparency="True" PopupAnimation="None" PlacementTarget="{Binding ElementName=ClockPanel}" Opened="OnClockPopupOpened" Closed="OnClockPopupClosed">
@@ -1018,10 +1066,10 @@
             <Border Grid.Row="0" Background="{DynamicResource TB.ClockHeader}">
               <StackPanel VerticalAlignment="Center" Margin="12,6">
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
-                  <TextBlock Name="ClockBig" Foreground="#FFFFFFFF" FontFamily="Segoe UI Light" FontSize="56" FontWeight="Light" />
+                  <TextBlock Name="ClockBig" Foreground="{DynamicResource TB.Ink}" FontFamily="Segoe UI Light" FontSize="56" FontWeight="Light" />
                   <TextBlock Name="ClockSeconds" Foreground="#E8FFFFFF" FontFamily="Segoe UI Light" FontSize="26" FontWeight="Light" VerticalAlignment="Bottom" Margin="8,0,0,7" />
                 </StackPanel>
-                <TextBlock Name="ClockFull" Foreground="#FFFFFFFF" FontFamily="Segoe UI Light" FontSize="16" FontWeight="Light" HorizontalAlignment="Center" TextAlignment="Center" Margin="0,-2,0,0" />
+                <TextBlock Name="ClockFull" Foreground="{DynamicResource TB.Ink}" FontFamily="Segoe UI Light" FontSize="16" FontWeight="Light" HorizontalAlignment="Center" TextAlignment="Center" Margin="0,-2,0,0" />
               </StackPanel>
             </Border>
             <Border Grid.Row="1" Background="{DynamicResource TB.ClockBody}">
@@ -1037,7 +1085,7 @@
                     <ColumnDefinition Width="Auto" />
                   </Grid.ColumnDefinitions>
                   <local:MetroDirectionalArrow81 x:Name="PrevMonth" Grid.Column="0" Width="42" Height="42" GlyphSize="32" Direction="Left" ToolTip="Previous month" AutomationProperties.Name="Previous month" Click="OnPrevMonth" />
-                  <TextBlock Name="MonthLabel" Grid.Column="1" Foreground="#FFFFFFFF" FontFamily="Segoe UI Light" FontSize="23" FontWeight="Light" HorizontalAlignment="Center" VerticalAlignment="Center" TextAlignment="Center">
+                  <TextBlock Name="MonthLabel" Grid.Column="1" Foreground="{DynamicResource TB.Ink}" FontFamily="Segoe UI Light" FontSize="23" FontWeight="Light" HorizontalAlignment="Center" VerticalAlignment="Center" TextAlignment="Center">
                     <TextBlock.RenderTransform>
                       <TranslateTransform x:Name="MonthLabelSlide" />
                     </TextBlock.RenderTransform>
@@ -1068,8 +1116,8 @@
       </Popup>
       <Button Name="ActionCenterBtn" Style="{StaticResource TrayIcon}" ToolTip="Notifications" Click="OnActionCenter">
         <Grid>
-          <Image Name="NotifIcon81" Width="{DynamicResource TB.Win81TrayIconSize}" RenderOptions.BitmapScalingMode="HighQuality" SnapsToDevicePixels="True" Source="pack://application:,,,/Assets/win81icons/notifications81.png" />
-          <TextBlock Name="NotifGlyphNative" Visibility="Collapsed" Text="&#xE7E7;" FontFamily="Segoe MDL2 Assets" FontSize="{DynamicResource TB.GlyphSize}" Foreground="#EEFFFFFF" HorizontalAlignment="Center" VerticalAlignment="Center" />
+          <Image Name="NotifIcon81" Width="{DynamicResource TB.Win81TrayIconSize}" RenderOptions.BitmapScalingMode="HighQuality" SnapsToDevicePixels="True" Source="pack://application:,,,/Assets/win81icons/notifications81.png" Opacity="{DynamicResource TB.SystemGlyphOpacity}" />
+          <TextBlock Name="NotifGlyphNative" Visibility="Collapsed" Text="&#xE7E7;" FontFamily="Segoe MDL2 Assets" FontSize="{DynamicResource TB.GlyphSize}" Foreground="{DynamicResource TB.GlyphInk}" HorizontalAlignment="Center" VerticalAlignment="Center" />
         </Grid>
       </Button>
       <Border Name="ShowDesktop" Width="8" Background="#11FFFFFF" Cursor="Hand" ToolTip="Show desktop" MouseLeftButtonUp="OnShowDesktop" MouseEnter="OnShowDesktopEnter" MouseLeave="OnShowDesktopLeave" />

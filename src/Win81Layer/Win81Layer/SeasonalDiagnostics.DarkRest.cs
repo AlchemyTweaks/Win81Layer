@@ -374,9 +374,11 @@ internal static partial class SeasonalDiagnostics
 				{
 					bad.Add("Dark rest visuals are off (High Contrast?)");
 				}
+				// Below 0.38 the tones are neutral (the black family); from 0.38 they take the accent's hue at a low
+				// saturation.
 				(string Hex, double L)[] table = new (string, double)[8]
 				{
-					("#273038", 0.34), ("#222B32", 0.30), ("#20282E", 0.28), ("#252E35", 0.32), ("#35424C", 0.46), ("#394753", 0.50), ("#3C4A56", 0.52), ("#12171B", 0.16)
+					("#050505", 0.16), ("#121212", 0.28), ("#121212", 0.30), ("#0A0A0A", 0.32), ("#0A0A0A", 0.34), ("#44636A", 0.46), ("#4E7179", 0.50), ("#4E7179", 0.52)
 				};
 				double accentHue = Hsl(accent.R, accent.G, accent.B).H;
 				List<string> got = new List<string>();
@@ -389,8 +391,7 @@ internal static partial class SeasonalDiagnostics
 					{
 						bad.Add($"{l:F2}: {Hex(c)} want {want}");
 					}
-					// byte rounding at these dark values moves saturation and hue a little
-					if (s > 0.205 || HueDistance(h, accentHue) > 3.0)
+					if (l < 0.38 ? s != 0.0 : (s > 0.225 || HueDistance(h, accentHue) > 3.0))
 					{
 						bad.Add($"{l:F2}: s={s:F3} hue={h:F1} accent hue={accentHue:F1}");
 					}
@@ -489,7 +490,8 @@ internal static partial class SeasonalDiagnostics
 
 	private static void RestArtChecks(string outDir)
 	{
-		// the drawn desktop scene: deterministic, dark, low contrast, no bright or saturated element
+		// the drawn desktop scene: deterministic, true black for the most part, a faint grid every 10 px and a soft glow at
+		// the top centre, no bright or saturated element, and a dark strip under the taskbar
 		{
 			BitmapSource a = SeasonalArt.RenderWallpaper(SeasonalArt.RestArt, 1920, 1080);
 			BitmapSource b = SeasonalArt.RenderWallpaper(SeasonalArt.RestArt, 1920, 1080);
@@ -498,98 +500,121 @@ internal static partial class SeasonalDiagnostics
 			bool same = SHA256.HashData(pa).AsSpan().SequenceEqual(SHA256.HashData(pb));
 			double max = 0;
 			double sum = 0;
-			double sq = 0;
 			int chroma = 0;
-			double bottomL = 0;
+			double bottom = 0;
+			long black = 0;
+			double top = 0;
+			double low = 0;
+			double[] column = new double[1920];
 			int n = pa.Length / 4;
 			for (int i = 0; i < pa.Length; i += 4)
 			{
+				int px = i / 4;
+				int x = px % 1920;
+				int y = px / 1920;
 				double l = 0.0722 * pa[i] + 0.7152 * pa[i + 1] + 0.2126 * pa[i + 2];
 				max = Math.Max(max, l);
 				sum += l;
-				sq += l * l;
 				chroma = Math.Max(chroma, Math.Max(pa[i], Math.Max(pa[i + 1], pa[i + 2])) - Math.Min(pa[i], Math.Min(pa[i + 1], pa[i + 2])));
-				if (i / 4 / 1920 >= 1040)
+				if (Math.Max(pa[i], Math.Max(pa[i + 1], pa[i + 2])) <= 1)
 				{
-					bottomL = Math.Max(bottomL, Hsl(pa[i + 2], pa[i + 1], pa[i]).L);
+					black++;
+				}
+				if (y >= 1040)
+				{
+					bottom = Math.Max(bottom, l);
+				}
+				if (y < 160 && x >= 720 && x < 1200)
+				{
+					top += l;
+				}
+				if (y >= 920)
+				{
+					low += l;
+				}
+				if (y >= 300 && y < 700)
+				{
+					column[x] += l;
 				}
 			}
 			double mean = sum / n;
-			double stdev = Math.Sqrt(Math.Max(0, sq / n - mean * mean));
+			double topMean = top / (160 * 480);
+			double lowMean = low / (160 * 1920);
+			// grid: a column is a line column when it is clearly brighter than its neighbours
+			int lineColumns = 0;
+			int regular = 0;
+			int lastLine = -100;
+			for (int x = 1; x < 1919; x++)
+			{
+				if (column[x] > column[x - 1] * 1.5 && column[x] > column[x + 1] * 1.5)
+				{
+					lineColumns++;
+					if (x - lastLine == 10)
+					{
+						regular++;
+					}
+					lastLine = x;
+				}
+			}
+			double blackShare = black / (double)n;
 			SavePng(a, Path.Combine(outDir, "wallpaper-rest.png"));
 			BitmapSource small = SeasonalArt.RenderWallpaper(SeasonalArt.RestArt, 1280, 1024);
 			SavePng(small, Path.Combine(outDir, "wallpaper-rest-1280x1024.png"));
-			bool ok = same && max <= 48 && mean >= 8 && mean <= 30 && stdev <= 8 && chroma <= 24 && bottomL <= 0.10 && small.PixelWidth == 1280;
-			string detail = $"deterministic={same} maxLuma={max:F1} meanLuma={mean:F1} stdev={stdev:F2} maxChroma={chroma} bottomMaxL={bottomL:F3}";
+			bool ok = same && max <= 32 && mean >= 1.5 && mean <= 6 && chroma <= 8 && blackShare >= 0.45 && bottom <= 10 && topMean >= lowMean + 1.0
+				&& lineColumns >= 150 && regular >= lineColumns - 2 && small.PixelWidth == 1280 && small.PixelHeight == 1024;
+			string detail = $"deterministic={same} maxLuma={max:F1} meanLuma={mean:F2} maxChroma={chroma} trueBlack={blackShare:F3} bottom40MaxLuma={bottom:F1} glow top={topMean:F2} bottom={lowMean:F2} lineColumns={lineColumns} every10px={regular}";
 			Metrics["RestWallpaper"] = detail;
-			Check("rest-wallpaper-calm", ok, detail);
+			Check("rest-wallpaper-blackgrid", ok, detail);
 		}
-		// the dusk Start pattern: a frozen 480 DIU tile, seamless, barely lighter than the base
+		// the night grid Start pattern (used when the picture is not shown, under High Contrast): a frozen 40 DIU tile,
+		// seamless, lines every 10 DIU barely lighter than the base
 		{
 			SeasonPreset rest = SeasonalTheme.Find(SeasonalTheme.Rest)!;
 			Color bc = SeasonalArt.Hex(rest.Base);
 			Color ac = SeasonalArt.Hex(rest.Accent);
 			Brush brush = StartBackgroundFactory.Build(bc, ac, rest.Pattern);
 			double offset = SeasonalArt.TileOffsetY(rest.Pattern);
-			bool frozen = brush is DrawingBrush db && db.IsFrozen && db.Viewbox.Width == 480.0 && db.Viewport.Width == 480.0 && db.Viewport.Y == offset && offset == 50.0 && db.TileMode == TileMode.Tile;
-			// The header row of Start (y 24-88) lies between two lines, exactly as Start draws the brush.
-			DrawingVisual header = new DrawingVisual();
-			using (DrawingContext dc = header.RenderOpen())
-			{
-				dc.DrawRectangle(brush, null, new Rect(0, 0, 960, 120));
-			}
-			byte[] hp = Pixels(Render(header, 960, 120));
-			int headerDev = 0;
-			for (int y = 24; y <= 88; y++)
-			{
-				for (int x = 0; x < 960; x++)
-				{
-					int i = (y * 960 + x) * 4;
-					headerDev = Math.Max(headerDev, Math.Max(Math.Abs(hp[i] - bc.B), Math.Max(Math.Abs(hp[i + 1] - bc.G), Math.Abs(hp[i + 2] - bc.R))));
-				}
-			}
-			// One whole tile from its own top edge for the edge, seam and contrast checks (the header offset taken out).
-			DrawingBrush aligned = ((DrawingBrush)brush).Clone();
-			aligned.Viewport = new Rect(0.0, 0.0, 480.0, 480.0);
-			aligned.Freeze();
+			bool frozen = brush is DrawingBrush db && db.IsFrozen && db.Viewbox.Width == 40.0 && db.Viewport.Width == 40.0 && db.Viewport.Y == offset && offset == 0.0 && db.TileMode == TileMode.Tile
+				&& StartBackgroundFactory.Build(bc, ac, SeasonalArt.LegacyRestPattern) is DrawingBrush legacy && legacy.Viewbox.Width == 40.0;
 			DrawingVisual dv = new DrawingVisual();
 			using (DrawingContext dc = dv.RenderOpen())
 			{
-				dc.DrawRectangle(aligned, null, new Rect(0, 0, 960, 480));
+				dc.DrawRectangle(brush, null, new Rect(0, 0, 400, 200));
 			}
-			BitmapSource render = Render(dv, 960, 480);
+			BitmapSource render = Render(dv, 400, 200);
 			byte[] px = Pixels(render);
-			int Px(int x, int y, int c)
+			int Dev(int x, int y)
 			{
-				return px[(y * 960 + x) * 4 + c];
+				int i = (y * 400 + x) * 4;
+				return Math.Max(Math.Abs(px[i] - bc.B), Math.Max(Math.Abs(px[i + 1] - bc.G), Math.Abs(px[i + 2] - bc.R)));
 			}
-			int edge = 0;
-			int seam = 0;
+			int edgeOff = 0;
 			int dev = 0;
-			for (int x = 0; x < 960; x++)
+			int seam = 0;
+			for (int x = 0; x < 400; x++)
 			{
-				foreach (int y in new int[2] { 0, 479 })
+				// the tile's own top and bottom rows touch the base colour except where a vertical line crosses
+				foreach (int y in new int[2] { 0, 39 })
 				{
-					edge = Math.Max(edge, Math.Max(Math.Abs(Px(x, y, 0) - bc.B), Math.Max(Math.Abs(Px(x, y, 1) - bc.G), Math.Abs(Px(x, y, 2) - bc.R))));
+					if (x % 10 != 5)
+					{
+						edgeOff = Math.Max(edgeOff, Dev(x, y));
+					}
+				}
+				for (int y = 0; y < 200; y++)
+				{
+					dev = Math.Max(dev, Dev(x, y));
 				}
 			}
-			for (int y = 0; y < 480; y++)
+			for (int y = 0; y < 200; y++)
 			{
-				for (int c = 0; c < 3; c++)
-				{
-					seam = Math.Max(seam, Math.Abs(Px(479, y, c) - Px(480, y, c)));
-				}
-				for (int x = 0; x < 960; x++)
-				{
-					dev = Math.Max(dev, Math.Max(Math.Abs(Px(x, y, 0) - bc.B), Math.Max(Math.Abs(Px(x, y, 1) - bc.G), Math.Abs(Px(x, y, 2) - bc.R))));
-				}
+				seam = Math.Max(seam, Math.Abs(Dev(39, y) - Dev(79, y)));
 			}
-			double stdev = LuminanceStdev(px);
-			SavePng(render, Path.Combine(outDir, "pattern-dusk.png"));
-			bool ok = frozen && edge <= 2 && seam <= 3 && dev <= 24 && stdev >= 0.2 && stdev <= 4.0 && headerDev <= 2;
-			string detail = $"frozen={frozen} offsetY={offset} edgeRows={edge} seam={seam} maxDeviation={dev} stdev={stdev:F2} headerRowDeviation={headerDev}";
-			Metrics["DuskPattern"] = detail;
-			Check("rest-pattern-dusk", ok, detail);
+			SavePng(render, Path.Combine(outDir, "pattern-nightgrid.png"));
+			bool ok = frozen && edgeOff <= 2 && seam <= 2 && dev <= 24 && dev >= 3;
+			string detail = $"frozen={frozen} offsetY={offset} edgeRowsOffLines={edgeOff} seam={seam} maxDeviation={dev}";
+			Metrics["NightGridPattern"] = detail;
+			Check("rest-pattern-nightgrid", ok, detail);
 		}
 	}
 
@@ -635,10 +660,10 @@ internal static partial class SeasonalDiagnostics
 
 	// The Normal renders compared before and after the Dark rest pass ("*-normal-before.png" / "*-normal-after.png").
 	// The switcher is not among them: it lists the real open windows, which may change between the two renders.
-	private static readonly string[] NormalPairs = new string[14]
+	private static readonly string[] NormalPairs = new string[19]
 	{
 		"taskbar-strip", "actioncenter", "searchpane", "settingspane", "charms", "toast", "osd", "pcsettings", "flyout-clock", "flyout-volume", "flyout-network",
-		"start-apps", "personalize", "win7start"
+		"start-apps", "personalize", "win7start", "contextmenu", "controls", "caption", "share", "powerflyout"
 	};
 
 	private static readonly NetInfo.LocalNet QaLocalNet = new NetInfo.LocalNet("Wi-Fi", "192.168.1.9", "192.168.1.1", "1.1.1.1, 8.8.8.8", "Intel Wi-Fi 6E AX210", "866 Mbps");
@@ -648,6 +673,7 @@ internal static partial class SeasonalDiagnostics
 	private static void RenderNormalSet(string outDir, StartScreen start, AppSettings real, RestFixtures f, string when)
 	{
 		SettingsStore.DiagnosticsOverride = NormalSettings(real);
+		ShellTheme.SyncRest();
 		SeasonalTheme.DiagnosticsOwnsWallpaper = false;
 		SeasonalTheme.DiagnosticsOwnsWindowsTheme = false;
 		TaskbarTheme.DiagnosticsWallpaperPath = null;
@@ -670,6 +696,28 @@ internal static partial class SeasonalDiagnostics
 		start.QaRenderSeason(P("start-apps"), 1920.0, 1080.0, withAmbient: true, allApps: true);
 		start.QaRenderPersonalize(P("personalize"));
 		f.Win7.QaRenderPreset(P("win7start"), TaskbarTheme.SourceAccent());
+		RenderContextMenu(P("contextmenu"));
+		RenderControls(P("controls"), System.Windows.Media.Brushes.White);
+		RenderCaption(P("caption"));
+		RenderSharePane(P("share"));
+		f.Settings.QaRenderPowerFlyout(P("powerflyout"));
+	}
+
+	private static void RenderSharePane(string path)
+	{
+		CharmListPane share = new CharmListPane("Share", "Desktop", () => new CharmListPane.Row[2]
+		{
+			new CharmListPane.Row(59592, "Copy folder path", "C:\\Users\\Public\\Documents", delegate { }),
+			new CharmListPane.Row(59592, "Copy app name", "File Explorer", delegate { }, Enabled: false)
+		}) { Left = -4000.0, Top = -4000.0 };
+		try
+		{
+			share.QaRender(path, 400.0);
+		}
+		finally
+		{
+			share.Close();
+		}
 	}
 
 	private static void RenderToast(string path)
@@ -716,26 +764,45 @@ internal static partial class SeasonalDiagnostics
 		try
 		{
 			SettingsStore.DiagnosticsOverride = RestSettings(real);
+			SeasonalArt.DiagnosticsPictureDir = _fixtureEmpty;
 			TaskbarTheme.DiagnosticsWallpaperPath = Path.Combine(outDir, "wallpaper-rest.png");
 			SeasonalTheme.DiagnosticsOwnsWallpaper = true;
 			SeasonalTheme.DiagnosticsOwnsWindowsTheme = true;
 			ShellTheme.ForceForTest(true);
+			ShellTheme.SyncRest();
 			TaskbarTheme.Invalidate();
 			DarkRest.Sync();
 			Check("rest-visuals-on", DarkRest.Visuals && Motion.CalmOverride, $"visuals={DarkRest.Visuals} calm={Motion.CalmOverride} highContrast={SystemParameters.HighContrast}");
 			Metrics["RestStatusText"] = SeasonalTheme.StatusText(new SeasonalStatus { ActiveId = SeasonalTheme.Rest, ActiveName = "Dark rest", OwnsWallpaper = true, OwnsWindowsTheme = true });
 			Metrics["RestStartHint"] = SeasonalTheme.NormalRestoresHint();
 			RestStartRenders(outDir, start, real);
+			RestStartPictureChecks(outDir, start, real);
 			RestTaskbar(outDir, real, f.Taskbar);
 			RestFlyouts(outDir, f.Taskbar);
 			RestPanes(outDir, start, f);
 			RestPcSettings(outDir, f.Pc);
 			RestCaption(real);
+			RenderContextMenu(Path.Combine(outDir, "contextmenu-rest.png"));
+			RenderControls(Path.Combine(outDir, "controls-rest.png"), DarkRestPalette.PcPage);
+			RenderCaption(Path.Combine(outDir, "caption-rest.png"));
+			RenderTooltip(Path.Combine(outDir, "tooltip-rest.png"));
+			RestStatesRenders(outDir, start, f);
+			PointerChecks(outDir);
+			PaletteContrastChecks(f.Taskbar);
+			RestStateChecks(outDir, start, f);
+			RestRenderedContrastChecks(outDir);
+			GlareChecks(outDir, RestGlareRenders());
+			RestStatesChecks(outDir, start, real, f);
 		}
 		finally
 		{
-			ShellTheme.ForceForTest(realDark);
+			// The override goes back to Normal and the Dark rest overlay is taken off first, so pinning light/dark again
+			// writes only the Normal tokens.
 			SettingsStore.DiagnosticsOverride = NormalSettings(real);
+			SeasonalArt.DiagnosticsPictureDir = null;
+			ShellLookLink.QaKnownFolderFound = null;
+			ShellTheme.SyncRest();
+			ShellTheme.ForceForTest(realDark);
 			SeasonalTheme.DiagnosticsOwnsWallpaper = false;
 			SeasonalTheme.DiagnosticsOwnsWindowsTheme = null;
 			TaskbarTheme.DiagnosticsWallpaperPath = null;
@@ -779,13 +846,21 @@ internal static partial class SeasonalDiagnostics
 		bool noAmbient = !start.QaBgLayerHasChild;
 		RegionStats header = Region(startPath, 0, 0, 1920, 36);
 		RegionStats board = Region(startPath, 0, 520, 1920, 560);
-		Check("rest-start-dark", noAmbient && header.L <= 0.10 && header.Chroma <= 12 && board.L <= 0.10 && board.Chroma <= 12,
+		Check("rest-start-dark", noAmbient && header.L <= 0.04 && header.Chroma <= 8 && board.L <= 0.04 && board.Chroma <= 8,
 			$"ambient={!noAmbient} header={header} board={board}");
 		string appsPath = Path.Combine(outDir, "start-rest-apps.png");
 		start.QaRenderSeason(appsPath, 1920.0, 1080.0, withAmbient: true, allApps: true);
 		Rect field = start.QaLastSearchField;
-		RegionStats fieldStats = field.Width > 4 ? Region(appsPath, (int)field.X + 2, (int)field.Y + 2, (int)field.Width - 4, (int)field.Height - 4) : default;
-		Check("rest-start-apps-search-dark", field.Width > 4 && fieldStats.L <= 0.20, $"field={field} {fieldStats}");
+		// the field itself (inside its 2 px border), its border and the background left of it
+		(double fr, double fg, double fb) = field.Width > 8 ? RegionAverage(appsPath, (int)(field.X + field.Width) - 70, (int)field.Y + 6, 40, (int)field.Height - 12) : (255, 255, 255);
+		(double br, double bgc, double bb) = field.Width > 8 ? RegionAverage(appsPath, (int)field.X, (int)field.Y + (int)(field.Height / 2) - 4, 2, 8) : (0, 0, 0);
+		(double or, double og, double ob) = field.Width > 8 ? RegionAverage(appsPath, Math.Max(0, (int)field.X - 30), (int)field.Y + 4, 20, (int)field.Height - 8) : (0, 0, 0);
+		Color fillC = Color.FromRgb((byte)fr, (byte)fg, (byte)fb);
+		Color borderC = Color.FromRgb((byte)br, (byte)bgc, (byte)bb);
+		Color outsideC = Color.FromRgb((byte)or, (byte)og, (byte)ob);
+		bool fillOk = Math.Abs(fr - 0x14) <= 2 && Math.Abs(fg - 0x14) <= 2 && Math.Abs(fb - 0x14) <= 2;
+		Check("rest-start-apps-search-dark", field.Width > 8 && fillOk && Contrast(borderC, fillC) >= 3.0 && Contrast(borderC, outsideC) >= 3.0,
+			$"field={field} fill={Hex(fillC)} border={Hex(borderC)} {Contrast(borderC, fillC):F2}:1 vs fill, {Contrast(borderC, outsideC):F2}:1 vs {Hex(outsideC)}");
 		start.QaRenderPersonalize(Path.Combine(outDir, "personalize-rest.png"));
 		(int count, string selected) = start.QaSeasonChips();
 		Check("rest-personalize-chips", count == 4 && selected == SeasonalTheme.Rest, $"chips={count} selected={selected}");
@@ -794,17 +869,36 @@ internal static partial class SeasonalDiagnostics
 		string noDim = Path.Combine(outDir, "start-rest-nodim.png");
 		start.QaRenderSeason(noDim, 1920.0, 1080.0, withAmbient: true);
 		SettingsStore.DiagnosticsOverride = RestSettings(real);
+		// Dimmed tiles: a solid tile colour is toned down (DarkRestPalette.MuteTile: the hue kept, saturation x0.55,
+		// lightness 0.27 at most), so the tile wall has no vivid block on black; every solid tile plate stays at or below
+		// HSL saturation 0.6.
 		byte[] dim = Pixels(new CroppedBitmap(LoadPng(startPath), new Int32Rect(155, 200, 1, 1)));
 		byte[] full = Pixels(new CroppedBitmap(LoadPng(noDim), new Int32Rect(155, 200, 1, 1)));
-		bool dimmed = true;
-		List<string> ch = new List<string>();
-		for (int c = 0; c < 3; c++)
+		Color fullC = Color.FromRgb(full[2], full[1], full[0]);
+		Color wantC = DarkRestPalette.MuteTile(fullC);
+		bool dimmed = Math.Abs(dim[2] - wantC.R) <= 2 && Math.Abs(dim[1] - wantC.G) <= 2 && Math.Abs(dim[0] - wantC.B) <= 2;
+		List<string> ch = new List<string> { $"{Hex(fullC)}->{Hex(Color.FromRgb(dim[2], dim[1], dim[0]))} (want {Hex(wantC)})" };
+		double maxS = 0.0;
+		BitmapSource wall = LoadPng(startPath);
+		foreach (int tx in new int[6] { 90, 250, 410, 570, 792, 952 })
 		{
-			double want = full[c] * (1.0 - 64.0 / 255.0);
-			ch.Add($"{full[c]}->{dim[c]} (want {want:F1})");
-			dimmed &= Math.Abs(dim[c] - want) <= Math.Max(1.5, 0.02 * full[c]);
+			foreach (int ty in new int[2] { 164, 324 })
+			{
+				byte[] p = Pixels(new CroppedBitmap(wall, new Int32Rect(tx, ty, 1, 1)));
+				maxS = Math.Max(maxS, Hsl(p[2], p[1], p[0]).S);
+			}
 		}
-		Check("rest-tiles-dimmed", dimmed && full.Take(3).Any(v => v >= 60), string.Join(" ", ch));
+		int maxChroma = 0;
+		foreach (int tx in new int[6] { 90, 250, 410, 570, 792, 952 })
+		{
+			foreach (int ty in new int[2] { 164, 324 })
+			{
+				byte[] p = Pixels(new CroppedBitmap(wall, new Int32Rect(tx, ty, 1, 1)));
+				maxChroma = Math.Max(maxChroma, Math.Max(p[0], Math.Max(p[1], p[2])) - Math.Min(p[0], Math.Min(p[1], p[2])));
+			}
+		}
+		ch.Add($"max tile saturation={maxS:F2} chroma={maxChroma}");
+		Check("rest-tiles-dimmed", dimmed && full.Take(3).Any(v => v >= 60) && maxS <= 0.40 && maxChroma <= 55, string.Join(" ", ch));
 		// the tile names are drawn above the dimming: the first tile's name is as bright as without it
 		int NameInk(string path)
 		{
@@ -818,7 +912,23 @@ internal static partial class SeasonalDiagnostics
 		}
 		int nameDim = NameInk(startPath);
 		int nameFull = NameInk(noDim);
-		Check("rest-tile-names-not-dimmed", nameFull >= 200 && nameDim >= nameFull - 3, $"name ink with dimming={nameDim} without={nameFull}");
+		Check("rest-tile-names-not-dimmed", nameFull >= 200 && nameDim >= 200, $"name ink with dimming={nameDim} without={nameFull}");
+		// The names on the tiles: 4.5:1 or more on every toned-down tile, and with "Dim Start tiles" off at least what
+		// Normal's white gives on the same full-colour tile (blue, red, orange, green, teal and purple tiles).
+		List<string> names = new List<string>();
+		bool namesOk = true;
+		foreach ((int x0, int y0) in new (int, int)[6] { (80, 154), (240, 154), (400, 154), (782, 154), (80, 314), (560, 314) })
+		{
+			Int32Rect band = new Int32Rect(x0 + 10, y0 + 126, 130, 16);
+			Int32Rect fillRect = new Int32Rect(x0 + 60, y0 + 6, 30, 6);
+			double dimC = ContrastIn(startPath, band, fillRect);
+			double nodimC = ContrastIn(noDim, band, fillRect);
+			(double fr2, double fg2, double fb2) = RegionAverage(noDim, fillRect.X, fillRect.Y, fillRect.Width, fillRect.Height);
+			double normalC = Contrast(Colors.White, Color.FromRgb((byte)Math.Round(fr2), (byte)Math.Round(fg2), (byte)Math.Round(fb2)));
+			names.Add($"({x0},{y0}) dimmed {dimC:F2} full {nodimC:F2} (white {normalC:F2})");
+			namesOk &= dimC >= 4.5 && nodimC >= normalC - 0.1;
+		}
+		Check("rest-tile-names-contrast", namesOk, string.Join(" ; ", names));
 		start.RefreshBackground();
 	}
 
@@ -841,7 +951,7 @@ internal static partial class SeasonalDiagnostics
 					Color chrome = TaskbarTheme.ChromeColor();
 					Color source = TaskbarTheme.SourceAccent();
 					bool cached = TaskbarTheme.TryCachedSourceAccent(out Color cachedSource);
-					if (bg != SeasonalArt.Hex("#F2161A1F") || chrome != SeasonalArt.Hex("#FF161A1F") || source != SeasonalArt.Hex("#FF4F6272") || !cached || cachedSource != source)
+					if (bg != SeasonalArt.Hex("#FF000000") || chrome != SeasonalArt.Hex("#FF0F0F0F") || source != SeasonalArt.Hex("#FF44636A") || !cached || cachedSource != source)
 					{
 						bad.Add($"{mode}/{transparent}/{owns}: bg={bg} chrome={chrome} source={source} cached={cached}");
 					}
@@ -849,7 +959,7 @@ internal static partial class SeasonalDiagnostics
 			}
 		}
 		Check("rest-taskbar", bad.Count == 0, string.Join(" ; ", bad));
-		// Three colour modes over the bottom of the Dark rest wallpaper (all the same calm slate), then the real taskbar.
+		// Three colour modes over the bottom of the Dark rest wallpaper (all the same opaque black), then the real taskbar.
 		BitmapSource wp = LoadPng(Path.Combine(outDir, "wallpaper-rest.png"));
 		const int w = 1366;
 		const int band = 40;
@@ -919,21 +1029,25 @@ internal static partial class SeasonalDiagnostics
 				bad.Add(label + " want " + want);
 			}
 		}
-		Want("TB.ClockBody", 0, "#FF252B33");
-		Want("TB.ClockBody", 1, "#FF13171B");
-		Want("TB.ClockHeader", 0, "#FF323E48");
-		Want("TB.ClockFooter", 0, "#FF161B20");
-		Want("TB.ClockBorder", 0, "#FF647C91");
-		Want("TB.ClockLink", 0, "#FF9FAFBC");
-		Want("TB.ClockSelection", 0, "#FF688197");
+		Want("TB.ClockBody", 0, "#FF0F0F0F");
+		Want("TB.ClockBody", 1, "#FF0A0A0A");
+		Want("TB.ClockHeader", 0, "#FF141414");
+		Want("TB.ClockFooter", 0, "#FF0A0A0A");
+		Want("TB.ClockBorder", 0, "#FF4D4D4D");
+		Want("TB.ClockLink", 0, "#FF9ABAC1");
+		Want("TB.ClockSelection", 0, "#FF4E7179");
+		Want("TB.Ink", 0, "#FFDCDCDC");
+		Want("TB.FlyoutBg", 0, "#F20F0F0F");
 		string volume = Path.Combine(outDir, "flyout-volume-rest.png");
-		taskbar.QaRenderSoundFlyout(volume, 420.0, 540.0);
+		RestVolumeRender(volume, taskbar);
 		string network = Path.Combine(outDir, "flyout-network-rest.png");
 		taskbar.QaRenderNetworkFlyout(network, QaNetState, QaLocalNet, "203.0.113.42", 420.0, 500.0);
-		Want("TB.NetworkState", 0, "#FF313C46");
-		// the volume slider fill and the foreground button's line: the selection tone, not a near-white accent
-		Want("TB.Accent", 0, "#FF688197");
-		Want("Metro81.ScrollThumbBrushDark", 0, "#FF4A525B");
+		Want("TB.NetworkState", 0, "#FF141414");
+		Want("TB.SoundBorder", 0, "#FF4D4D4D");
+		Want("TB.NetworkLink", 0, "#FF9ABAC1");
+		// the volume slider fill and the foreground button's line: the accent line, not a near-white accent
+		Want("TB.Accent", 0, "#FF6798A2");
+		Want("Metro81.ScrollThumbBrushDark", 0, "#FF5E5E5E");
 		Metrics["RestFlyoutTones"] = got;
 		Check("rest-flyout-tones", bad.Count == 0, bad.Count == 0 ? string.Join(" ", got) : string.Join(" ; ", bad) + " | " + string.Join(" ", got));
 		List<string> bodies = new List<string>();
@@ -943,7 +1057,7 @@ internal static partial class SeasonalDiagnostics
 			// the body's left margin below the header (the body background itself; the tiles are checked by the tones)
 			RegionStats body = Region(path, 1, 160, 11, 200);
 			bodies.Add(Path.GetFileName(path) + ": " + body);
-			dark &= body.L <= 0.22 && body.S <= 0.25;
+			dark &= body.L <= 0.07 && body.S <= 0.05;
 		}
 		Check("rest-flyouts-dark", dark, string.Join(" ; ", bodies));
 	}
@@ -951,88 +1065,113 @@ internal static partial class SeasonalDiagnostics
 	private static void RestPanes(string outDir, StartScreen start, RestFixtures f)
 	{
 		string ac = Path.Combine(outDir, "actioncenter-rest.png");
-		ActionCenter.QaRenderMetro(ac, 468.0, 860.0, compact: false, withNotifications: false, currentTheme: true);
+		_restActionCenter = ActionCenter.QaRenderMetro(ac, 468.0, 860.0, compact: false, withNotifications: false, currentTheme: true);
 		RegionStats panel = Region(ac, 20, 300, 420, 80);
-		Check("rest-actioncenter", panel.L <= 0.16 && panel.S <= 0.25, panel.ToString());
+		Check("rest-actioncenter", panel.L <= 0.05 && panel.Chroma <= 3, panel.ToString());
 		string search = Path.Combine(outDir, "searchpane-rest.png");
 		f.Search.QaRender(search, RestQuery, 920.0);
-		RegionStats searchPane = Region(search, 10, 700, 300, 200);
-		// the empty part of the field, right of the query text
-		RegionStats searchField = Region(search, 160, 100, 70, 30);
-		// the empty field is darker than the pane around it, so it reads as a field even before anything is typed
-		RegionStats besideField = Region(search, 10, 160, 280, 20);
-		Check("rest-searchpane", searchPane.L <= 0.20 && searchPane.S <= 0.25 && searchField.L <= 0.20 && searchField.L <= besideField.L - 0.04,
-			$"pane={searchPane} field={searchField} paneBesideField={besideField}");
+		RegionStats searchPane = Region(search, 10, 820, 300, 80);
+		// the empty part of the field, right of the query text, and its 1 px border against the field and the pane
+		(double sfr, double sfg, double sfb) = RegionAverage(search, 160, 104, 60, 20);
+		(double sbr, double sbg, double sbb) = RegionAverage(search, 120, 98, 60, 1);
+		(double spr, double spg, double spb) = RegionAverage(search, 120, 92, 60, 3);
+		Color sField = Color.FromRgb((byte)sfr, (byte)sfg, (byte)sfb);
+		Color sBorder = Color.FromRgb((byte)sbr, (byte)sbg, (byte)sbb);
+		Color sPane = Color.FromRgb((byte)spr, (byte)spg, (byte)spb);
+		Check("rest-searchpane", searchPane.L <= 0.05 && searchPane.S <= 0.05 && Contrast(sBorder, sField) >= 3.0 && Contrast(sBorder, sPane) >= 3.0,
+			$"pane={searchPane} field={Hex(sField)} border={Hex(sBorder)} {Contrast(sBorder, sField):F2}:1 vs field, {Contrast(sBorder, sPane):F2}:1 vs pane {Hex(sPane)}");
 		string settings = Path.Combine(outDir, "settingspane-rest.png");
 		f.Settings.QaRender(settings, 1040.0);
 		RegionStats settingsPane = Region(settings, 10, 880, 320, 140);
-		Check("rest-settingspane", settingsPane.L <= 0.20 && settingsPane.S <= 0.25, settingsPane.ToString());
+		Check("rest-settingspane", settingsPane.L <= 0.05 && settingsPane.S <= 0.05, settingsPane.ToString());
 		string charms = Path.Combine(outDir, "charms-rest.png");
 		f.Charms.QaRender(charms);
+		// the big date and time shown with the charms
+		CharmsClock clock = new CharmsClock { Left = -4000.0, Top = -4000.0 };
+		try
+		{
+			clock.QaRender(Path.Combine(outDir, "charmsclock-rest.png"));
+		}
+		finally
+		{
+			clock.Close();
+		}
 		RegionStats charmsBar = Region(charms, 0, 0, Math.Max(1, LoadPng(charms).PixelWidth), 40);
-		Check("rest-charms", charmsBar.L <= 0.20 && charmsBar.S <= 0.25, charmsBar.ToString());
+		Check("rest-charms", charmsBar.L <= 0.05 && charmsBar.S <= 0.05, charmsBar.ToString());
 		string toast = Path.Combine(outDir, "toast-rest.png");
 		RenderToast(toast);
 		BitmapSource toastBmp = LoadPng(toast);
 		// the card's left padding, full height (no text there)
 		RegionStats toastCard = Region(toast, 2, 2, 12, toastBmp.PixelHeight - 4);
-		Check("rest-toast", toastCard.L <= 0.16, toastCard.ToString());
+		Check("rest-toast", toastCard.L <= 0.07 && toastCard.S <= 0.05, toastCard.ToString());
 		string osd = Path.Combine(outDir, "osd-rest.png");
 		f.Osd.QaRenderCard(osd);
 		BitmapSource osdBmp = LoadPng(osd);
 		RegionStats osdCard = Region(osd, 0, 0, osdBmp.PixelWidth, 8);
-		Check("rest-osd", osdCard.L <= 0.16, osdCard.ToString());
+		Check("rest-osd", osdCard.L <= 0.07 && osdCard.S <= 0.05, osdCard.ToString());
 		string switcher = Path.Combine(outDir, "switcher-rest.png");
 		AppSwitcher sw = new AppSwitcher();
 		sw.QaRender(switcher);
+		_restSwitcherCaret = sw.QaCaretBrush;
 		BitmapSource swBmp = LoadPng(switcher);
 		// the panel margin left of the window list, from below the search box to above the Start bar
 		RegionStats swPanel = Region(switcher, 0, 50, 8, swBmp.PixelHeight - 120);
-		Check("rest-switcher", swPanel.L <= 0.16, swPanel.ToString());
-		// Windows 7 Start menu: Rule 1 (it follows Windows dark mode) with the muted accent as its glass colour, over the
-		// Dark rest desktop colour (not the harness's blue-green test backdrop)
-		Color glass = SeasonalArt.Hex("#FF4F6272");
+		Check("rest-switcher", swPanel.L <= 0.07 && swPanel.S <= 0.05, swPanel.ToString());
+		RestSwitcherSelectedRender(Path.Combine(outDir, "switcher-rest-selected.png"), sw);
+		// Windows 7 Start menu: Dark rest's black set on the dark one, with the muted accent as its glass colour, over the
+		// black desktop (not the harness's blue-green test backdrop)
+		Color glass = SeasonalArt.Hex("#FF44636A");
 		string win7Path = Path.Combine(outDir, "win7start-rest.png");
-		Color? pane = f.Win7.QaRenderPreset(win7Path, glass, SeasonalArt.Hex("#FF121519"));
-		Color[] stops = Win7Palette.GlassStopColors(glass, dark: true, transparency: true, out _, out _);
+		Color? pane = f.Win7.QaRenderPreset(win7Path, glass, SeasonalArt.Hex("#FF000000"));
+		Color[] stops = Win7Palette.GlassStopColors(glass, dark: true, transparency: true, out _, out _, rest: true);
 		double maxS = stops.Max(c => Hsl(c.R, c.G, c.B).S);
 		// the glass column right of the place links (no text there)
 		RegionStats glassColumn = Region(win7Path, 388, 40, 16, 400);
-		Check("rest-win7start", pane == Win7Palette.PaneDark && maxS <= 0.20 && glassColumn.S <= 0.20 && glassColumn.L <= 0.25,
+		Check("rest-win7start", pane == Win7Palette.PaneRest && maxS <= 0.20 && glassColumn.S <= 0.20 && glassColumn.L <= 0.12,
 			$"pane={(pane.HasValue ? Hex(pane.Value) : "none")} glassMaxS={maxS:F3} glassColumn={glassColumn}");
-		// context menus and Metro controls: Rule 1, the dark token set
+		// context menus and Metro controls: the Dark rest set
 		Color menuBg = TaskbarContextMenu.QaMenuBackground();
 		Color surface = (Application.Current.Resources["Metro81.MenuSurface"] as SolidColorBrush)?.Color ?? Colors.Transparent;
-		Check("contextmenu-rest", menuBg == SeasonalArt.Hex("#FF2B2B2B") && surface == SeasonalArt.Hex("#FF2B2B2B"), $"menu={Hex(menuBg)} token={Hex(surface)}");
+		Check("contextmenu-rest", menuBg == SeasonalArt.Hex("#FF0F0F0F") && surface == SeasonalArt.Hex("#FF0F0F0F"), $"menu={Hex(menuBg)} token={Hex(surface)}");
 	}
 
 	private static void RestPcSettings(string outDir, PcSettingsWindow pc)
 	{
 		string launcher = Path.Combine(outDir, "pcsettings-rest-launcher.png");
+		// the quiet line about the Metro Tab extension, as shown once its folder is known
+		ShellLookLink.QaKnownFolderFound = true;
 		pc.QaRenderTall(launcher, "Launcher");
+		SeasonalArt.DiagnosticsPictureDir = _fixturePicture;
+		pc.QaRenderTall(Path.Combine(outDir, "pcsettings-rest-launcher-picture.png"), "Launcher");
+		SeasonalArt.DiagnosticsPictureDir = _fixtureEmpty;
+		ShellLookLink.QaKnownFolderFound = null;
 		(int tiles, string selected) = pc.QaSeasonTiles();
 		BitmapSource bmp = LoadPng(launcher);
 		// the page right of the content column, full height
 		RegionStats page = Region(launcher, 820, 0, 80, bmp.PixelHeight);
-		Check("rest-pcsettings-launcher", tiles == 4 && selected == SeasonalTheme.RestTooltip && page.L <= 0.15,
+		Check("rest-pcsettings-launcher", tiles == 4 && selected == SeasonalTheme.RestTooltip && page.L <= 0.04,
 			$"tiles={tiles} selected={selected} page={page}");
 		string devices = Path.Combine(outDir, "pcsettings-rest-devices.png");
 		pc.QaRender(devices, "PC & devices", 1366.0, 768.0);
 		RegionStats right = Region(devices, 1000, 400, 360, 360);
-		Check("rest-pcsettings-devices", right.L <= 0.15, right.ToString());
-		// The controls of the dark page: the selected picker tile is framed clearly (3:1 or more on the page), On and Off
-		// toggles read apart (3:1 between the fills), and the scrollbar thumb is a quiet blue-grey.
-		Color pageBg = SeasonalArt.Hex("#FF1A1D21");
+		Check("rest-pcsettings-devices", right.L <= 0.04, right.ToString());
+		// The controls of the black page: the selected picker tile is framed clearly (3:1 or more on the page), On and Off
+		// toggles read apart (3:1 between the fills) with the thumb clear on both, and the scrollbar thumb is a neutral
+		// grey clear on its track.
+		Color pageBg = SeasonalArt.Hex("#FF000000");
 		(_, _, Color frame) = pc.QaSeasonTilesWithFrame();
 		Color on = ((pc.TryFindResource("Metro81.ToggleSwitch") as Style)?.Resources["MenuAccent"] as SolidColorBrush)?.Color ?? Colors.Transparent;
 		Color off = (pc.TryFindResource("Metro81.ToggleTrack") as SolidColorBrush)?.Color ?? Colors.Transparent;
+		Color knob = (pc.TryFindResource("Metro81.ToggleThumb") as SolidColorBrush)?.Color ?? Colors.Transparent;
 		Color thumb = (pc.TryFindResource("Metro81.ScrollThumbBrush") as SolidColorBrush)?.Color ?? Colors.Transparent;
+		Color track = (pc.TryFindResource("Metro81.ScrollTrackBrush") as SolidColorBrush)?.Color ?? Colors.Transparent;
 		Color field = (pc.TryFindResource("Metro81.Surface") as SolidColorBrush)?.Color ?? Colors.Transparent;
 		double frameC = Contrast(frame, pageBg);
 		double toggleC = Contrast(on, off);
-		bool quietThumb = thumb.A == 255 && ColorMath.RelLuminance(thumb) <= 0.10 && Hsl(thumb.R, thumb.G, thumb.B).S <= 0.20;
-		Check("rest-pcsettings-controls", frameC >= 3.0 && toggleC >= 3.0 && quietThumb && field == SeasonalArt.Hex("#FF23272C"),
-			$"selectedFrame={Hex(frame)} {frameC:F2}:1 toggleOn={Hex(on)} off={Hex(off)} {toggleC:F2}:1 thumb={Hex(thumb)} field={Hex(field)}");
+		double knobC = Math.Min(Contrast(knob, on), Contrast(knob, off));
+		bool quietThumb = thumb.A == 255 && Hsl(thumb.R, thumb.G, thumb.B).S <= 0.05 && Contrast(thumb, track) >= 3.0;
+		Check("rest-pcsettings-controls", frameC >= 3.0 && toggleC >= 3.0 && knobC >= 3.0 && quietThumb && field == SeasonalArt.Hex("#FF141414") && on == SeasonalArt.Hex("#FF4E7179"),
+			$"selectedFrame={Hex(frame)} {frameC:F2}:1 toggleOn={Hex(on)} off={Hex(off)} {toggleC:F2}:1 knob={knobC:F2}:1 thumb={Hex(thumb)} on {Hex(track)} {Contrast(thumb, track):F2}:1 field={Hex(field)}");
 	}
 
 	// Owned 8.1 windows: the white caption is replaced by the accent caption while Dark rest is on.
@@ -1048,13 +1187,14 @@ internal static partial class SeasonalDiagnostics
 			SettingsStore.DiagnosticsOverride = rest;
 			w.RefreshAccent();
 			Color restInk = (w.Resources["CaptionInk"] as SolidColorBrush)?.Color ?? Colors.Transparent;
-			Color wantRest = ColorMath.ReadableInk(StartAccent.Color());
+			(Color active, Color inactive, Color activeText, Color inactiveText) = w.QaCaptionColors();
 			SettingsStore.DiagnosticsOverride = normal;
 			w.RefreshAccent();
 			Color normalInk = (w.Resources["CaptionInk"] as SolidColorBrush)?.Color ?? Colors.Transparent;
 			bool glass = ShellSkin.OwnedAeroOn;
-			bool ok = glass || (restInk == wantRest && normalInk == Color.FromRgb(68, 68, 68));
-			Check("caption-rest", ok, $"rest={Hex(restInk)} want={Hex(wantRest)} normal={Hex(normalInk)} ownedAero={glass}");
+			bool ok = glass || (restInk == DarkRestPalette.InkColor && activeText == DarkRestPalette.InkColor && active == DarkRestPalette.AccentColor
+				&& inactive == DarkRestPalette.FieldColor && inactiveText == DarkRestPalette.Ink2Color && normalInk == Color.FromRgb(68, 68, 68));
+			Check("caption-rest", ok, $"rest ink={Hex(restInk)} active={Hex(active)}/{Hex(activeText)} inactive={Hex(inactive)}/{Hex(inactiveText)} normal={Hex(normalInk)} ownedAero={glass}");
 		}
 		finally
 		{

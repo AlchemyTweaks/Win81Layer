@@ -166,7 +166,7 @@ public partial class ThumbnailPreview : Window, IComponentConnector
 			hp.Children.Add(new TextBlock
 			{
 				Text = it.Title,
-				Foreground = new SolidColorBrush(System.Windows.Media.Color.FromRgb(240, 240, 240)),
+				Foreground = DarkRest.Visuals ? DarkRestPalette.Ink : new SolidColorBrush(System.Windows.Media.Color.FromRgb(240, 240, 240)),
 				FontFamily = new System.Windows.Media.FontFamily("Segoe UI"),
 				FontSize = 12.0,
 				VerticalAlignment = VerticalAlignment.Center,
@@ -306,7 +306,7 @@ public partial class ThumbnailPreview : Window, IComponentConnector
 				FontSize = 14.0,
 				Width = 40.0,
 				Height = 28.0,
-				Foreground = System.Windows.Media.Brushes.White,
+				Foreground = DarkRest.Visuals ? DarkRestPalette.Ink : System.Windows.Media.Brushes.White,
 				Background = System.Windows.Media.Brushes.Transparent,
 				BorderThickness = new Thickness(0.0),
 				Cursor = System.Windows.Input.Cursors.Hand,
@@ -419,6 +419,8 @@ public partial class ThumbnailPreview : Window, IComponentConnector
 		return t;
 	}
 
+	private static readonly System.Windows.Media.Brush RestCloseHover = ColorMath.Frozen(System.Windows.Media.Color.FromRgb(0x73, 0x4D, 0x4B));
+
 	private static ControlTemplate CloseButtonTemplate()
 	{
 		ControlTemplate t = new ControlTemplate(typeof(System.Windows.Controls.Button));
@@ -438,8 +440,10 @@ public partial class ThumbnailPreview : Window, IComponentConnector
 			Property = UIElement.IsMouseOverProperty,
 			Value = true
 		};
-		hover.Setters.Add(new Setter(Border.BackgroundProperty, new SolidColorBrush(System.Windows.Media.Color.FromArgb(224, 224, 67, 67)), "bd"));
-		hover.Setters.Add(new Setter(System.Windows.Controls.Control.ForegroundProperty, System.Windows.Media.Brushes.White));
+		// Dark rest: the muted close colour of the 8.1 captions with the soft ink, instead of the saturated red and white
+		bool rest = DarkRest.Visuals;
+		hover.Setters.Add(new Setter(Border.BackgroundProperty, rest ? RestCloseHover : new SolidColorBrush(System.Windows.Media.Color.FromArgb(224, 224, 67, 67)), "bd"));
+		hover.Setters.Add(new Setter(System.Windows.Controls.Control.ForegroundProperty, rest ? DarkRestPalette.Ink : System.Windows.Media.Brushes.White));
 		t.Triggers.Add(hover);
 		return t;
 	}

@@ -56,7 +56,7 @@ public static class TaskbarTheme
 			AppSettings s = SettingsStore.Load();
 			if (Rest(s))
 			{
-				// Dark rest: one calm, nearly opaque slate whatever the colour mode or transparency (low glare).
+				// Dark rest: opaque black whatever the colour mode or transparency, seamless with the black desktop.
 				return ColorMath.Frozen(DarkRestPalette.TaskbarBackground);
 			}
 			bool transparent = s.TaskbarTransparent || s.TaskbarColorMode == "Transparent";

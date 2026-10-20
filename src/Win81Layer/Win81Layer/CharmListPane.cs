@@ -179,8 +179,17 @@ public sealed class CharmListPane : Window
 		}
 	}
 
+	// Dark rest (read when the pane is built): the soft ink and the secondary ink on the black pane instead of white,
+	// and the hover wash the other panes use.
+	private bool _rest;
+
+	private System.Windows.Media.Brush Ink => _rest ? DarkRestPalette.Ink : System.Windows.Media.Brushes.White;
+
+	private const double DarkRestUnavailableOpacity = 0.66;
+
 	private void Build()
 	{
+		_rest = DarkRest.Visuals;
 		Grid grid = new Grid
 		{
 			Margin = new Thickness(24.0, 22.0, 20.0, 18.0)
@@ -200,7 +209,7 @@ public sealed class CharmListPane : Window
 		TextBlock header = new TextBlock
 		{
 			Text = _title,
-			Foreground = System.Windows.Media.Brushes.White,
+			Foreground = Ink,
 			FontFamily = new System.Windows.Media.FontFamily("Segoe UI Light"),
 			FontSize = 34.0,
 			Margin = new Thickness(0.0, 0.0, 0.0, 12.0)
@@ -217,7 +226,7 @@ public sealed class CharmListPane : Window
 			sp.Children.Add(new TextBlock
 			{
 				Text = _scope,
-				Foreground = System.Windows.Media.Brushes.White,
+				Foreground = Ink,
 				FontFamily = new System.Windows.Media.FontFamily("Segoe UI"),
 				FontSize = 13.0,
 				VerticalAlignment = VerticalAlignment.Center
@@ -227,7 +236,7 @@ public sealed class CharmListPane : Window
 				Text = G(59149),
 				FontFamily = new System.Windows.Media.FontFamily("Segoe MDL2 Assets"),
 				FontSize = 9.0,
-				Foreground = new SolidColorBrush(System.Windows.Media.Color.FromArgb(204, byte.MaxValue, byte.MaxValue, byte.MaxValue)),
+				Foreground = _rest ? DarkRestPalette.Ink2 : new SolidColorBrush(System.Windows.Media.Color.FromArgb(204, byte.MaxValue, byte.MaxValue, byte.MaxValue)),
 				VerticalAlignment = VerticalAlignment.Center,
 				Margin = new Thickness(7.0, 2.0, 0.0, 0.0)
 			});
@@ -259,13 +268,14 @@ public sealed class CharmListPane : Window
 			Width = new GridLength(40.0)
 		});
 		row.ColumnDefinitions.Add(new ColumnDefinition());
-		double op = (r.Enabled ? 1.0 : 0.4);
+		// an unavailable row: faded, and in Dark rest only as far as the soft ink keeps 4.5:1 on the black pane
+		double op = (r.Enabled ? 1.0 : (_rest ? DarkRestUnavailableOpacity : 0.4));
 		TextBlock glyph = new TextBlock
 		{
 			Text = G(r.Glyph),
 			FontFamily = new System.Windows.Media.FontFamily("Segoe MDL2 Assets"),
 			FontSize = 22.0,
-			Foreground = System.Windows.Media.Brushes.White,
+			Foreground = Ink,
 			VerticalAlignment = VerticalAlignment.Center,
 			Opacity = op
 		};
@@ -278,7 +288,7 @@ public sealed class CharmListPane : Window
 		texts.Children.Add(new TextBlock
 		{
 			Text = r.Title,
-			Foreground = System.Windows.Media.Brushes.White,
+			Foreground = Ink,
 			FontFamily = new System.Windows.Media.FontFamily("Segoe UI"),
 			FontSize = 15.0
 		});
@@ -287,7 +297,7 @@ public sealed class CharmListPane : Window
 			texts.Children.Add(new TextBlock
 			{
 				Text = r.Subtitle,
-				Foreground = new SolidColorBrush(System.Windows.Media.Color.FromArgb(170, byte.MaxValue, byte.MaxValue, byte.MaxValue)),
+				Foreground = _rest ? DarkRestPalette.Ink2 : new SolidColorBrush(System.Windows.Media.Color.FromArgb(170, byte.MaxValue, byte.MaxValue, byte.MaxValue)),
 				FontFamily = new System.Windows.Media.FontFamily("Segoe UI"),
 				FontSize = 12.0,
 				Margin = new Thickness(0.0, 1.0, 0.0, 0.0)
@@ -306,7 +316,7 @@ public sealed class CharmListPane : Window
 			Padding = new Thickness(4.0, 10.0, 4.0, 10.0),
 			IsEnabled = r.Enabled,
 			HorizontalContentAlignment = System.Windows.HorizontalAlignment.Left,
-			Template = HoverRowTemplate()
+			Template = HoverRowTemplate(_rest)
 		};
 		b.Click += delegate
 		{
@@ -344,7 +354,7 @@ public sealed class CharmListPane : Window
 		enc.Save(fs);
 	}
 
-	private static ControlTemplate HoverRowTemplate()
+	private static ControlTemplate HoverRowTemplate(bool rest)
 	{
 		ControlTemplate t = new ControlTemplate(typeof(System.Windows.Controls.Button));
 		FrameworkElementFactory bd = new FrameworkElementFactory(typeof(Border))
@@ -363,7 +373,7 @@ public sealed class CharmListPane : Window
 			Property = UIElement.IsMouseOverProperty,
 			Value = true
 		};
-		hover.Setters.Add(new Setter(Border.BackgroundProperty, new SolidColorBrush(System.Windows.Media.Color.FromArgb(24, byte.MaxValue, byte.MaxValue, byte.MaxValue)), "bd"));
+		hover.Setters.Add(new Setter(Border.BackgroundProperty, rest ? DarkRestPalette.HoverWash : new SolidColorBrush(System.Windows.Media.Color.FromArgb(24, byte.MaxValue, byte.MaxValue, byte.MaxValue)), "bd"));
 		t.Triggers.Add(hover);
 		Trigger press = new Trigger
 		{

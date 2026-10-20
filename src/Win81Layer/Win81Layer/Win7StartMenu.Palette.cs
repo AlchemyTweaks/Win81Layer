@@ -30,6 +30,12 @@ internal static class Win7Palette
 
     internal static readonly Color PaneDark = Color.FromRgb(0x1F, 0x1F, 0x1F);
 
+    // Dark rest's list pane (near black).
+    internal static readonly Color PaneRest = Color.FromRgb(0x0A, 0x0A, 0x0A);
+
+    // Dark rest's glass lightness per stop (the dark alphas are kept): a much darker glass on the black desktop.
+    private static readonly double[] RestGlassL = { 0.12, 0.08, 0.05 };
+
     internal const byte StreakPeakLight = 0x1A;
 
     internal const byte StreakPeakDark = 0x0D;
@@ -85,13 +91,14 @@ internal static class Win7Palette
     }
 
     // The glass stop colours (offset order) after the contrast guard. With transparency off every stop is opaque.
-    internal static Color[] GlassStopColors(Color source, bool dark, bool transparency, out int darkenSteps, out double guardContrast)
+    internal static Color[] GlassStopColors(Color source, bool dark, bool transparency, out int darkenSteps, out double guardContrast, bool rest = false)
     {
+        dark |= rest;
         (double h, double s) = GlassHueSat(source, dark);
         double[] l = new double[GlassStops.Length];
         for (int i = 0; i < l.Length; i++)
         {
-            l[i] = dark ? GlassStops[i].DarkL : GlassStops[i].LightL;
+            l[i] = rest ? RestGlassL[i] : dark ? GlassStops[i].DarkL : GlassStops[i].LightL;
         }
         double target = dark ? 7.0 : 4.5;
         byte peak = dark ? StreakPeakDark : StreakPeakLight;
@@ -123,14 +130,16 @@ internal static class Win7Palette
         return stops;
     }
 
-    internal static ResourceDictionary Build(bool dark, Color glassSource, bool transparency)
+    // rest: Dark rest's black set on top of the dark one (the keys listed at the end of this method).
+    internal static ResourceDictionary Build(bool dark, Color glassSource, bool transparency, bool rest = false)
     {
+        dark |= rest;
         ResourceDictionary d = new ResourceDictionary();
         (double h, double s) = GlassHueSat(glassSource, dark);
         (_, double sL) = GlassHueSat(glassSource, dark: false);
 
         // Glass
-        Color[] stops = GlassStopColors(glassSource, dark, transparency, out _, out _);
+        Color[] stops = GlassStopColors(glassSource, dark, transparency, out _, out _, rest);
         d["W7.GlassTint"] = Grad(V0, V1, (stops[0], 0.0), (stops[1], 0.5), (stops[2], 1.0));
         Color sheen = dark ? H("#1AFFFFFF") : H("#38FFFFFF");
         LinearGradientBrush sheenBrush = new LinearGradientBrush
@@ -245,7 +254,68 @@ internal static class Win7Palette
         d["W7.TipBorder"] = S(dark ? "#5A5A5A" : "#767676");
         d["W7.TipInk"] = S(dark ? "#F2F2F2" : "#575757");
         d["W7.TipShadow"] = S("#20000000");
+        if (rest)
+        {
+            ApplyRest(d);
+        }
         return d;
+    }
+
+    // Dark rest: a near-black list pane, menus and tooltips, soft ink, neutral hover and pressed fills outlined in the
+    // accent family, and a darker glass text ink. The picture frame and the power button turn neutral too (no Windows 7
+    // blue is left), with the power button outlined in the control grey and labelled in the soft ink.
+    private static void ApplyRest(ResourceDictionary d)
+    {
+        d["W7.PicFrameFill"] = Grad(V0, V1, (H("#2A2A2A"), 0.0), (H("#141414"), 1.0));
+        d["W7.PowerStroke"] = S("#6E6E6E");
+        d["W7.PowerHotFill"] = Grad(V0, V1, (H("#1F1F1F"), 0.0), (H("#1F1F1F"), 1.0));
+        d["W7.PowerHotStroke"] = S("#6798A2");
+        d["W7.PowerPressFill"] = S("#2A2A2A");
+        d["W7.PowerInk"] = S("#DCDCDC");
+        // the light plate behind dark icons, at the secondary ink (a dark icon keeps 9:1 on it)
+        d["W7.IconPlateLight"] = S("#AAAAAA");
+        d["W7.PaneBg"] = F(PaneRest);
+        d["W7.PaneBorder"] = S("#262626");
+        d["W7.Ink"] = S("#DCDCDC");
+        d["W7.Ink2"] = S("#AAAAAA");
+        // the list separators and the group rules still show the grouping on black (1.7:1)
+        Color sep = H("#3A3A3A");
+        d["W7.Sep"] = Grad(H0, H1, (Color.FromArgb(0, sep.R, sep.G, sep.B), 0.0), (sep, 0.15), (sep, 0.85), (Color.FromArgb(0, sep.R, sep.G, sep.B), 1.0));
+        d["W7.Arrow"] = S("#AAAAAA");
+        d["W7.HotFill"] = Grad(V0, V1, (H("#1F1F1F"), 0.0), (H("#1F1F1F"), 1.0));
+        d["W7.HotStroke"] = S("#6798A2");
+        d["W7.HotInner"] = S("#00000000");
+        d["W7.PressFill"] = Grad(V0, V1, (H("#2A2A2A"), 0.0), (H("#2A2A2A"), 1.0));
+        d["W7.PressStroke"] = S("#9ABAC1");
+        d["W7.GroupHeaderInk"] = S("#9ABAC1");
+        d["W7.GroupRule"] = S("#3A3A3A");
+        d["W7.SearchBg"] = S("#141414");
+        d["W7.SearchBorder"] = S("#6E6E6E");
+        d["W7.SearchBorderFocus"] = S("#6798A2");
+        d["W7.SearchInk"] = S("#DCDCDC");
+        d["W7.SearchHint"] = S("#888888");
+        d["W7.SearchCaret"] = S("#DCDCDC");
+        d["W7.SearchSelection"] = S("#44636A");
+        d["W7.SearchGlyph"] = S("#AAAAAA");
+        d["W7.GlassInk"] = S("#DCDCDC");
+        d["W7.ScrollThumb"] = S("#5E5E5E");
+        d["W7.ScrollThumbHot"] = S("#767676");
+        d["W7.ScrollThumbDrag"] = S("#8A8A8A");
+        d["W7.MenuBg"] = S("#0F0F0F");
+        d["W7.MenuBorder"] = S("#4D4D4D");
+        d["W7.MenuGutter"] = S("#0F0F0F");
+        d["W7.MenuGutterLine"] = S("#0A0A0A");
+        d["W7.MenuGutterLine2"] = S("#262626");
+        d["W7.MenuInk"] = S("#DCDCDC");
+        d["W7.MenuInkDisabled"] = S("#888888");
+        d["W7.MenuHotFill"] = Grad(V0, V1, (H("#262626"), 0.0), (H("#262626"), 1.0));
+        d["W7.MenuHotStroke"] = S("#6798A2");
+        d["W7.MenuHotInner"] = S("#00000000");
+        d["W7.MenuSep"] = S("#0A0A0A");
+        d["W7.MenuSep2"] = S("#3A3A3A");
+        d["W7.TipBg"] = S("#0F0F0F");
+        d["W7.TipBorder"] = S("#4D4D4D");
+        d["W7.TipInk"] = S("#DCDCDC");
     }
 
     // The keys a popup (menu, tooltip, the search box's edit menu) needs: popups are outside the window's resource scope.
@@ -370,7 +440,9 @@ public sealed partial class Win7StartMenu
 
     private string PaletteSignature(out bool dark, out Color source, out bool transparency)
     {
-        dark = ShellTheme.IsDark;
+        // Dark rest builds its black set on top of the dark one, whatever light/dark says.
+        bool rest = DarkRest.Visuals;
+        dark = ShellTheme.IsDark || rest;
         if (_qa && _qaGlassSource.HasValue)
         {
             source = _qaGlassSource.Value;
@@ -381,7 +453,7 @@ public sealed partial class Win7StartMenu
             source = CurrentGlassSource();
             transparency = ReadEnableTransparency();
         }
-        return (dark ? "dark" : "light") + $"|#{source.R:X2}{source.G:X2}{source.B:X2}|" + (transparency ? "t1" : "t0");
+        return (dark ? "dark" : "light") + $"|#{source.R:X2}{source.G:X2}{source.B:X2}|" + (transparency ? "t1" : "t0") + (rest ? "|rest" : "");
     }
 
     // The taskbar source colour without decoding the wallpaper on the open path. When the taskbar theme has no cached
@@ -480,7 +552,7 @@ public sealed partial class Win7StartMenu
         bool built = false;
         if (dict == null)
         {
-            dict = Win7Palette.Build(dark, source, transparency);
+            dict = Win7Palette.Build(dark, source, transparency, rest: sig.EndsWith("|rest", StringComparison.Ordinal));
             _paletteCache.Insert(0, (sig, dict));
             if (_paletteCache.Count > 2)
             {

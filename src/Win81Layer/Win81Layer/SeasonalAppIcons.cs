@@ -1606,7 +1606,21 @@ public sealed class SeasonalIconConverter : IMultiValueConverter
 {
 	internal static readonly SeasonalIconConverter Instance = new SeasonalIconConverter();
 
+	// An optional fourth value (a Dark rest flag) shows dark icons the way the black Dark rest surfaces need them
+	// (DarkRestIcons.Visible); without it, or with it false, the result is exactly the picked icon. Optional fifth and
+	// sixth values (an override's brand brush and the Dark rest tile dimming flag) tone the override art down with its
+	// dimmed plate (DarkRestIcons.MutedArt).
 	public object? Convert(object[] values, Type targetType, object? parameter, CultureInfo culture)
+	{
+		object? picked = Pick(values, parameter);
+		if (values.Length > 5 && values[5] is true && values[4] is SolidColorBrush brand && values[1] is not string && picked is ImageSource art)
+		{
+			return DarkRestIcons.MutedArt(art, brand.Color);
+		}
+		return values.Length > 3 && values[3] is true && picked is ImageSource img ? DarkRestIcons.Visible(img) : picked;
+	}
+
+	private static object? Pick(object[] values, object? parameter)
 	{
 		ImageSource? fallback = values.Length > 0 ? values[0] as ImageSource : null;
 		string? key = values.Length > 1 ? values[1] as string : null;

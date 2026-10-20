@@ -85,10 +85,13 @@ public partial class CharmsClock : Window, IComponentConnector
 		UpdateBattery();
 		_tick.Start();
 		Show();
-		// Flat: opaque dark slab; Win7-Aero: translucent smoked-accent glass (plain alpha).
-		Root.Background = (ShellSkin.GlassOn
-			? ShellSkin.PanelBg()
-			: new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromArgb(0xCC, 0, 0, 0)));
+		// Flat: opaque dark slab; Win7-Aero: translucent smoked-accent glass (plain alpha). Dark rest: a near-black slab.
+		Root.Background = DarkRest.Visuals
+			? RestSlab
+			: (ShellSkin.GlassOn
+				? ShellSkin.PanelBg()
+				: new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromArgb(0xCC, 0, 0, 0)));
+		ApplyRestInk();
 		UpdateLayout();
 		base.Left = (double)b.Left / sx + 8.0;
 		base.Top = (double)b.Bottom / sy - base.ActualHeight - taskbarDiu - 8.0;
@@ -97,6 +100,15 @@ public partial class CharmsClock : Window, IComponentConnector
 		{
 			EasingFunction = Motion.Ease(Motion.Cat.Micro)
 		});
+	}
+
+	private static readonly System.Windows.Media.Brush RestSlab = ColorMath.Frozen(System.Windows.Media.Color.FromArgb(0xE6, 0x0A, 0x0A, 0x0A));
+
+	// Dark rest: the big time and date in the soft ink and the network and battery pictures at the soft glyph opacity
+	// (no pure white); white and full opacity again with Normal.
+	private void ApplyRestInk()
+	{
+		DarkRestPalette.RetintWhite(Root, DarkRest.Visuals, DarkRestPalette.PanelColor);
 	}
 
 	public void HideAnimated()
@@ -125,6 +137,11 @@ public partial class CharmsClock : Window, IComponentConnector
 		UpdateNet();
 		UpdateBattery();
 		Show();
+		if (DarkRest.Visuals)
+		{
+			Root.Background = RestSlab;
+		}
+		ApplyRestInk();
 		UpdateLayout();
 		int w = (int)Math.Ceiling(Root.ActualWidth);
 		int h = (int)Math.Ceiling(Root.ActualHeight);

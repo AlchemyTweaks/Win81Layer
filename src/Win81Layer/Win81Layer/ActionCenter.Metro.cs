@@ -21,8 +21,13 @@ using Path = System.Windows.Shapes.Path;
 
 namespace Win81Layer;
 
+// QA: one quick tile as rendered (whether it is a switch, its state and its colours).
+public sealed record ActionCenterQaTile(string Id, bool Toggle, bool On, System.Windows.Media.Color Fill, System.Windows.Media.Color Border, double BorderThickness, System.Windows.Media.Color Label, bool Check, System.Windows.Media.Color Status, double IconOpacity);
+
 public sealed class ActionCenterQaMetrics
 {
+	public List<ActionCenterQaTile> Tiles { get; set; } = new List<ActionCenterQaTile>();
+
 	public double WidthDiu { get; set; }
 	public double HeightDiu { get; set; }
 	public int DefinedTiles { get; set; }
@@ -83,6 +88,11 @@ public sealed partial class ActionCenter
 		public required Path Check { get; init; }
 		public required ScaleTransform Scale { get; init; }
 		public required System.Windows.Media.Color BaseColor { get; init; }
+
+		// The status line's own brush, kept while Dark rest recolours it so Normal puts the same one back.
+		public System.Windows.Media.Brush? StatusNormal { get; set; }
+
+		public TextBlock? Label { get; init; }
 		public required Func<Task> Action { get; init; }
 		public required string RouteContract { get; init; }
 		public required Func<string> StatusText { get; init; }
@@ -114,6 +124,12 @@ public sealed partial class ActionCenter
 
 		public System.Windows.Media.Brush FillBrush { get; set; } = new SolidColorBrush(System.Windows.Media.Color.FromRgb(108, 216, 244));
 
+		public System.Windows.Media.Brush ThumbBrush { get; set; } = System.Windows.Media.Brushes.White;
+
+		// An outline around the whole track (Dark rest: the control grey, so the range stays visible at a low value);
+		// none by default.
+		public System.Windows.Media.Brush? TrackBorderBrush { get; set; }
+
 		public MetroSlider()
 		{
 			Height = 30.0;
@@ -144,9 +160,13 @@ public sealed partial class ActionCenter
 			double usable = Math.Max(1.0, ActualWidth - 12.0);
 			double ratio = Maximum <= Minimum ? 0.0 : Math.Clamp((Value - Minimum) / (Maximum - Minimum), 0.0, 1.0);
 			drawingContext.DrawRectangle(TrackBrush, null, new Rect(0.0, center - 3.0, ActualWidth, 6.0));
+			if (TrackBorderBrush != null)
+			{
+				drawingContext.DrawRectangle(null, new Pen(TrackBorderBrush, 1.0), new Rect(0.5, center - 2.5, Math.Max(0.0, ActualWidth - 1.0), 5.0));
+			}
 			drawingContext.DrawRectangle(FillBrush, null, new Rect(0.0, center - 3.0, Math.Max(0.0, ratio * usable + 6.0), 6.0));
 			double thumbX = ratio * usable;
-			drawingContext.DrawRectangle(System.Windows.Media.Brushes.White, null, new Rect(thumbX, center - 12.0, 12.0, 24.0));
+			drawingContext.DrawRectangle(ThumbBrush, null, new Rect(thumbX, center - 12.0, 12.0, 24.0));
 		}
 
 		protected override void OnMouseLeftButtonDown(MouseButtonEventArgs e)
@@ -734,6 +754,7 @@ public sealed partial class ActionCenter
 			Id = id,
 			Root = root,
 			Fill = fill,
+			Label = labelText,
 			Status = statusText,
 			Icon = icon,
 			Check = check,
@@ -906,9 +927,47 @@ public sealed partial class ActionCenter
 		bool on = false;
 		try { on = tile.IsOn?.Invoke() ?? false; } catch { }
 		tile.Check.Visibility = on ? Visibility.Visible : Visibility.Collapsed;
-		// Dark rest mutes the tile colours; the off and hover mixes stay the same.
+		// Dark rest mutes the tile colours. A switch that is off is a dark field with an outline and a softer label,
+		// so On and Off read apart by more than the check mark; the other mixes stay the same.
 		System.Windows.Media.Color fill = _restPalette ? DarkRestPalette.Mute(tile.BaseColor) : tile.BaseColor;
 		System.Windows.Media.Color target = Mix(fill, System.Windows.Media.Colors.Black, on ? 0.0 : 0.10);
+		if (_restPalette)
+		{
+			bool off = tile.IsOn != null && !on;
+			if (off)
+			{
+				target = DarkRestPalette.FieldColor;
+			}
+			// constant thickness, so switching never shifts the content
+			tile.Root.BorderThickness = new Thickness(1.0);
+			tile.Root.BorderBrush = off ? DarkRestPalette.Boundary : System.Windows.Media.Brushes.Transparent;
+			if (tile.Label != null)
+			{
+				tile.Label.Foreground = off ? DarkRestPalette.Ink2 : DarkRestPalette.Ink;
+			}
+			// the status line never outshines the title: the same soft ink on an On tile, the secondary ink on an Off
+			// one, whose glyph is quieter too, so Off reads as one calm state
+			tile.StatusNormal ??= tile.Status.Foreground;
+			tile.Status.Foreground = off ? DarkRestPalette.Ink2 : DarkRestPalette.Ink;
+			tile.Icon.Opacity = off ? RestOffGlyphOpacity : 1.0;
+		}
+		else
+		{
+			tile.Root.ClearValue(Border.BorderThicknessProperty);
+			tile.Root.ClearValue(Border.BorderBrushProperty);
+			if (tile.Label != null)
+			{
+				tile.Label.Foreground = System.Windows.Media.Brushes.White;
+			}
+			if (tile.StatusNormal != null)
+			{
+				tile.Status.Foreground = tile.StatusNormal;
+			}
+			if (tile.Icon.Opacity == RestOffGlyphOpacity)
+			{
+				tile.Icon.Opacity = 1.0;
+			}
+		}
 		if (hover) target = Mix(target, System.Windows.Media.Colors.White, 0.11);
 		if (!animate)
 		{
@@ -921,6 +980,9 @@ public sealed partial class ActionCenter
 			EasingFunction = Motion.Ease(Motion.Cat.Hover)
 		}, HandoffBehavior.SnapshotAndReplace);
 	}
+
+	// The glyph of a switch that is off in Dark rest (with the soft glyph opacity, about the secondary ink).
+	private const double RestOffGlyphOpacity = 0.8;
 
 	private static void AnimateScale(ScaleTransform transform, double target, int milliseconds)
 	{
@@ -1245,8 +1307,7 @@ public sealed partial class ActionCenter
 	{
 		_notifs.Children.Clear();
 		_notificationCount = rows?.Count ?? 0;
-		_clearAllButton.IsEnabled = _notificationCount > 0;
-		_clearAllButton.Opacity = _notificationCount > 0 ? 1.0 : 0.55;
+		SyncClearAll(_notificationCount > 0);
 		if (rows == null || rows.Count == 0)
 		{
 			ShowMetroEmpty("You're all caught up!");
@@ -1275,9 +1336,19 @@ public sealed partial class ActionCenter
 		}
 	}
 
+	// Dark rest: the body text of a notification card (8.3:1 on the card, 7.2:1 on its hover fill).
+	internal static readonly SolidColorBrush RestCardBodyInk = FreezeMetroBrush(System.Windows.Media.Color.FromRgb(0xB8, 0xB8, 0xB8));
+
 	private Border CreateMetroNotificationCard(uint id, string app, string title, string body, string aumid, ImageSource? icon)
 	{
-		SolidColorBrush fill = new SolidColorBrush(System.Windows.Media.Color.FromArgb(42, 255, 255, 255));
+		// Dark rest: the cards belong to the black family (the body text keeps 7:1 at rest and on hover, in a secondary
+		// ink a little lighter than the panel's), the close button's hover is a neutral lift instead of a saturated red,
+		// and a dark app icon is lifted or outlined as on the taskbar.
+		bool rest = _restPalette;
+		System.Windows.Media.Color cardRest = DarkRestPalette.HoverColor;
+		System.Windows.Media.Color cardHover = rest ? DarkRestPalette.PressedColor : System.Windows.Media.Color.FromArgb(62, 255, 255, 255);
+		System.Windows.Media.Color cardIdle = rest ? cardRest : System.Windows.Media.Color.FromArgb(42, 255, 255, 255);
+		SolidColorBrush fill = new SolidColorBrush(cardIdle);
 		Border card = new Border
 		{
 			Background = fill,
@@ -1296,7 +1367,7 @@ public sealed partial class ActionCenter
 		{
 			System.Windows.Controls.Image image = new System.Windows.Controls.Image
 			{
-				Source = icon,
+				Source = rest ? DarkRestIcons.Visible(icon) : icon,
 				Width = 34.0,
 				Height = 34.0,
 				Margin = new Thickness(10.0, 0.0, 0.0, 0.0),
@@ -1322,7 +1393,7 @@ public sealed partial class ActionCenter
 			text.Children.Add(new TextBlock
 			{
 				Text = title,
-				Foreground = System.Windows.Media.Brushes.White,
+				Foreground = _restPalette ? DarkRestPalette.Ink : System.Windows.Media.Brushes.White,
 				FontFamily = new System.Windows.Media.FontFamily("Segoe UI Semibold"),
 				FontSize = 13.0,
 				TextTrimming = TextTrimming.CharacterEllipsis
@@ -1333,7 +1404,7 @@ public sealed partial class ActionCenter
 			text.Children.Add(new TextBlock
 			{
 				Text = body,
-				Foreground = _secondaryTextBrush,
+				Foreground = rest ? RestCardBodyInk : _secondaryTextBrush,
 				FontFamily = new System.Windows.Media.FontFamily("Segoe UI"),
 				FontSize = 12.0,
 				TextWrapping = TextWrapping.Wrap,
@@ -1354,7 +1425,7 @@ public sealed partial class ActionCenter
 			ToolTip = "Dismiss",
 			Child = CreateMetroIcon("close", 13.0)
 		};
-		close.MouseEnter += delegate { close.Background = new SolidColorBrush(System.Windows.Media.Color.FromRgb(210, 25, 50)); };
+		close.MouseEnter += delegate { close.Background = rest ? DarkRestPalette.MenuHover : new SolidColorBrush(System.Windows.Media.Color.FromRgb(210, 25, 50)); };
 		close.MouseLeave += delegate { close.Background = System.Windows.Media.Brushes.Transparent; };
 		close.MouseLeftButtonUp += delegate(object _, MouseButtonEventArgs e) { e.Handled = true; DismissOne(id, card); };
 		Grid.SetColumn(close, 2);
@@ -1362,12 +1433,12 @@ public sealed partial class ActionCenter
 		card.MouseEnter += delegate
 		{
 			close.Visibility = Visibility.Visible;
-			fill.BeginAnimation(SolidColorBrush.ColorProperty, new ColorAnimation(System.Windows.Media.Color.FromArgb(62, 255, 255, 255), MetroDuration(TileHoverMilliseconds)));
+			fill.BeginAnimation(SolidColorBrush.ColorProperty, new ColorAnimation(cardHover, MetroDuration(TileHoverMilliseconds)));
 		};
 		card.MouseLeave += delegate
 		{
 			close.Visibility = Visibility.Hidden;
-			fill.BeginAnimation(SolidColorBrush.ColorProperty, new ColorAnimation(System.Windows.Media.Color.FromArgb(42, 255, 255, 255), MetroDuration(TileHoverMilliseconds)));
+			fill.BeginAnimation(SolidColorBrush.ColorProperty, new ColorAnimation(cardIdle, MetroDuration(TileHoverMilliseconds)));
 		};
 		if (!string.IsNullOrWhiteSpace(aumid))
 		{
@@ -1384,8 +1455,24 @@ public sealed partial class ActionCenter
 		_emptySubtitle.Text = subtitle;
 		_emptyState.Visibility = Visibility.Visible;
 		_notificationScroll.Visibility = Visibility.Collapsed;
-		_clearAllButton.IsEnabled = false;
-		_clearAllButton.Opacity = 0.55;
+		SyncClearAll(enabled: false);
+	}
+
+	// "Clear all": the link ink while there is something to clear. Disabled it is dimmed to 0.55 normally; in Dark rest
+	// it takes the hint ink at full opacity instead (5.6:1 on the black panel, where the dimmed link would be 3.5:1).
+	private void SyncClearAll(bool enabled)
+	{
+		_clearAllButton.IsEnabled = enabled;
+		if (_restPalette && !enabled)
+		{
+			_clearAllButton.Opacity = 1.0;
+			_clearAllButton.Foreground = DarkRestPalette.Hint;
+		}
+		else
+		{
+			_clearAllButton.Opacity = enabled ? 1.0 : 0.55;
+			_clearAllButton.Foreground = _linkBrush;
+		}
 	}
 
 	private async Task DismissMetroNotificationAsync(uint id, Border card)
@@ -1492,12 +1579,14 @@ public sealed partial class ActionCenter
 	// True while the Dark rest palette is applied (the quick tiles are muted).
 	private bool _restPalette;
 
-	// Dark rest: a near-black slate panel, a soft blue-grey link, the muted accent on the sliders and muted tiles.
+	// Dark rest: a near-black panel, soft ink, the accent ink for the link, the accent line on the sliders and muted
+	// tiles.
 	private void ApplyRestPalette()
 	{
 		System.Windows.Media.Color accent = StartAccent.Color();
 		_restPalette = true;
-		// the notification list's scrollbar: quiet blue-grey
+		DarkRestPalette.RetintWhite(_metroRoot, rest: true);
+		// the notification list's scrollbar: a quiet grey thumb on a black track
 		DarkRestPalette.WriteScrollBrushes(_metroRoot.Resources);
 		_themeBase = DarkRestPalette.PanelTop;
 		_themeAccent = accent;
@@ -1506,21 +1595,25 @@ public sealed partial class ActionCenter
 		base.Background = _themeBackground;
 		_metroRoot.Background = _themeBackground;
 		SyncNativeClearColor();
-		_secondaryTextBrush = FreezeMetroBrush(System.Windows.Media.Color.FromArgb(205, 255, 255, 255));
+		_secondaryTextBrush = (SolidColorBrush)DarkRestPalette.Ink2;
 		_linkBrush = FreezeMetroBrush(DarkRestPalette.PanelLink);
-		_clearAllButton.Foreground = _linkBrush;
+		SyncClearAll(_clearAllButton.IsEnabled);
 		_emptySubtitle.Foreground = _secondaryTextBrush;
-		_collapseLabel.Foreground = System.Windows.Media.Brushes.White;
+		_collapseLabel.Foreground = DarkRestPalette.Ink;
 		if (_volume is MetroSlider volume)
 		{
-			volume.FillBrush = FreezeMetroBrush(accent);
-			volume.TrackBrush = FreezeMetroBrush(DarkRestPalette.SliderTrack);
+			volume.FillBrush = DarkRestPalette.AccentLine;
+			volume.TrackBrush = DarkRestPalette.SliderTrackBrush;
+			volume.TrackBorderBrush = DarkRestPalette.Boundary;
+			volume.ThumbBrush = DarkRestPalette.Ink;
 			volume.InvalidateVisual();
 		}
 		if (_brightness is MetroSlider brightness)
 		{
-			brightness.FillBrush = FreezeMetroBrush(accent);
-			brightness.TrackBrush = FreezeMetroBrush(DarkRestPalette.SliderTrack);
+			brightness.FillBrush = DarkRestPalette.AccentLine;
+			brightness.TrackBrush = DarkRestPalette.SliderTrackBrush;
+			brightness.TrackBorderBrush = DarkRestPalette.Boundary;
+			brightness.ThumbBrush = DarkRestPalette.Ink;
 			brightness.InvalidateVisual();
 		}
 		RefreshMetroTileStates(animate: false);
@@ -1528,6 +1621,10 @@ public sealed partial class ActionCenter
 
 	private void ApplyMetroPalette(System.Windows.Media.Color themeBase, System.Windows.Media.Color accent, bool seasonal = false)
 	{
+		if (_restPalette)
+		{
+			DarkRestPalette.RetintWhite(_metroRoot, rest: false);
+		}
 		_restPalette = false;
 		DarkRestPalette.RemoveRestResources(_metroRoot.Resources);
 		_themeBase = themeBase;
@@ -1557,19 +1654,23 @@ public sealed partial class ActionCenter
 			}
 		}
 		_linkBrush = FreezeMetroBrush(link);
-		_clearAllButton.Foreground = _linkBrush;
+		SyncClearAll(_clearAllButton.IsEnabled);
 		_emptySubtitle.Foreground = _secondaryTextBrush;
 		_collapseLabel.Foreground = System.Windows.Media.Brushes.White;
 		if (_volume is MetroSlider volume)
 		{
 			volume.FillBrush = FreezeMetroBrush(accent);   // pattern 19: the filled side is the ACCENT, not a whitened mix
 			volume.TrackBrush = FreezeMetroBrush(System.Windows.Media.Color.FromArgb(58, 255, 255, 255));
+			volume.TrackBorderBrush = null;
+			volume.ThumbBrush = System.Windows.Media.Brushes.White;
 			volume.InvalidateVisual();
 		}
 		if (_brightness is MetroSlider brightness)
 		{
 			brightness.FillBrush = FreezeMetroBrush(accent);
 			brightness.TrackBrush = FreezeMetroBrush(System.Windows.Media.Color.FromArgb(58, 255, 255, 255));
+			brightness.TrackBorderBrush = null;
+			brightness.ThumbBrush = System.Windows.Media.Brushes.White;
 			brightness.InvalidateVisual();
 		}
 		RefreshMetroTileStates(animate: false);
@@ -1800,7 +1901,7 @@ public sealed partial class ActionCenter
 		return new Path { Data = geometry, Fill = System.Windows.Media.Brushes.White };
 	}
 
-	internal static ActionCenterQaMetrics QaRenderMetro(string outPath, double width, double height, bool compact, bool withNotifications, bool currentTheme = false)
+	internal static ActionCenterQaMetrics QaRenderMetro(string outPath, double width, double height, bool compact, bool withNotifications, bool currentTheme = false, ImageSource? qaNotificationIcon = null)
 	{
 		Stopwatch total = Stopwatch.StartNew();
 		Stopwatch build = Stopwatch.StartNew();
@@ -1850,7 +1951,7 @@ public sealed partial class ActionCenter
 		{
 			panel.ShowMetroNotifications(new List<(uint, string, string, string, string, ImageSource?)>
 			{
-				(1u, "Mail", "Project update", "The latest build is ready for review.", string.Empty, null),
+				(1u, "Mail", "Project update", "The latest build is ready for review.", string.Empty, qaNotificationIcon),
 				(2u, "Calendar", "Design review", "Today at 17:30", string.Empty, null),
 				(3u, "Windows Security", "No actions needed", "Your device is protected.", string.Empty, null),
 				(4u, "Teams", "New message", "Alex sent you a message.", string.Empty, null),
@@ -1877,6 +1978,16 @@ public sealed partial class ActionCenter
 		PngBitmapEncoder encoder = new PngBitmapEncoder();
 		encoder.Frames.Add(BitmapFrame.Create(bitmap));
 		using (FileStream stream = File.Create(outPath)) encoder.Save(stream);
+		List<ActionCenterQaTile> tileStates = new List<ActionCenterQaTile>();
+		foreach (MetroTile tile in panel._metroTiles.Where(t => t.Root.Visibility == Visibility.Visible))
+		{
+			bool tileOn = false;
+			try { tileOn = tile.IsOn?.Invoke() ?? false; } catch { }
+			tileStates.Add(new ActionCenterQaTile(tile.Id, tile.IsOn != null, tileOn, tile.Fill.Color,
+				(tile.Root.BorderBrush as SolidColorBrush)?.Color ?? System.Windows.Media.Colors.Transparent, tile.Root.BorderThickness.Left,
+				(tile.Label?.Foreground as SolidColorBrush)?.Color ?? System.Windows.Media.Colors.Transparent, tile.Check.Visibility == Visibility.Visible,
+				(tile.Status.Foreground as SolidColorBrush)?.Color ?? System.Windows.Media.Colors.Transparent, tile.Icon.Opacity));
+		}
 		System.Windows.Media.Color before = panel._themeBackground.GradientStops[0].Color;
 		panel.ApplyMetroPalette(System.Windows.Media.Color.FromRgb(170, 24, 36), System.Windows.Media.Color.FromRgb(235, 50, 60));
 		System.Windows.Media.Color red = panel._themeBackground.GradientStops[0].Color;
@@ -1924,6 +2035,7 @@ public sealed partial class ActionCenter
 		panel.ArrangeMetroTiles(animateHeight: false);
 		ActionCenterQaMetrics metrics = new ActionCenterQaMetrics
 		{
+			Tiles = tileStates,
 			WidthDiu = width,
 			HeightDiu = height,
 			DefinedTiles = panel._metroTiles.Count,

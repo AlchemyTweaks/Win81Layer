@@ -9,6 +9,10 @@ internal static class DesktopContextMenu
 {
 	private static ContextMenu? _cachedMenu;
 
+	// Whether the cached menu was built while Dark rest was on: its icons and glyph squares are made for that look, so a
+	// change of look builds the menu again.
+	private static bool _cachedRest;
+
 	private static MenuItem? _large;
 
 	private static MenuItem? _medium;
@@ -47,6 +51,11 @@ internal static class DesktopContextMenu
 
 	internal static ContextMenu Build()
 	{
+		bool rest = DarkRest.Visuals;
+		if (_cachedMenu != null && _cachedRest != rest)
+		{
+			_cachedMenu = null;
+		}
 		if (_cachedMenu != null)
 		{
 			RefreshState(_cachedMenu);
@@ -147,6 +156,7 @@ internal static class DesktopContextMenu
 			TaskbarContextMenu.OpenUri("ms-settings:personalization");
 		}));
 		_cachedMenu = ctx;
+		_cachedRest = rest;
 		RefreshState(ctx);
 		return ctx;
 	}

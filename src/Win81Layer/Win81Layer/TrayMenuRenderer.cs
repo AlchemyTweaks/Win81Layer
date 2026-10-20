@@ -13,16 +13,18 @@ internal static class TrayMetro
 	// Theme-aware: read at paint time (the color table + renderer resolve these per draw) so the tray menu follows
 	// light/dark. LIGHT values are the authentic white Content Menu; DARK mirrors TaskbarContextMenu's dark M.* set.
 	private static bool Dark => ShellTheme.IsDark;
-	internal static Color Bg => Dark ? Color.FromArgb(0x2B, 0x2B, 0x2B) : Color.White;
-	internal static Color BorderC => Dark ? Color.FromArgb(0x5A, 0x5A, 0x5A) : Color.Black;
-	internal static Color SepC => Dark ? Color.FromArgb(0x3F, 0x3F, 0x3F) : Color.FromArgb(0xC8, 0xC8, 0xC8);
-	internal static Color Fg => Dark ? Color.FromArgb(0xF2, 0xF2, 0xF2) : Color.Black;
-	internal static Color Dis => Dark ? Color.FromArgb(0x8A, 0x8A, 0x8A) : Color.FromArgb(0x76, 0x76, 0x76);
-	internal static Color Arrow => Dark ? Color.FromArgb(0xDD, 0xDD, 0xDD) : Color.Black;
-	internal static Color Hover => Dark ? Color.FromArgb(0x3F, 0x3F, 0x3F) : Color.FromArgb(0xDE, 0xDE, 0xDE);
+	// Dark rest mirrors TaskbarContextMenu's Dark rest M.* set (near-black, soft ink, accent keyboard row).
+	private static bool Rest => DarkRest.Visuals;
+	internal static Color Bg => Rest ? Color.FromArgb(0x0F, 0x0F, 0x0F) : Dark ? Color.FromArgb(0x2B, 0x2B, 0x2B) : Color.White;
+	internal static Color BorderC => Rest ? Color.FromArgb(0x4D, 0x4D, 0x4D) : Dark ? Color.FromArgb(0x5A, 0x5A, 0x5A) : Color.Black;
+	internal static Color SepC => Rest ? Color.FromArgb(0x3A, 0x3A, 0x3A) : Dark ? Color.FromArgb(0x3F, 0x3F, 0x3F) : Color.FromArgb(0xC8, 0xC8, 0xC8);
+	internal static Color Fg => Rest ? Color.FromArgb(0xDC, 0xDC, 0xDC) : Dark ? Color.FromArgb(0xF2, 0xF2, 0xF2) : Color.Black;
+	internal static Color Dis => Rest ? Color.FromArgb(0x88, 0x88, 0x88) : Dark ? Color.FromArgb(0x8A, 0x8A, 0x8A) : Color.FromArgb(0x76, 0x76, 0x76);
+	internal static Color Arrow => Rest ? Color.FromArgb(0xDC, 0xDC, 0xDC) : Dark ? Color.FromArgb(0xDD, 0xDD, 0xDD) : Color.Black;
+	internal static Color Hover => Rest ? Color.FromArgb(0x32, 0x32, 0x32) : Dark ? Color.FromArgb(0x3F, 0x3F, 0x3F) : Color.FromArgb(0xDE, 0xDE, 0xDE);
 	// Keyboard/pressed-highlight row inverts in both themes: black bar + white text in light, white bar + black text in dark.
-	internal static Color KbBg => Dark ? Color.White : Color.Black;
-	internal static Color KbFg => Dark ? Color.Black : Color.White;
+	internal static Color KbBg => Rest ? Color.FromArgb(0x4E, 0x71, 0x79) : Dark ? Color.White : Color.Black;
+	internal static Color KbFg => Rest ? Color.FromArgb(0xEE, 0xEE, 0xEE) : Dark ? Color.Black : Color.White;
 
 	internal static Color Accent()
 	{

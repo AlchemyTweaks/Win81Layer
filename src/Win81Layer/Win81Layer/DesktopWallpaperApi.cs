@@ -335,6 +335,56 @@ internal static class DesktopWallpaperApi
 		return ok;
 	}
 
+	// Sets path on the given monitors only (COM), leaving the others and the picture position as they are, then verifies
+	// those monitors show it. There is no SPI fallback, since SPI can only set every display.
+	public static bool SetOn(IReadOnlyCollection<string> monitorIds, string path)
+	{
+		GuardWrites();
+		if (monitorIds.Count == 0)
+		{
+			return false;
+		}
+		IDesktopWallpaper? dw = null;
+		try
+		{
+			dw = Create();
+			foreach (string id in monitorIds)
+			{
+				dw.SetWallpaper(id, path);
+			}
+			bool verified = true;
+			foreach (string id in monitorIds)
+			{
+				string now = "";
+				try
+				{
+					now = dw.GetWallpaper(id) ?? "";
+				}
+				catch
+				{
+				}
+				if (!SamePath(now, path))
+				{
+					verified = false;
+				}
+			}
+			if (!verified)
+			{
+				Logger.Log("Seasonal: wallpaper set on some displays did not verify.");
+			}
+			return verified;
+		}
+		catch (Exception ex)
+		{
+			Logger.Log("Seasonal: wallpaper set on some displays failed: " + ex.Message);
+			return false;
+		}
+		finally
+		{
+			Release(dw);
+		}
+	}
+
 	private static (string? Style, string? Tile) ReadStyleValues()
 	{
 		try

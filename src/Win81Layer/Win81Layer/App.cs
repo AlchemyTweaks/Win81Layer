@@ -595,6 +595,8 @@ public partial class App : System.Windows.Application
 			ShellTheme.Refresh();
 			SeasonalTheme.InvalidateCache();
 			DarkRest.Sync();
+			// Dark rest's black control family at application scope (menus, tooltips, Metro controls), or gone again.
+			ShellTheme.SyncRest();
 			TaskbarTheme.Invalidate();
 			_startScreen?.RefreshBackground();
 			TaskbarWindow.RaiseTaskbarColorChanged(invalidateWallpaper: true);
@@ -608,6 +610,8 @@ public partial class App : System.Windows.Application
 			SeasonalAppIcons.Reconcile("season");
 			// The Alchemy pointers take the season's colours, the Dark rest style, or go back to blue with Normal.
 			PointerScheme.ReconcileAsync("season");
+			// The Metro Tab browser extension follows the look (one small file in its folder, only when it changed).
+			ShellLookLink.Sync("live");
 			Logger.Log("Seasonal: live refresh applied (active=" + SettingsStore.FastSnapshot.SeasonalActive + ")");
 		}
 		catch (Exception ex)
@@ -2841,7 +2845,17 @@ public partial class App : System.Windows.Application
 		// Dark rest's calmer animations (the Motion setting itself is not changed), and its surfaces stepping aside at
 		// once when High Contrast is turned on.
 		DarkRest.Sync();
+		ShellTheme.SyncRest();
 		DarkRest.WatchHighContrast(ApplySeasonalLive);
+		if (_isPrimary)
+		{
+			// The Metro Tab browser extension learns the look once the shell is idle (nothing is written when its file
+			// already matches).
+			Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle, (Action)delegate
+			{
+				ShellLookLink.Sync("startup");
+			});
+		}
 		if (!settings.FreeGridDefaultV1)
 		{
 			SettingsStore.Update(delegate(AppSettings appSettings)

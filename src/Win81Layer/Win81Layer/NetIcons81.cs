@@ -51,7 +51,12 @@ internal static class NetIcons81
 
 	private static readonly Color Primary = Color.FromRgb(255, 255, 255);
 	private static readonly Color Disabled = Color.FromRgb(166, 166, 166);
-	private static readonly Color Dimmed = Color.FromRgb(102, 102, 102);
+	private static readonly Color NormalDimmed = Color.FromRgb(102, 102, 102);
+	// Dark rest draws the launcher's glyphs at 0.86 opacity on black: the unlit and disconnected parts are lighter there,
+	// so they keep 3:1 or more on black and on the dark flyout headers (the authentic tray art's unlit grey).
+	private static readonly Color RestDimmed = Color.FromRgb(128, 128, 128);
+	// The dimmed grey of the icon being built (set under Gate before each build).
+	private static Color Dimmed = NormalDimmed;
 	private static readonly Color Secondary = Color.FromRgb(200, 200, 200);
 	private static readonly Color Error = Color.FromRgb(232, 17, 35);
 	private static readonly Color Warning = Color.FromRgb(255, 185, 0);
@@ -156,13 +161,15 @@ internal static class NetIcons81
 		int targetSize = size <= 12 ? 12 : (size <= 16 ? 16 : 32);
 		int level = Math.Clamp(signal, 0, 4);
 		Color color = foreground ?? Primary;
-		string key = $"{kind}:{state}:{level}:{targetSize}:{color}";
+		bool rest = DarkRest.Visuals;
+		string key = $"{kind}:{state}:{level}:{targetSize}:{color}" + (rest ? ":rest" : "");
 		lock (Gate)
 		{
 			if (Cache.TryGetValue(key, out ImageSource cached))
 			{
 				return cached;
 			}
+			Dimmed = rest ? RestDimmed : NormalDimmed;
 			ImageSource icon = Build(kind, state, level, targetSize, color);
 			Cache[key] = icon;
 			return icon;

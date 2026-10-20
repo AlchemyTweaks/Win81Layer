@@ -1,5 +1,5 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
-<Application x:Class="Win81Layer.App" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:local="clr-namespace:Win81Layer" ShutdownMode="OnExplicitShutdown">
+<Application x:Class="Win81Layer.App" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:local="clr-namespace:Win81Layer" xmlns:sys="clr-namespace:System;assembly=mscorlib" ShutdownMode="OnExplicitShutdown">
   <Application.Resources>
     <ResourceDictionary>
       <ResourceDictionary.MergedDictionaries>
@@ -11,6 +11,40 @@
       <SolidColorBrush x:Key="MenuAccent" Color="#FF2672EC" />
       <SolidColorBrush x:Key="MenuAccentLight" Color="#FF7FA9F2" />
       <SolidColorBrush x:Key="MenuAccentPressed" Color="#FF1D59B8" />
+      <!-- Accent roles of the Metro controls. Start writes the accent into them (the same values as MenuAccent and
+           MenuAccentPressed); Dark rest writes its accent family instead. -->
+      <SolidColorBrush x:Key="Metro81.FocusBorder" Color="#FF2672EC" />
+      <SolidColorBrush x:Key="Metro81.LinkInk" Color="#FF2672EC" />
+      <SolidColorBrush x:Key="Metro81.LinkInkHover" Color="#FF1D59B8" />
+      <SolidColorBrush x:Key="Metro81.SliderFill" Color="#FF2672EC" />
+      <SolidColorBrush x:Key="Metro81.SliderDarkTrack" Color="#66FFFFFF" />
+      <SolidColorBrush x:Key="Metro81.SliderDarkThumb" Color="#FFFFFFFF" />
+      <SolidColorBrush x:Key="Metro81.OnAccentInk" Color="#FFFFFFFF" />
+      <SolidColorBrush x:Key="Metro81.NavInk" Color="#FFFFFFFF" />
+      <!-- More roles of the Metro controls that Dark rest changes; these are the values the templates always had. -->
+      <SolidColorBrush x:Key="Metro81.SliderThumbHover" Color="#FF404040" />
+      <SolidColorBrush x:Key="Metro81.SliderThumbDrag" Color="#FF606060" />
+      <SolidColorBrush x:Key="Metro81.ToggleThumbPressed" Color="#FF404040" />
+      <SolidColorBrush x:Key="Metro81.ValuePopupSurface" Color="#FFFFFFFF" />
+      <SolidColorBrush x:Key="Metro81.ValuePopupInk" Color="#FF000000" />
+      <SolidColorBrush x:Key="Metro81.SliderTrackBorder" Color="#00FFFFFF" />
+      <SolidColorBrush x:Key="Metro81.ButtonBorder" Color="#00FFFFFF" />
+      <SolidColorBrush x:Key="Metro81.TextSelection" Color="#FF2672EC" />
+      <SolidColorBrush x:Key="Metro81.CommandHover" Color="#187F7F7F" />
+      <SolidColorBrush x:Key="Metro81.CommandSelected" Color="#2EFFFFFF" />
+      <!-- The hover washes of the charms panes' rows (white at alpha 12, 18 and 20). -->
+      <SolidColorBrush x:Key="Metro81.PaneHover12" Color="#0CFFFFFF" />
+      <SolidColorBrush x:Key="Metro81.PaneHover18" Color="#12FFFFFF" />
+      <SolidColorBrush x:Key="Metro81.PaneHover20" Color="#14FFFFFF" />
+      <sys:Double x:Key="Metro81.DisabledOpacity">0.4</sys:Double>
+      <sys:Double x:Key="Metro81.DisabledRowOpacity">0.45</sys:Double>
+      <sys:Double x:Key="Metro81.TextSelectionOpacity">0.4</sys:Double>
+      <!-- The opacity of white glyphs drawn from fixed art (the 8.1 directional arrows); Dark rest lowers it. -->
+      <sys:Double x:Key="Metro81.GlyphOpacity">1</sys:Double>
+      <!-- The Start ink for a tile or an app list row drawn outside the Start window (it keeps its own copy, which Dark
+           rest changes); the white the tile names always had. -->
+      <SolidColorBrush x:Key="Start.Ink" Color="#FFFFFFFF" />
+      <SolidColorBrush x:Key="Start.TileInk" Color="#FFFFFFFF" />
       <SolidColorBrush x:Key="HeaderAccent" Color="#FFB89BD9" />
       <SolidColorBrush x:Key="HoverTint" Color="#33A06AD0" />
       <SolidColorBrush x:Key="TaskbarSelection" Color="#FF2A5C9E" />

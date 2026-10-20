@@ -452,7 +452,7 @@ public sealed class SearchPane : Window
 			Height = 28.0,
 			Margin = new Thickness(0.0, 0.0, 3.0, 0.0),
 			VerticalAlignment = VerticalAlignment.Center,
-			Background = new SolidColorBrush(SettingsPane.AccentToneColor(0.46)),
+			Background = new SolidColorBrush(SearchButtonColor()),
 			BorderThickness = new Thickness(0.0),
 			Cursor = System.Windows.Input.Cursors.Hand,
 			FocusVisualStyle = null,
@@ -498,7 +498,7 @@ public sealed class SearchPane : Window
 			VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
 			HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled
 		};
-		try { if (System.Windows.Application.Current.TryFindResource("Metro81.ScrollBarDark") is Style sbDark) scroller.Resources[typeof(System.Windows.Controls.Primitives.ScrollBar)] = new Style(typeof(System.Windows.Controls.Primitives.ScrollBar), sbDark); } catch { }   // dark pane - the light pattern rail is for white surfaces
+		try { if (System.Windows.Application.Current.TryFindResource("Metro81.ScrollBarDark") is Style sbDark) { scroller.Resources[typeof(System.Windows.Controls.Primitives.ScrollBar)] = new Style(typeof(System.Windows.Controls.Primitives.ScrollBar), sbDark); _normalScrollBarSource = sbDark; } } catch { }   // dark pane - the light pattern rail is for white surfaces
 		_resultsScroller = scroller;
 		_normalScrollBarStyle = scroller.Resources[typeof(System.Windows.Controls.Primitives.ScrollBar)] as Style;
 		_results = new StackPanel();
@@ -594,17 +594,59 @@ public sealed class SearchPane : Window
 
 	private Style _normalScrollBarStyle;
 
+	// The application's always-dark scrollbar style the Normal one above was based on.
+	private Style _normalScrollBarSource;
+
+	// The results scrollbar for Normal, based on the application's always-dark style as it is now. A pane built while
+	// Dark rest was on saw the Dark rest style under that key, so the Normal style is looked up again here (Dark rest has
+	// put the plain one back by then) and rebuilt only when that style changed.
+	private Style NormalScrollBarStyle()
+	{
+		try
+		{
+			if (System.Windows.Application.Current?.TryFindResource("Metro81.ScrollBarDark") is Style source && !ReferenceEquals(source, DarkRestPalette.BuiltScrollBarStyle) && !ReferenceEquals(source, _normalScrollBarSource))
+			{
+				_normalScrollBarSource = source;
+				_normalScrollBarStyle = new Style(typeof(System.Windows.Controls.Primitives.ScrollBar), source);
+			}
+		}
+		catch
+		{
+		}
+		return _normalScrollBarStyle;
+	}
+
+	// A result card: shown as built, in the soft ink while Dark rest is on.
+	private void ShowCard(FrameworkElement card)
+	{
+		_cardHost.Child = card;
+		if (DarkRest.Visuals)
+		{
+			DarkRestPalette.RetintWhite(card, rest: true, DarkRestPalette.CardColor);
+		}
+	}
+
+	// QA: the style the results scrollbar uses now.
+	internal Style QaResultsScrollBarStyle => _resultsScroller?.Resources[typeof(System.Windows.Controls.Primitives.ScrollBar)] as Style;
+
 	// The search field: white with black ink normally; while Dark rest is on, a dark field (darker than the pane, with
 	// the border every dark field shares) with soft ink, and a quiet results scrollbar.
+	// The ink of the result rows: white normally, the soft Dark rest ink while Dark rest is on.
+	private static System.Windows.Media.Brush PaneInk => DarkRest.Visuals ? DarkRestPalette.Ink : System.Windows.Media.Brushes.White;
+
 	private void ApplyFieldPalette()
 	{
 		bool rest = DarkRest.Visuals;
+		// the pane's own white text and glyphs (the title, the scope, the search button): soft ink in Dark rest
+		DarkRestPalette.RetintWhite(_root, rest);
 		_boxOuter.Background = rest ? DarkRestPalette.FieldBox : System.Windows.Media.Brushes.White;
 		_boxOuter.BorderBrush = rest ? DarkRestPalette.FieldBorder : null;
 		_boxOuter.BorderThickness = rest ? DarkRestPalette.FieldBorderThickness : default;
+		// the 1 px outline stays one crisp pixel (it would otherwise blur over two rows at a half-pixel position)
+		_boxOuter.SnapsToDevicePixels = rest;
 		if (_resultsScroller != null)
 		{
-			Style scroll = rest ? DarkRestPalette.ScrollBarStyle() ?? _normalScrollBarStyle : _normalScrollBarStyle;
+			Style scroll = rest ? DarkRestPalette.ScrollBarStyle() ?? NormalScrollBarStyle() : NormalScrollBarStyle();
 			if (scroll != null)
 			{
 				_resultsScroller.Resources[typeof(System.Windows.Controls.Primitives.ScrollBar)] = scroll;
@@ -616,6 +658,9 @@ public sealed class SearchPane : Window
 	}
 
 	private static readonly System.Windows.Media.Brush WatermarkNormal = ColorMath.Frozen(System.Windows.Media.Color.FromArgb(153, 0, 0, 0));
+
+	// QA: the search box's caret brush.
+	internal System.Windows.Media.Brush QaCaretBrush => _box.CaretBrush;
 
 	private void QueueEntityLookup()
 	{
@@ -668,7 +713,7 @@ public sealed class SearchPane : Window
 			}
 			_entityCts?.Cancel();       // cancel any in-flight place lookup
 			_entityDebounce?.Stop();    // and don't let a queued place tick clobber this card
-			_cardHost.Child = MetroComposer.BuildCalcCard(card);
+			ShowCard(MetroComposer.BuildCalcCard(card));
 			_cardHost.Visibility = Visibility.Visible;
 			return true;
 		}
@@ -708,7 +753,7 @@ public sealed class SearchPane : Window
 			}
 			_entityCts?.Cancel();       // cancel any in-flight place lookup
 			_entityDebounce?.Stop();    // and don't let a queued place tick clobber this card
-			_cardHost.Child = MetroComposer.BuildCalcCard(card);
+			ShowCard(MetroComposer.BuildCalcCard(card));
 			_cardHost.Visibility = Visibility.Visible;
 			return true;
 		}
@@ -740,7 +785,7 @@ public sealed class SearchPane : Window
 			}
 			_entityCts?.Cancel();
 			_entityDebounce?.Stop();
-			_cardHost.Child = MetroComposer.BuildCalcCard(card);
+			ShowCard(MetroComposer.BuildCalcCard(card));
 			_cardHost.Visibility = Visibility.Visible;
 			return true;
 		}
@@ -784,7 +829,7 @@ public sealed class SearchPane : Window
 			}
 			_entityCts?.Cancel();
 			_entityDebounce?.Stop();
-			_cardHost.Child = MetroComposer.BuildCalcCard(card);
+			ShowCard(MetroComposer.BuildCalcCard(card));
 			_cardHost.Visibility = Visibility.Visible;
 			return true;
 		}
@@ -820,7 +865,7 @@ public sealed class SearchPane : Window
 			}
 			_entityCts?.Cancel();
 			_entityDebounce?.Stop();
-			_cardHost.Child = MetroComposer.BuildColorCard(card);
+			ShowCard(MetroComposer.BuildColorCard(card));
 			_cardHost.Visibility = Visibility.Visible;
 			return true;
 		}
@@ -891,8 +936,9 @@ public sealed class SearchPane : Window
 			_appMenu = null;
 		}
 		_root.Background = PaneBg();
+		// the button first, so the field palette's ink pass sees the fill the glyph sits on
+		_searchBtn.Background = new SolidColorBrush(SearchButtonColor());
 		ApplyFieldPalette();
-		_searchBtn.Background = new SolidColorBrush(SettingsPane.AccentToneColor(0.46));
 		_box.Text = string.Empty;
 		_scope = Scope.Everywhere;
 		_scopeLabel.Text = "Everywhere";
@@ -1096,6 +1142,11 @@ public sealed class SearchPane : Window
 		for (int i = 0; i < _navRows.Count; i++)
 		{
 			_navRows[i].Background = ((i == _selIndex) ? sel : System.Windows.Media.Brushes.Transparent);
+			if (DarkRest.Visuals)
+			{
+				// the row's text takes the ink that keeps 4.5:1 on what it now sits on
+				DarkRestPalette.RetintWhite(_navRows[i], rest: true);
+			}
 		}
 		if (_selIndex >= 0 && _selIndex < _navRows.Count)
 		{
@@ -1742,10 +1793,12 @@ public sealed class SearchPane : Window
 	{
 		MultiBinding icon = new MultiBinding
 		{
-			Converter = SeasonalIconConverter.Instance,
+			// Dark rest: the icon sits straight on the black pane, so a dark monochrome glyph is lifted (RestIconConverter).
+			Converter = DarkRest.Visuals ? RestIconConverter.Instance : SeasonalIconConverter.Instance,
 			ConverterParameter = dip,
-			// Show the app's letter tile until (or unless) its real icon resolves, never an empty slot.
-			TargetNullValue = IconResolver.LetterTile(a.Name, IconResolver.AccentFor(a.Name))
+			// Show the app's letter tile until (or unless) its real icon resolves, never an empty slot (in Dark rest on a
+			// toned-down plate, like the Start tiles).
+			TargetNullValue = IconResolver.LetterTile(a.Name, DarkRest.Visuals ? DarkRestPalette.MuteTile(IconResolver.AccentFor(a.Name)) : IconResolver.AccentFor(a.Name))
 		};
 		icon.Bindings.Add(new System.Windows.Data.Binding("Icon") { Source = a });
 		icon.Bindings.Add(new System.Windows.Data.Binding("SeasonalKey") { Source = a });
@@ -1770,7 +1823,7 @@ public sealed class SearchPane : Window
 		sp.Children.Add(new TextBlock
 		{
 			Text = a.Name,
-			Foreground = System.Windows.Media.Brushes.White,
+			Foreground = PaneInk,
 			FontFamily = new System.Windows.Media.FontFamily("Segoe UI"),
 			FontSize = 14.0,
 			VerticalAlignment = VerticalAlignment.Center,
@@ -1941,7 +1994,7 @@ public sealed class SearchPane : Window
 				Text = glyph,
 				FontFamily = new System.Windows.Media.FontFamily((glyph.Length > 0 && glyph[0] >= '\ue100' && glyph[0] <= '\ue1ff') ? "Segoe UI Symbol" : "Segoe MDL2 Assets"),
 				FontSize = 20.0,
-				Foreground = System.Windows.Media.Brushes.White,
+				Foreground = PaneInk,
 				Width = 26.0,
 				VerticalAlignment = VerticalAlignment.Center
 			});
@@ -1949,7 +2002,7 @@ public sealed class SearchPane : Window
 		sp.Children.Add(new TextBlock
 		{
 			Text = label,
-			Foreground = System.Windows.Media.Brushes.White,
+			Foreground = PaneInk,
 			FontFamily = new System.Windows.Media.FontFamily("Segoe UI"),
 			FontSize = 14.0,
 			VerticalAlignment = VerticalAlignment.Center,
@@ -1996,7 +2049,37 @@ public sealed class SearchPane : Window
 			_scopePopup.IsOpen = false;
 			return;
 		}
+		_scopePopup.Child = BuildScopeMenu();
+		_scopePopup.PlacementTarget = anchor;
+		_scopePopup.IsOpen = true;
+	}
+
+	// QA: the scope drop-down as it opens, drawn on the pane's background (nothing is opened).
+	internal void QaRenderScopeMenu(string outPath)
+	{
+		Border wrap = BuildScopeMenu();
+		wrap.Effect = null;
+		Border host = new Border
+		{
+			Background = PaneBg(),
+			Padding = new Thickness(16.0),
+			Child = wrap
+		};
+		host.Measure(new System.Windows.Size(double.PositiveInfinity, double.PositiveInfinity));
+		host.Arrange(new Rect(host.DesiredSize));
+		host.UpdateLayout();
+		RenderTargetBitmap rtb = new RenderTargetBitmap(Math.Max(1, (int)Math.Ceiling(host.ActualWidth)), Math.Max(1, (int)Math.Ceiling(host.ActualHeight)), 96.0, 96.0, PixelFormats.Pbgra32);
+		rtb.Render(host);
+		PngBitmapEncoder enc = new PngBitmapEncoder();
+		enc.Frames.Add(BitmapFrame.Create(rtb));
+		using FileStream fs = File.Create(outPath);
+		enc.Save(fs);
+	}
+
+	private Border BuildScopeMenu()
+	{
 		StackPanel panel = new StackPanel();
+		bool scopeRest = DarkRest.Visuals;
 		Scope[] scopes = new Scope[5]
 		{
 			Scope.Everywhere,
@@ -2011,7 +2094,7 @@ public sealed class SearchPane : Window
 			System.Windows.Controls.Button item = RowButton(new TextBlock
 			{
 				Text = s.ToString(),
-				Foreground = System.Windows.Media.Brushes.White,
+				Foreground = PaneInk,
 				FontFamily = new System.Windows.Media.FontFamily("Segoe UI"),
 				FontSize = 15.0
 			}, delegate
@@ -2029,15 +2112,17 @@ public sealed class SearchPane : Window
 				panel.Children.Add(new Border
 				{
 					Height = 1.0,
-					Background = new SolidColorBrush(System.Windows.Media.Color.FromArgb(18, byte.MaxValue, byte.MaxValue, byte.MaxValue)),
+					Background = scopeRest ? DarkRestPalette.Separator : new SolidColorBrush(System.Windows.Media.Color.FromArgb(18, byte.MaxValue, byte.MaxValue, byte.MaxValue)),
 					Margin = new Thickness(12.0, 0.0, 12.0, 0.0)
 				});
 			}
 		}
+		// Dark rest: the drop-down is a popup of the black family with the control outline, so its edge shows on the
+		// black pane (the shadow does not)
 		Border wrap = new Border
 		{
-			Background = ShellSkin.CardBg(),
-			BorderBrush = new SolidColorBrush(System.Windows.Media.Color.FromArgb(38, byte.MaxValue, byte.MaxValue, byte.MaxValue)),
+			Background = scopeRest ? DarkRestPalette.Popup : ShellSkin.CardBg(),
+			BorderBrush = scopeRest ? DarkRestPalette.Boundary : new SolidColorBrush(System.Windows.Media.Color.FromArgb(38, byte.MaxValue, byte.MaxValue, byte.MaxValue)),
 			BorderThickness = new Thickness(1.0),
 			Child = panel,
 			MinWidth = 190.0,
@@ -2050,9 +2135,7 @@ public sealed class SearchPane : Window
 				Color = Colors.Black
 			}
 		};
-		_scopePopup.Child = wrap;
-		_scopePopup.PlacementTarget = anchor;
-		_scopePopup.IsOpen = true;
+		return wrap;
 	}
 
 	private void LaunchApp(AppEntry a)
@@ -2115,6 +2198,13 @@ public sealed class SearchPane : Window
 		}
 	}
 
+	// The search button: the accent tone, or in Dark rest the selection fill that Start's search button uses too (its
+	// glyph then takes the ink for accent fills).
+	private static System.Windows.Media.Color SearchButtonColor()
+	{
+		return DarkRest.Visuals ? DarkRestPalette.AccentFillColor : SettingsPane.AccentToneColor(0.46);
+	}
+
 	private static ControlTemplate HoverRowTemplate()
 	{
 		ControlTemplate t = new ControlTemplate(typeof(System.Windows.Controls.Button));
@@ -2135,7 +2225,8 @@ public sealed class SearchPane : Window
 			Property = UIElement.IsMouseOverProperty,
 			Value = true
 		};
-		hover.Setters.Add(new Setter(Border.BackgroundProperty, new SolidColorBrush(System.Windows.Media.Color.FromArgb(20, byte.MaxValue, byte.MaxValue, byte.MaxValue)), "bd"));
+		// the hover wash (white at alpha 20; a stronger one in Dark rest, which writes Metro81.PaneHover20)
+		hover.Setters.Add(new Setter(Border.BackgroundProperty, new DynamicResourceExtension("Metro81.PaneHover20"), "bd"));
 		t.Triggers.Add(hover);
 		return t;
 	}
@@ -2215,35 +2306,38 @@ public sealed class SearchPane : Window
 		//IL_01fb: Unknown result type (might be due to invalid IL or missing references)
 		//IL_0228: Unknown result type (might be due to invalid IL or missing references)
 		_root.Background = PaneBg();
+		_searchBtn.Background = new SolidColorBrush(SearchButtonColor());
 		ApplyFieldPalette();
-		_searchBtn.Background = new SolidColorBrush(SettingsPane.AccentToneColor(0.46));
+		// a card from an earlier render does not carry over into this one
+		_cardHost.Child = null;
+		_cardHost.Visibility = Visibility.Collapsed;
 		_box.Text = query;
 		Rebuild();
 		// Mirror the live TextChanged priority: the synchronous offline cards (calc/convert/date/base/color)
 		// win first; the Place sample is the fallback (matches TryShowXCard() running before QueueEntityLookup).
 		if (_router.Classify(Query.Of(query)).Kind == IntentKind.Calc && CalcEngine.TryBuild(query) is EntityCard calc)
 		{
-			_cardHost.Child = MetroComposer.BuildCalcCard(calc);
+			ShowCard(MetroComposer.BuildCalcCard(calc));
 			_cardHost.Visibility = Visibility.Visible;
 		}
 		else if (UnitConvert.TryBuild(query) is EntityCard conv)
 		{
-			_cardHost.Child = MetroComposer.BuildCalcCard(conv);
+			ShowCard(MetroComposer.BuildCalcCard(conv));
 			_cardHost.Visibility = Visibility.Visible;
 		}
 		else if (DateEngine.TryBuild(query) is EntityCard dt)
 		{
-			_cardHost.Child = MetroComposer.BuildCalcCard(dt);
+			ShowCard(MetroComposer.BuildCalcCard(dt));
 			_cardHost.Visibility = Visibility.Visible;
 		}
 		else if (BaseEngine.TryBuild(query) is EntityCard nb)
 		{
-			_cardHost.Child = MetroComposer.BuildCalcCard(nb);
+			ShowCard(MetroComposer.BuildCalcCard(nb));
 			_cardHost.Visibility = Visibility.Visible;
 		}
 		else if (ColorEngine.TryBuild(query) is EntityCard cc)
 		{
-			_cardHost.Child = MetroComposer.BuildColorCard(cc);
+			ShowCard(MetroComposer.BuildColorCard(cc));
 			_cardHost.Visibility = Visibility.Visible;
 		}
 		else if (_router.Classify(Query.Of(query)).Kind == IntentKind.Place)
@@ -2261,7 +2355,7 @@ public sealed class SearchPane : Window
 				new LauncherAction("web", "Search the web", "", () => Task.CompletedTask),
 				new LauncherAction("wiki", "Wikipedia", "", () => Task.CompletedTask)
 			});
-			_cardHost.Child = MetroComposer.BuildPlaceCard(sample, (string? _) => (ImageSource?)null);
+			ShowCard(MetroComposer.BuildPlaceCard(sample, (string? _) => (ImageSource?)null));
 			_cardHost.Visibility = Visibility.Visible;
 		}
 		_slide.X = 0.0;
@@ -2275,5 +2369,29 @@ public sealed class SearchPane : Window
 		using FileStream fs = File.Create(outPath);
 		enc.Save(fs);
 		Logger.Log("QaRender search pane -> " + outPath);
+	}
+}
+
+// Dark rest: the entry's icon (or its seasonal icon) as SeasonalIconConverter gives it, with a dark monochrome glyph
+// lifted the way the taskbar lifts such icons and an opaque dark icon outlined (DarkRestIcons.Visible), so neither
+// vanishes on the black search pane. Each source image is handled once; colourful icons come back as they are.
+internal sealed class RestIconConverter : IMultiValueConverter
+{
+	internal static readonly RestIconConverter Instance = new RestIconConverter();
+
+	public object Convert(object[] values, Type targetType, object parameter, System.Globalization.CultureInfo culture)
+	{
+		object inner = SeasonalIconConverter.Instance.Convert(values, targetType, parameter, culture);
+		return inner is ImageSource img ? Lift(img) : inner;
+	}
+
+	internal static ImageSource Lift(ImageSource img)
+	{
+		return DarkRestIcons.Visible(img);
+	}
+
+	public object[] ConvertBack(object value, Type[] targetTypes, object parameter, System.Globalization.CultureInfo culture)
+	{
+		throw new NotSupportedException();
 	}
 }

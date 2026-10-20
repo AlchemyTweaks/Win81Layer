@@ -25,6 +25,9 @@ public sealed class AppListItem : Button, IDisposable
 
 	private static readonly Pen CheckPen = FrozenPen(Color.FromRgb(255, 255, 255), 1.6);
 
+	// Dark rest: the check in the ink for accent fills, on the selection fill (4.5:1)
+	private static readonly Pen RestCheckPen = FrozenPen(DarkRestPalette.InkOnAccentColor, 1.6);
+
 	private static readonly ControlTemplate EmptyTemplate = new ControlTemplate(typeof(Button));
 
 	private static readonly Geometry CheckGeometry = BuildCheckGeometry();
@@ -43,6 +46,14 @@ public sealed class AppListItem : Button, IDisposable
 
 	// The ink the name was laid out with (the Start screen's "Start.Ink": white, or the softer Dark rest ink).
 	private Brush _textInk;
+
+	// The ink the "new" label was laid out with (Start.NewInk while Dark rest is on, the light blue otherwise).
+	private Brush _newInk;
+
+	// Dark rest's keyboard focus ring, built from Start.FocusRing (the resource exists only while Dark rest is on).
+	private Brush? _focusRingBrush;
+
+	private Pen? _focusRingPen;
 
 	public AppListItem(AppEntry entry, Brush hoverBrush, Brush accentBrush)
 	{
@@ -92,14 +103,23 @@ public sealed class AppListItem : Button, IDisposable
 		Rect bounds = new Rect(0.0, 0.0, 248.0, AppsColumnsPanel.ItemHeight);
 		if (_entry.IsSelected || IsMouseOver || IsKeyboardFocused || IsPressed)
 		{
-			drawingContext.DrawRectangle(_hoverBrush, IsKeyboardFocused ? FocusPen : null, bounds);
+			drawingContext.DrawRectangle(_hoverBrush, IsKeyboardFocused ? RestFocusPen() ?? FocusPen : null, bounds);
 		}
 
 		Rect iconTile = new Rect(6.0, (AppsColumnsPanel.ItemHeight - 32.0) / 2.0, 32.0, 32.0);
-		drawingContext.DrawRectangle(_entry.TileBrush, null, iconTile);
+		// Dark rest (the flags exist only while it is on): with dimmed tiles a solid plate is toned down like the Start
+		// tiles and any other plate gets the dimming scrim, below the icon; dark icons are lifted or outlined and every
+		// icon is drawn at the soft glyph opacity.
+		bool mute = TryFindResource("Start.TileMute") is true;
+		bool restIcons = TryFindResource("Start.RestIcons") is true;
+		drawingContext.DrawRectangle(mute && _entry.TileBrush is SolidColorBrush plate ? DarkRestPalette.MuteTileBrush(plate.Color) : _entry.TileBrush, null, iconTile);
+		if (mute && _entry.TileBrush is not SolidColorBrush && TryFindResource("Start.TileScrim") is Brush plateScrim)
+		{
+			drawingContext.DrawRectangle(plateScrim, null, iconTile);
+		}
 		if (_entry.IsOverrideIcon && _entry.OverrideBrush != null)
 		{
-			drawingContext.DrawRectangle(_entry.OverrideBrush, null, iconTile);
+			drawingContext.DrawRectangle(mute && _entry.OverrideBrush is SolidColorBrush over ? DarkRestPalette.MuteTileBrush(over.Color) : _entry.OverrideBrush, null, iconTile);
 		}
 		// A seasonal icon is drawn from its frame for this row's exact pixel size, so it stays sharp.
 		ImageSource icon = _entry.SeasonalKey is string seasonalKey
@@ -107,21 +127,29 @@ public sealed class AppListItem : Button, IDisposable
 			: _entry.Icon;
 		if (icon != null)
 		{
-			DrawIcon(drawingContext, icon, iconTile, _entry.IsOverrideIcon ? 32.0 : 24.0);
+			if (restIcons)
+			{
+				// an override's art is toned down with its dimmed plate, so it does not stand out as a vivid square
+				ImageSource shown = mute && _entry.IsOverrideIcon && _entry.OverrideBrush is SolidColorBrush brand && _entry.SeasonalKey == null
+					? DarkRestIcons.MutedArt(icon, brand.Color)
+					: DarkRestIcons.Visible(icon);
+				drawingContext.PushOpacity(DarkRestPalette.GlyphOpacity);
+				DrawIcon(drawingContext, shown, iconTile, _entry.IsOverrideIcon ? 32.0 : 24.0);
+				drawingContext.Pop();
+			}
+			else
+			{
+				DrawIcon(drawingContext, icon, iconTile, _entry.IsOverrideIcon ? 32.0 : 24.0);
+			}
 		}
 		else
 		{
 			// An app whose icon never resolved draws its initial instead of an empty slot.
-			IconResolver.DrawLetter(drawingContext, iconTile, _entry.Name, IconResolver.AccentFor(_entry.Name));
-		}
-		// Dark rest dims the icon tile a little, like the Start tiles (the resource exists only while it is on).
-		if (TryFindResource("Start.TileScrim") is Brush scrim)
-		{
-			drawingContext.DrawRectangle(scrim, null, iconTile);
+			IconResolver.DrawLetter(drawingContext, iconTile, _entry.Name, restIcons ? DarkRestPalette.MuteTile(IconResolver.AccentFor(_entry.Name)) : IconResolver.AccentFor(_entry.Name));
 		}
 
 		double pixelsPerDip = VisualTreeHelper.GetDpi(this).PixelsPerDip;
-		EnsureText(pixelsPerDip, TryFindResource("Start.Ink") as Brush ?? WhiteBrush);
+		EnsureText(pixelsPerDip, TryFindResource("Start.Ink") as Brush ?? WhiteBrush, TryFindResource("Start.NewInk") as Brush ?? NewBrush);
 		if (_nameText != null)
 		{
 			// Sit the name slightly ABOVE centre so a wrapped 2nd line has room to drop below (per user request).
@@ -139,14 +167,33 @@ public sealed class AppListItem : Button, IDisposable
 		}
 	}
 
-	private void EnsureText(double pixelsPerDip, Brush ink)
+	// A 1.5 DIU ring in the Dark rest accent line while Start.FocusRing exists; null otherwise (the normal pen is used).
+	private Pen? RestFocusPen()
 	{
-		if (_nameText != null && Math.Abs(_textPixelsPerDip - pixelsPerDip) < 0.01 && ReferenceEquals(ink, _textInk))
+		Brush? ring = TryFindResource("Start.FocusRing") as Brush;
+		if (ring == null)
+		{
+			return null;
+		}
+		if (!ReferenceEquals(ring, _focusRingBrush) || _focusRingPen == null)
+		{
+			Pen pen = new Pen(ring, 1.5);
+			pen.Freeze();
+			_focusRingBrush = ring;
+			_focusRingPen = pen;
+		}
+		return _focusRingPen;
+	}
+
+	private void EnsureText(double pixelsPerDip, Brush ink, Brush newInk)
+	{
+		if (_nameText != null && Math.Abs(_textPixelsPerDip - pixelsPerDip) < 0.01 && ReferenceEquals(ink, _textInk) && ReferenceEquals(newInk, _newInk))
 		{
 			return;
 		}
 		_textPixelsPerDip = pixelsPerDip;
 		_textInk = ink;
+		_newInk = newInk;
 		_nameText = new FormattedText(_entry.Name, CultureInfo.CurrentUICulture, FlowDirection.LeftToRight,
 			NameTypeface, 14.0, ink, pixelsPerDip)
 		{
@@ -155,7 +202,7 @@ public sealed class AppListItem : Button, IDisposable
 			Trimming = TextTrimming.CharacterEllipsis
 		};
 		_newText = new FormattedText("new", CultureInfo.CurrentUICulture, FlowDirection.LeftToRight,
-			NewTypeface, 11.0, NewBrush, pixelsPerDip)
+			NewTypeface, 11.0, newInk, pixelsPerDip)
 		{
 			MaxTextWidth = 36.0,
 			MaxLineCount = 1,
@@ -192,8 +239,9 @@ public sealed class AppListItem : Button, IDisposable
 	private void DrawSelectionCheck(DrawingContext drawingContext)
 	{
 		Rect check = new Rect(222.0, 3.0, 20.0, 20.0);
-		drawingContext.DrawRectangle(_accentBrush, null, check);
-		drawingContext.DrawGeometry(null, CheckPen, CheckGeometry);
+		bool rest = TryFindResource("Start.RestIcons") is true;
+		drawingContext.DrawRectangle(rest ? DarkRestPalette.AccentFill : _accentBrush, null, check);
+		drawingContext.DrawGeometry(null, rest ? RestCheckPen : CheckPen, CheckGeometry);
 	}
 
 	private void OnEntryPropertyChanged(object? sender, PropertyChangedEventArgs e)

@@ -557,6 +557,16 @@ public partial class Win81Window : Window, IComponentConnector
 			BuildAeroPalette(accent);
 			base.Resources["WindowAccent"] = _active;
 			bool glass = ShellSkin.OwnedAeroOn && !_explorerChrome81;
+			// Dark rest: the accent caption with soft ink while active; a quiet near-black caption while inactive (the
+			// lightened accent would be a light bar on a black screen).
+			bool restCaption = !glass && DarkRest.Visuals;
+			if (restCaption)
+			{
+				_inactive = (SolidColorBrush)DarkRestPalette.CaptionInactive;
+				_activeText = DarkRestPalette.Ink;
+				_inactiveText = (SolidColorBrush)DarkRestPalette.Ink2;
+			}
+			ApplyRestCloseButton(restCaption);
 			// Dark rest keeps the accent caption: the white 8.1 caption would glare.
 			bool light81 = !glass && SettingsStore.Current.Win81LightCaption && !_explorerChrome81 && !DarkRest.Visuals;
 			if (glass)
@@ -575,7 +585,7 @@ public partial class Win81Window : Window, IComponentConnector
 			}
 			else
 			{
-				base.Resources["CaptionInk"] = ColorMath.Frozen(ColorMath.ReadableInk(accent));
+				base.Resources["CaptionInk"] = restCaption ? DarkRestPalette.Ink : ColorMath.Frozen(ColorMath.ReadableInk(accent));
 				base.Resources["CaptionHover"] = ColorMath.Frozen(Color.FromArgb(34, 0, 0, 0));
 				base.Resources["CaptionPress"] = ColorMath.Frozen(Color.FromArgb(58, 0, 0, 0));
 			}
@@ -584,6 +594,86 @@ public partial class Win81Window : Window, IComponentConnector
 		catch
 		{
 		}
+	}
+
+	// The window's own close button colours (declared in the XAML), kept so Normal puts back the very same brushes.
+	private object[] _closeNormal;
+
+	private static readonly string[] CloseKeys = new string[4] { "Caption.CloseFill", "Caption.CloseHover", "Caption.ClosePress", "Caption.CloseInk" };
+
+	// Dark rest: the red close button muted like the other tile colours (its hover and press a little lighter), soft ink
+	// for its glyph, and the white caption icon at the soft ink's brightness.
+	private static readonly Brush[] CloseRest = new Brush[4]
+	{
+		ColorMath.Frozen(Color.FromRgb(0x5A, 0x3E, 0x3D)),
+		ColorMath.Frozen(Color.FromRgb(0x73, 0x4D, 0x4B)),
+		ColorMath.Frozen(Color.FromRgb(0x8A, 0x5C, 0x5A)),
+		DarkRestPalette.Ink
+	};
+
+	private void ApplyRestCloseButton(bool rest)
+	{
+		try
+		{
+			if (_closeNormal == null)
+			{
+				_closeNormal = new object[CloseKeys.Length];
+				for (int i = 0; i < CloseKeys.Length; i++)
+				{
+					_closeNormal[i] = base.Resources[CloseKeys[i]];
+				}
+			}
+			for (int i = 0; i < CloseKeys.Length; i++)
+			{
+				object want = rest ? CloseRest[i] : _closeNormal[i];
+				if (want != null && !ReferenceEquals(base.Resources[CloseKeys[i]], want))
+				{
+					base.Resources[CloseKeys[i]] = want;
+				}
+			}
+			CaptionIcon.Opacity = rest ? DarkRestPalette.GlyphOpacity : 1.0;
+		}
+		catch
+		{
+		}
+	}
+
+	// QA: the caption colours as set now (fill and title ink, active and inactive).
+	internal (Color Active, Color Inactive, Color ActiveText, Color InactiveText) QaCaptionColors()
+	{
+		return (_active.Color, _inactive.Color, (_activeText as SolidColorBrush)?.Color ?? Colors.Transparent, _inactiveText.Color);
+	}
+
+	// QA: the caption bar rendered active and inactive, one above the other (the window is never shown).
+	internal void QaRenderCaption(string outPath, double width)
+	{
+		FrameworkElement root = (FrameworkElement)Content;
+		System.Windows.Media.Imaging.RenderTargetBitmap[] shots = new System.Windows.Media.Imaging.RenderTargetBitmap[2];
+		for (int i = 0; i < 2; i++)
+		{
+			ApplyState(i == 0);
+			root.Measure(new Size(width, 120.0));
+			root.Arrange(new Rect(0.0, 0.0, width, 120.0));
+			root.UpdateLayout();
+			double h = Math.Max(24.0, Math.Ceiling(TitleBar.ActualHeight + TitleBar.TranslatePoint(new Point(0.0, 0.0), root).Y));
+			System.Windows.Media.Imaging.RenderTargetBitmap rtb = new System.Windows.Media.Imaging.RenderTargetBitmap((int)width, (int)h, 96.0, 96.0, PixelFormats.Pbgra32);
+			rtb.Render(root);
+			shots[i] = rtb;
+		}
+		DrawingVisual dv = new DrawingVisual();
+		int total = shots[0].PixelHeight + shots[1].PixelHeight + 8;
+		using (DrawingContext dc = dv.RenderOpen())
+		{
+			dc.DrawRectangle(Brushes.Black, null, new Rect(0.0, 0.0, width, total));
+			dc.DrawImage(shots[0], new Rect(0.0, 0.0, shots[0].PixelWidth, shots[0].PixelHeight));
+			dc.DrawImage(shots[1], new Rect(0.0, shots[0].PixelHeight + 8, shots[1].PixelWidth, shots[1].PixelHeight));
+		}
+		System.Windows.Media.Imaging.RenderTargetBitmap all = new System.Windows.Media.Imaging.RenderTargetBitmap((int)width, total, 96.0, 96.0, PixelFormats.Pbgra32);
+		all.Render(dv);
+		System.Windows.Media.Imaging.PngBitmapEncoder enc = new System.Windows.Media.Imaging.PngBitmapEncoder();
+		enc.Frames.Add(System.Windows.Media.Imaging.BitmapFrame.Create(all));
+		using System.IO.FileStream fs = System.IO.File.Create(outPath);
+		enc.Save(fs);
 	}
 
 	private void ApplyState(bool active)

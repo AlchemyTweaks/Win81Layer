@@ -34,6 +34,8 @@ internal static partial class SeasonalDiagnostics
 		string outDir = (idx >= 0 && idx + 1 < args.Length && !args[idx + 1].StartsWith("--", StringComparison.Ordinal))
 			? args[idx + 1]
 			: Path.Combine(Root, "qa", "seasonal");
+		int pic = Array.IndexOf(args, "--restpicture");
+		RestPictureArg = pic >= 0 && pic + 1 < args.Length ? args[pic + 1] : null;
 		app.Dispatcher.BeginInvoke((Action)delegate
 		{
 			int code = 1;
@@ -63,12 +65,18 @@ internal static partial class SeasonalDiagnostics
 		AppSettings real = SettingsStore.Load();
 		try
 		{
+			PrepareRestFixtures(outDir);
+			// Start prepares the Dark rest picture for the screen size; pinned so the renders do not depend on this PC.
+			StartScreen.QaRestScreenPixels = (1920, 1080);
 			SafetyChecks(outDir);
 			EngineChecks();
 			RestEngineChecks();
+			UltraDarkPureChecks(outDir);
 			RestPureChecks(real);
 			ArtChecks(outDir);
+			SeasonalArt.DiagnosticsPictureDir = _fixtureEmpty;
 			RestArtChecks(outDir);
+			SeasonalArt.DiagnosticsPictureDir = null;
 			LiveChecks(outDir, real);
 		}
 		catch (Exception ex)
@@ -82,7 +90,12 @@ internal static partial class SeasonalDiagnostics
 			SeasonalTheme.DiagnosticsOwnsWallpaper = null;
 			SeasonalTheme.DiagnosticsOwnsWindowsTheme = null;
 			SeasonalTheme.DiagnosticsOriginal = null;
+			SeasonalArt.DiagnosticsPictureDir = null;
+			StartScreen.QaRestScreenPixels = null;
+			ShellLookLink.QaKnownFolderFound = null;
+			ShellLookLink.QaFailBeforeMove = false;
 			Motion.CalmOverride = false;
+			ShellTheme.SyncRest();
 			TaskbarTheme.Invalidate();
 		}
 		Baseline after = Baseline.Capture();
@@ -90,19 +103,32 @@ internal static partial class SeasonalDiagnostics
 		Check("no-wallpaper-change", before.Wallpaper == after.Wallpaper && before.Registry == after.Registry, $"before={before.Wallpaper} after={after.Wallpaper}");
 		Check("no-seasonal-folder-files", before.SeasonalFolder == after.SeasonalFolder, $"before={before.SeasonalFolder} after={after.SeasonalFolder}");
 		Check("no-theme-change", before.Theme == after.Theme && before.Theme.Length > 0, $"before={before.Theme} after={after.Theme}");
+		Check("no-extension-link-write", before.ExtensionLink == after.ExtensionLink, $"before={before.ExtensionLink} after={after.ExtensionLink}");
 		string[] pngs = Directory.GetFiles(outDir, "*.png");
-		string[] expected = new string[45]
+		string[] expected = new string[71]
 		{
 			"wallpaper-halloween.png", "wallpaper-christmas.png", "wallpaper-christmas-1280x1024.png", "wallpaper-halloween-1280x1024.png", "patterns.png", "designs-thumbs.png",
 			"start-halloween.png", "start-christmas.png", "personalize-halloween.png", "ambient-bats.png", "ambient-snow.png", "actioncenter-halloween.png", "actioncenter-christmas.png",
 			"taskbar-halloween.png", "taskbar-christmas.png", "win7glass-halloween.png", "win7glass-christmas.png", "pcsettings-seasonal-halloween.png", "personalize-christmas.png",
 			"pcsettings-startscreen-christmas.png", "start-normal.png", "wallpaper-halloween-2560x1080.png", "start-before.png", "actioncenter-normal.png", "taskbar-normal.png",
-			"wallpaper-rest.png", "wallpaper-rest-1280x1024.png", "pattern-dusk.png", "start-rest.png", "start-rest-apps.png", "personalize-rest.png", "taskbar-rest.png",
+			"wallpaper-rest.png", "wallpaper-rest-1280x1024.png", "pattern-nightgrid.png", "start-rest.png", "start-rest-apps.png", "personalize-rest.png", "taskbar-rest.png",
 			"flyout-clock-rest.png", "flyout-volume-rest.png", "flyout-network-rest.png", "actioncenter-rest.png", "searchpane-rest.png", "settingspane-rest.png", "charms-rest.png",
-			"toast-rest.png", "osd-rest.png", "switcher-rest.png", "win7start-rest.png", "pcsettings-rest-launcher.png", "pcsettings-rest-devices.png"
+			"toast-rest.png", "osd-rest.png", "switcher-rest.png", "win7start-rest.png", "pcsettings-rest-launcher.png", "pcsettings-rest-devices.png",
+			"start-rest-picture.png", "start-rest-zoom.png", "pcsettings-rest-launcher-picture.png", "contextmenu-rest.png", "controls-rest.png", "caption-rest.png", "tooltip-rest.png",
+			"pointer-rest.png", "contextmenu-normal-before.png", "controls-normal-before.png", "caption-normal-before.png", "charmsclock-rest.png",
+			"share-rest.png", "devices-rest.png", "search-rest-calc.png", "searchscope-rest.png", "settings-power-rest.png", "toast-rest-icon.png",
+			"actioncenter-rest-notifications.png", "start-rest-appbar.png", "contextmenu-toggles-rest.png", "combo-rest.png", "switcher-rest-selected.png",
+			"share-normal-before.png", "powerflyout-normal-before.png", "searchpane-built-in-rest-normal.png"
 		};
-		// The toast and the OSD are small cards.
-		HashSet<string> small = new HashSet<string>(StringComparer.Ordinal) { "toast-rest.png", "osd-rest.png" };
+		// The toast, the OSD, the tooltip, the caption strips, the menu, the pointers, the charms clock (its size follows the date and time it shows)
+		// and the near-black pattern are small.
+		HashSet<string> small = new HashSet<string>(StringComparer.Ordinal)
+		{
+			"toast-rest.png", "osd-rest.png", "tooltip-rest.png", "caption-rest.png", "caption-normal-before.png", "pointer-rest.png", "contextmenu-rest.png",
+			"contextmenu-normal-before.png", "pattern-nightgrid.png", "charmsclock-rest.png", "toast-rest-icon.png", "searchscope-rest.png", "settings-power-rest.png",
+			"contextmenu-toggles-rest.png", "combo-rest.png", "powerflyout-normal-before.png", "share-normal-before.png", "share-rest.png", "devices-rest.png",
+			"searchpane-built-in-rest-normal.png"
+		};
 		List<string> missing = expected.Where(n => !File.Exists(Path.Combine(outDir, n)) || new FileInfo(Path.Combine(outDir, n)).Length <= (small.Contains(n) ? 1024 : 10240)).ToList();
 		Check("renders-present", missing.Count == 0, missing.Count == 0 ? $"{expected.Length} renders" : "missing or small: " + string.Join(", ", missing));
 		Metrics["Renders"] = pngs.Select(Path.GetFileName).ToArray();
@@ -345,15 +371,21 @@ internal static partial class SeasonalDiagnostics
 			return snapshot;
 		}
 
+		// Dark rest's prepared file when the user has a picture for it (null: the drawn scene).
+		public string? PictureName;
+
+		// Light/dark writes (SetWindowsDark and RestoreWindowsTheme), counted on their own.
+		public int ThemeWrites;
+
 		// Drawing the picture into the launcher's own folder is not a change to the user's state, so it is not a write.
 		public string ExpectedWallpaperName(string art)
 		{
-			return SeasonalArt.WallpaperFileName(art, 1920, 1080);
+			return art == SeasonalArt.RestArt && PictureName != null ? PictureName : SeasonalArt.WallpaperFileName(art, 1920, 1080);
 		}
 
 		public string? PrepareWallpaperFile(string art)
 		{
-			string path = Folder + SeasonalArt.WallpaperFileName(art, 1920, 1080);
+			string path = Folder + ExpectedWallpaperName(art);
 			Files.Add(path);
 			return path;
 		}
@@ -369,6 +401,20 @@ internal static partial class SeasonalDiagnostics
 				m.Path = path;
 			}
 			SetPosition(4);
+			Landed();
+			return true;
+		}
+
+		public bool SetWallpaperOn(IReadOnlyCollection<string> monitorIds, string path)
+		{
+			if (FailSetWallpaper)
+			{
+				return false;
+			}
+			foreach (MonitorWallpaper m in Monitors.Where(m => monitorIds.Contains(m.MonitorId)))
+			{
+				m.Path = path;
+			}
 			Landed();
 			return true;
 		}
@@ -450,6 +496,7 @@ internal static partial class SeasonalDiagnostics
 			}
 			Apps = Dw(WindowsThemeMode.AppsName, "0");
 			Sys = Dw(WindowsThemeMode.SystemName, "0");
+			ThemeWrites++;
 			Landed();
 			return true;
 		}
@@ -472,6 +519,7 @@ internal static partial class SeasonalDiagnostics
 			{
 				Sys = original.SystemUsesLightTheme?.Clone();
 			}
+			ThemeWrites += written;
 			Landed();
 			return WindowsThemeMode.Outcome(written, kept);
 		}
@@ -1450,6 +1498,9 @@ internal static partial class SeasonalDiagnostics
 		// The raw Windows light/dark values (kind and data, or absent).
 		public string Theme = "";
 
+		// The Metro Tab extension's shell-look.json as found next to this launcher (or under the settings override).
+		public string ExtensionLink = "";
+
 		public static Baseline Capture()
 		{
 			Baseline b = new Baseline();
@@ -1481,6 +1532,19 @@ internal static partial class SeasonalDiagnostics
 			catch (Exception ex)
 			{
 				b.Theme = "error:" + ex.Message;
+			}
+			try
+			{
+				AppSettings s = SettingsStore.Load();
+				string? folder = ShellLookLink.FindExtensionFolder(s, AppContext.BaseDirectory);
+				string file = folder == null ? "" : Path.Combine(folder, ShellLookLink.FileName);
+				b.ExtensionLink = folder == null ? "(none)" : (File.Exists(file)
+					? $"{file}:{new FileInfo(file).Length}:{File.GetLastWriteTimeUtc(file).Ticks}:{Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(file)))[..16]}"
+					: file + ":absent") + ":" + string.Join(",", Directory.GetFiles(folder!).Select(Path.GetFileName).OrderBy(n => n, StringComparer.Ordinal));
+			}
+			catch (Exception ex)
+			{
+				b.ExtensionLink = "error:" + ex.Message;
 			}
 			b.SeasonalFolder = Directory.Exists(SeasonalArt.SeasonalDir)
 				? string.Join(";", Directory.GetFiles(SeasonalArt.SeasonalDir).OrderBy(f => f).Select(f => Path.GetFileName(f) + ":" + new FileInfo(f).Length + ":" + File.GetLastWriteTimeUtc(f).Ticks))

@@ -2,10 +2,12 @@
 <Window x:Class="Win81Layer.CharmsBar" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="Charms" Width="90" WindowStyle="None" ResizeMode="NoResize" ShowInTaskbar="False" AllowsTransparency="True" Background="#00FFFFFF" Topmost="True" xmlns:win81layer="clr-namespace:Win81Layer;assembly=Win81Layer" Deactivated="OnDeactivated" PreviewKeyDown="OnPreviewKeyDown" MouseLeave="OnMouseLeave">
   <FrameworkElement.Resources>
     <ResourceDictionary>
+      <!-- The charm glyphs and labels. Dark rest swaps in its soft ink in code (CharmsBar.ApplyCharmInk). -->
+      <SolidColorBrush x:Key="Charm.Ink" Color="#FFFFFFFF" />
       <Style x:Key="Charm" TargetType="{x:Type Button}">
         <Setter Property="Height" Value="96" />
         <Setter Property="FrameworkElement.Cursor" Value="Hand" />
-        <Setter Property="Foreground" Value="#FFFFFFFF" />
+        <Setter Property="Foreground" Value="{DynamicResource Charm.Ink}" />
         <Setter Property="FrameworkElement.FocusVisualStyle" Value="{x:Null}" />
         <Setter Property="Template">
           <Setter.Value>
@@ -17,7 +19,7 @@
                       <ImageBrush Stretch="Uniform" ImageSource="{Binding Tag, RelativeSource={RelativeSource TemplatedParent}}" />
                     </UIElement.OpacityMask>
                   </Rectangle>
-                  <TextBlock Text="{TemplateBinding ContentControl.Content}" FontFamily="Segoe UI Light" FontSize="13" Foreground="#FFFFFFFF" HorizontalAlignment="Center" Margin="0,7,0,0" />
+                  <TextBlock Text="{TemplateBinding ContentControl.Content}" FontFamily="Segoe UI Light" FontSize="13" Foreground="{DynamicResource Charm.Ink}" HorizontalAlignment="Center" Margin="0,7,0,0" />
                 </StackPanel>
               </Border>
               <ControlTemplate.Triggers>
