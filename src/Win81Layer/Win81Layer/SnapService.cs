@@ -93,11 +93,13 @@ internal static class SnapService
 				int ny = twa.Top + (int)Math.Round(fy * (double)twa.Height);
 				int nw = Math.Max(1, (int)Math.Round(fw * (double)twa.Width));
 				int nh = Math.Max(1, (int)Math.Round(fh * (double)twa.Height));
-				ShowWindow(h, 9);
-				SetWindowPos(h, IntPtr.Zero, nx, ny, nw, nh, 20u);
+				// Queued to the window's own thread, in order (restore, move, maximize again): never a wait on the app,
+				// and made even while the app is busy (it applies them when it answers again).
+				ShowWindowAsync(h, 9);
+				SetWindowPos(h, IntPtr.Zero, nx, ny, nw, nh, 20u | SnapZones.SWP_ASYNCWINDOWPOS);
 				if (wasMax)
 				{
-					ShowWindow(h, 3);
+					ShowWindowAsync(h, 3);
 				}
 				uint dpi = GetDpiForWindow(h);
 				double sc = ((dpi == 0) ? 1.0 : ((double)dpi / 96.0));
@@ -151,7 +153,7 @@ internal static class SnapService
 	private static extern bool IsZoomed(nint h);
 
 	[DllImport("user32.dll")]
-	private static extern bool ShowWindow(nint h, int n);
+	private static extern bool ShowWindowAsync(nint h, int n);
 
 	[DllImport("user32.dll")]
 	private static extern bool SetWindowPos(nint h, nint after, int x, int y, int cx, int cy, uint flags);

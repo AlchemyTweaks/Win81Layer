@@ -1045,7 +1045,7 @@ public sealed partial class ActionCenter
 		{
 			if (!base.IsVisible) Show();
 			base.Left = _finalLeft;
-			// Robustly take the real foreground (AttachThreadInput + SetForegroundWindow), like the Start screen. Plain
+			// Robustly take the real foreground (WindowUtil.ForceForeground, never attaching this thread), like Start. Plain
 			// Activate() is subject to Windows' foreground-lock and INTERMITTENTLY leaves the flyout visible-but-inactive,
 			// so the FIRST click on a slider/tile only activates the window (gets eaten) and needs a second click.
 			WindowUtil.ForceForeground(this);

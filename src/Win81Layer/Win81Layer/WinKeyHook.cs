@@ -286,6 +286,24 @@ public sealed class WinKeyHook : IDisposable
 
 	public event Action<int, int, int>? GlobalRightDown;
 
+	// The foreground window at the moment of the last left press anywhere, stamped in the hook before the press is
+	// delivered. A taskbar click decides minimize vs activate from it, as Explorer decides from the window that was
+	// active when the button went down (a light dismiss on press can hand the foreground back before the release).
+	internal sealed class PressStamp
+	{
+		public readonly nint Foreground;
+
+		public readonly long Tick;
+
+		public PressStamp(nint foreground, long tick)
+		{
+			Foreground = foreground;
+			Tick = tick;
+		}
+	}
+
+	internal static volatile PressStamp? LastLeftPress;
+
 	// Left-button up + mouse move, surfaced ONLY while TrackMouseDrag is set (the charms edge-pull gesture arms it on
 	// an edge mouse-down and clears it on release), so there is zero per-move overhead when no gesture is in progress.
 	public event Action<int, int>? GlobalLeftUp;
@@ -676,6 +694,11 @@ public sealed class WinKeyHook : IDisposable
 			MSLLHOOKSTRUCT info = Marshal.PtrToStructure<MSLLHOOKSTRUCT>(lParam);
 			if (info.dwExtraInfo != MagicExtra)
 			{
+				if (wm == WM_LBUTTONDOWN)
+				{
+					// Before the press is delivered and before any light dismiss runs (both can move the foreground).
+					LastLeftPress = new PressStamp(GetForegroundWindow(), Environment.TickCount64);
+				}
 				int x = info.ptX;
 				int y = info.ptY;
 				if (wm == WM_MOUSEWHEEL)

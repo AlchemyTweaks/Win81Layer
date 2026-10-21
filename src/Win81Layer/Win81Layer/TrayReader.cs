@@ -120,7 +120,7 @@ public static class TrayReader
 	private static extern bool PostMessage(nint hWnd, uint msg, nint wParam, nint lParam);
 
 	[DllImport("user32.dll")]
-	private static extern bool SetForegroundWindow(nint hWnd);
+	private static extern bool SendNotifyMessage(nint hWnd, uint msg, nint wParam, nint lParam);
 
 	[DllImport("user32.dll")]
 	private static extern bool AllowSetForegroundWindow(uint pid);
@@ -131,14 +131,8 @@ public static class TrayReader
 	[DllImport("user32.dll")]
 	private static extern bool GetCursorPos(out POINT pt);
 
-	[DllImport("user32.dll")]
-	private static extern nint GetForegroundWindow();
-
 	[DllImport("kernel32.dll")]
 	private static extern uint GetCurrentThreadId();
-
-	[DllImport("user32.dll")]
-	private static extern bool AttachThreadInput(uint a, uint b, bool attach);
 
 	private static nint Query(nint hWnd, uint msg, nint wParam, nint lParam)
 	{
@@ -181,67 +175,110 @@ public static class TrayReader
 		}
 	}
 
-	public static void ForwardClick(nint ownerHwnd, uint callbackMessage, uint id, bool right, uint version = 0, bool dbl = false)
+	// Set by --traytest: deliver without granting the foreground (its targets are test windows in this process).
+	internal static bool DiagnosticsNoForeground;
+
+	public static (int X, int Y) CursorPosition()
 	{
-		if (!IsWindow(ownerHwnd))
-		{
-			return;
-		}
-		if (callbackMessage == 0)
-		{
-			// The icon never registered NIF_MESSAGE (or the host lost it): PostMessage(hwnd, 0, ...) is WM_NULL — a silent
-			// no-op, which is exactly the "right-click does nothing" symptom. Log it instead of failing invisibly.
-			Logger.Log($"[tray] ForwardClick skipped: no callback message (owner=0x{ownerHwnd.ToInt64():X} id={id})");
-			return;
-		}
-		// Bring the owner to the foreground first so the app is allowed to show its own window / menu.
-		AllowSetForegroundWindow(uint.MaxValue);
-		uint thisThread = GetCurrentThreadId();
-		uint fgThread = GetWindowThreadProcessId(GetForegroundWindow(), out var _);
-		bool att = fgThread != 0 && fgThread != thisThread && AttachThreadInput(fgThread, thisThread, attach: true);
-		SetForegroundWindow(ownerHwnd);
-		if (att)
-		{
-			AttachThreadInput(fgThread, thisThread, attach: false);
-		}
 		GetCursorPos(out var pt);
-		// CRITICAL: send exactly ONE convention, chosen by the version the icon registered. Real Explorer never mixes
-		// the two. Posting BOTH a legacy WM_LBUTTONUP and a v4 NIN_SELECT makes apps that keep both handlers wired to
-		// the same "toggle window" action (MemReduct and other routine.dll / classic tray apps) toggle TWICE — the
-		// window shows then immediately hides — so the click appears to do nothing.
-		if (version >= 4u)
-		{
-			// NOTIFYICON_VERSION_4: wParam = anchor (x,y), lParam = MAKELONG(event, uID). A single activation message;
-			// v4 has no separate double-click — a double-click still activates once.
-			uint evt4 = (right ? 123u /*WM_CONTEXTMENU*/ : 1024u /*NIN_SELECT*/);
-			PostMessage(ownerHwnd, callbackMessage, MakeLong(pt.X, pt.Y), MakeLong((int)evt4, (int)id));
-		}
-		else
-		{
-			// Legacy (< v4): wParam = uID, lParam = the raw mouse message. A single button sequence, no NIN_SELECT.
-			uint down = (right ? 516u : 513u);   // WM_?BUTTONDOWN
-			uint up = (right ? 517u : 514u);     // WM_?BUTTONUP
-			PostMessage(ownerHwnd, callbackMessage, (nint)id, 512);        // WM_MOUSEMOVE
-			PostMessage(ownerHwnd, callbackMessage, (nint)id, (nint)down);
-			if (dbl && !right)
-			{
-				PostMessage(ownerHwnd, callbackMessage, (nint)id, 515);    // WM_LBUTTONDBLCLK (some legacy apps open only on this)
-			}
-			PostMessage(ownerHwnd, callbackMessage, (nint)id, (nint)up);
-			if (right)
-			{
-				// Many icons show their context menu ONLY on WM_CONTEXTMENU, never on WM_RBUTTONUP: NOTIFYICON_VERSION 3
-				// apps, and any v4 icon whose version we failed to capture (routed here as legacy). Post it too, RIGHT-CLICK
-				// ONLY, so the menu actually appears — an app that already opened its menu on RBUTTONUP just ignores the
-				// duplicate. Never do this for LEFT-click: a second message double-toggles window-toggling apps (MemReduct).
-				PostMessage(ownerHwnd, callbackMessage, (nint)id, (nint)WM_CONTEXTMENU);
-			}
-		}
+		return (pt.X, pt.Y);
 	}
 
-	private static nint MakeLong(int lo, int hi)
+	// Sends one gesture to an icon's callback exactly as Explorer does for the icon's version (TrayProtocol), and
+	// nothing else. Like Explorer, it only passes on the right to set the foreground (AllowSetForegroundWindow for the
+	// owner's process, which we hold because the user just clicked our window) and lets the app call
+	// SetForegroundWindow itself before it opens its menu. It never activates the owner (often an invisible window, and
+	// toggle-style apps then see themselves as already in front and hide instead of show), never grants the right to
+	// every process, and never attaches to another thread's input. Delivery never blocks: SendNotifyMessage returns at
+	// once for a window of another thread (and is processed even inside the app's own modal loops, as Explorer's is);
+	// a window of this thread gets PostMessage so its handler cannot run inside our click handler.
+	// versionKnown: false when the icon came from the legacy toolbar source, which reads no version
+	// (TrayProtocol.EventsUnknownVersion). Returns the number of messages sent.
+	internal static int Forward(nint ownerHwnd, uint callbackMessage, uint id, uint version, TrayEvent ev, int x, int y, bool versionKnown = true)
 	{
-		return (hi << 16) | (lo & 0xFFFF);
+		if (callbackMessage == 0 || ownerHwnd == IntPtr.Zero || !IsWindow(ownerHwnd))
+		{
+			return 0;
+		}
+		List<TrayMessage> msgs = versionKnown
+			? TrayProtocol.Build(version, id, ev, x, y)
+			: TrayProtocol.BuildUnknownVersion(id, ev, TrayHostService.IsChromiumFamilyWindow(ownerHwnd));
+		uint tid = GetWindowThreadProcessId(ownerHwnd, out var pid);
+		if (ev != TrayEvent.Hover && pid != 0 && pid != (uint)Environment.ProcessId && !DiagnosticsNoForeground)
+		{
+			AllowSetForegroundWindow(pid);
+		}
+		bool sameThread = tid == GetCurrentThreadId();
+		int sent = 0;
+		foreach (TrayMessage m in msgs)
+		{
+			bool ok = sameThread
+				? PostMessage(ownerHwnd, callbackMessage, m.WParam, m.LParam)
+				: SendNotifyMessage(ownerHwnd, callbackMessage, m.WParam, m.LParam);
+			if (ok)
+			{
+				sent++;
+			}
+		}
+		return sent;
+	}
+
+	internal enum Delivery
+	{
+		// Sent with the icon's own callback message.
+		Sent,
+		// The icon had no callback; sent with the framework's known callback (Electron / Chromium) and repair requested.
+		Guessed,
+		// The icon had no callback; the owner was asked to re-register. The caller may retry once the icon is back.
+		Recovering,
+		// Nothing to do (hover without a callback, owner gone).
+		Dropped
+	}
+
+	private static readonly Dictionary<nint, long> NoCallbackLogged = new Dictionary<nint, long>();
+
+	// A gesture for an icon that may have lost its callback message (its NIM_ADD never reached us). Instead of a silent
+	// no-op: ask the owner to re-register (a targeted TaskbarCreated, which every common framework answers by adding its
+	// icons again with NIF_MESSAGE), and for the two frameworks whose callback is a fixed constant, deliver this click
+	// with it so the click still works now.
+	internal static Delivery Deliver(nint ownerHwnd, uint callbackMessage, uint id, uint version, TrayEvent ev, int x, int y, bool versionKnown = true)
+	{
+		if (callbackMessage != 0)
+		{
+			Forward(ownerHwnd, callbackMessage, id, version, ev, x, y, versionKnown);
+			return Delivery.Sent;
+		}
+		if (ev == TrayEvent.Hover || ownerHwnd == IntPtr.Zero || !IsWindow(ownerHwnd))
+		{
+			return Delivery.Dropped;
+		}
+		bool nudged = TrayHostService.RequestNudge(ownerHwnd, TrayHostService.NudgeReason.Click);
+		uint guess = TrayHostService.GuessCallback(ownerHwnd, out string cls);
+		long now = Environment.TickCount64;
+		bool log;
+		lock (NoCallbackLogged)
+		{
+			log = !NoCallbackLogged.TryGetValue(ownerHwnd, out long last) || now - last > 60000;
+			if (log)
+			{
+				NoCallbackLogged[ownerHwnd] = now;
+			}
+		}
+		if (guess != 0)
+		{
+			// The framework's icons are version 0 (it never sends NIM_SETVERSION).
+			Forward(ownerHwnd, guess, id, 0u, ev, x, y);
+			if (log)
+			{
+				Logger.Log($"[tray] icon without callback (owner=0x{(long)ownerHwnd:X} class={cls} id={id}): sent {ev} with the {cls} callback 0x{guess:X}; re-registration requested={nudged}");
+			}
+			return Delivery.Guessed;
+		}
+		if (log)
+		{
+			Logger.Log($"[tray] icon without callback (owner=0x{(long)ownerHwnd:X} class={cls} id={id}): {ev} held until it re-registers; re-registration requested={nudged}");
+		}
+		return Delivery.Recovering;
 	}
 
 	[DllImport("kernel32.dll")]

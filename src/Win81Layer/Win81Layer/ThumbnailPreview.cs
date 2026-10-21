@@ -215,7 +215,8 @@ public partial class ThumbnailPreview : Window, IComponentConnector
 				RequestHide?.Invoke();
 			};
 			cell.Children.Add(box);
-			GlobalSystemMediaTransportControlsSession session = MediaControls.ForApp(WindowList.GetExePath(it.Hwnd));
+			// The media session lookup goes out of process (the system media broker): bounded, never a wait on the broker.
+			(GlobalSystemMediaTransportControlsSession session, bool playing) = MediaControls.LookupBounded(WindowList.GetExePath(it.Hwnd), 150);
 			if ((object)session != null)
 			{
 				StackPanel row = new StackPanel
@@ -228,7 +229,7 @@ public partial class ThumbnailPreview : Window, IComponentConnector
 				{
 					MediaControls.Previous(session);
 				};
-				System.Windows.Controls.Button play = Media(MediaControls.Playing(session) ? "\ue769" : "\ue768");
+				System.Windows.Controls.Button play = Media(playing ? "\ue769" : "\ue768");
 				play.FontSize = 17.0;
 				play.Click += delegate
 				{

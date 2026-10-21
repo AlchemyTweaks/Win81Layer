@@ -180,6 +180,14 @@ internal sealed class SnapDivider : Window
 			SnapManager.DropPair(_wa);
 			return;
 		}
+		// This runs from a timer, with no input, and only ever queues the minimize / restore to the window's own thread
+		// (ShowWindowAsync), so a snapped app that stops answering cannot freeze the shell. While one of the pair is
+		// flagged as hung its state cannot change: leave the pair as it is and look again on the next tick (queuing a
+		// restore every tick would pile up, and dropping the pair would lose the snap over a busy moment).
+		if (IsHungAppWindow(_left) || IsHungAppWindow(_right))
+		{
+			return;
+		}
 		bool lMin = IsIconic(_left);
 		bool rMin = IsIconic(_right);
 		if (lMin & rMin)
@@ -195,10 +203,10 @@ internal sealed class SnapDivider : Window
 		{
 			if (_parked)
 			{
-				ShowWindow(lMin ? _left : _right, 9);
+				ShowWindowAsync(lMin ? _left : _right, 9);
 				return;
 			}
-			ShowWindow(lMin ? _right : _left, 6);
+			ShowWindowAsync(lMin ? _right : _left, 6);
 			_parked = true;
 			if (base.IsVisible)
 			{
@@ -244,8 +252,10 @@ internal sealed class SnapDivider : Window
 		if (_dragging && e.LeftButton == MouseButtonState.Pressed)
 		{
 			int x = Math.Clamp(System.Windows.Forms.Cursor.Position.X, _wa.Left + 320, _wa.Right - 320);
-			SetWindowPos(_left, IntPtr.Zero, _wa.Left, _wa.Top, x - _wa.Left, _wa.Height, 20u);
-			SetWindowPos(_right, IntPtr.Zero, x, _wa.Top, _wa.Right - x, _wa.Height, 20u);
+			// Queued to each app's own thread: a drag never waits on either app (a busy one catches up, ending at the
+			// final position).
+			SetWindowPos(_left, IntPtr.Zero, _wa.Left, _wa.Top, x - _wa.Left, _wa.Height, 20u | SnapZones.SWP_ASYNCWINDOWPOS);
+			SetWindowPos(_right, IntPtr.Zero, x, _wa.Top, _wa.Right - x, _wa.Height, 20u | SnapZones.SWP_ASYNCWINDOWPOS);
 			PositionAt(x);
 		}
 	}
@@ -279,5 +289,8 @@ internal sealed class SnapDivider : Window
 	private static extern bool GetWindowRect(nint h, out SnapRect r);
 
 	[DllImport("user32.dll")]
-	private static extern bool ShowWindow(nint h, int n);
+	private static extern bool ShowWindowAsync(nint h, int n);
+
+	[DllImport("user32.dll")]
+	private static extern bool IsHungAppWindow(nint h);
 }

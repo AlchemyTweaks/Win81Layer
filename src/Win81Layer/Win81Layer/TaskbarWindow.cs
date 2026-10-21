@@ -277,6 +277,28 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 
 	private bool _trayDragging;
 
+	// The second press of a double click on this icon (its DBLCLK already sent, with this anchor): the release ends it.
+	private (TrayAppIcon Icon, int X, int Y)? _trayDblPending;
+
+	private TrayAppIcon? _trayMiddleItem;
+
+	private bool _trayMiddleDouble;
+
+	// The icon a right press went down on, and whether that press was a double click's second press.
+	private TrayAppIcon _trayRightItem;
+
+	private bool _trayRightDouble;
+
+	private long _trayHoverAt;
+
+	// A tray table update skipped during an icon drag: rescan once the drag ends.
+	private bool _trayApplyDeferred;
+
+	// A click on an icon without a callback, held until the owner re-registers the icon (or ~2 s pass).
+	private (string Key, TrayEvent Ev, int X, int Y, long At)? _trayPendingEvent;
+
+	private Func<nint, uint, Guid, (int Left, int Top, int Right, int Bottom)?>? _iconRectProvider;
+
 	private TrayDragGhost? _trayGhost;
 
 	private static ImageSource? _fallbackTrayIcon;
@@ -2427,7 +2449,8 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 	private nint GetEffectiveForegroundWindow()
 	{
 		nint foreground = GetForegroundWindow();
-		if (foreground != IntPtr.Zero && TrayReader.ProcessIdOf(foreground) != _ownPid)
+		// The launcher's own task windows (PC settings, Win81Window apps) have their own task button and light it.
+		if (foreground != IntPtr.Zero && (TrayReader.ProcessIdOf(foreground) != _ownPid || foreground == PcSettingsWindow.LiveHwnd || Win81Window.IsTaskable(foreground)))
 		{
 			_lastExternalForeground = foreground;
 			return foreground;
@@ -4541,6 +4564,10 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 	{
 		try { TrayHostService.Changed -= OnTrayHostChanged; } catch { }
 		try { ToolbarsChanged -= RebuildToolbars; } catch { }
+		if (_iconRectProvider != null && TrayHostService.IconRectProvider == _iconRectProvider)
+		{
+			TrayHostService.IconRectProvider = null;
+		}
 		base.OnClosed(e);
 	}
 
@@ -4963,7 +4990,13 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 	{
 		if (_trayDragging)
 		{
+			_trayApplyDeferred = true;
 			return;
+		}
+		if (_isPrimary)
+		{
+			// This bar answers Shell_NotifyIconGetRect (a re-created primary bar takes over).
+			TrayHostService.IconRectProvider = _iconRectProvider ??= QueryTrayIconRect;
 		}
 		EnsureSystemTrayButtons();
 		if (_shellPid == 0)
@@ -5004,7 +5037,7 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 					continue;
 				}
 			}
-			string key = $"{((IntPtr)info.OwnerHwnd).ToInt64():X}:{info.Id}";
+			string key = TrayAppIcon.KeyOf(info.OwnerHwnd, info.Id, info.Guid);
 			seen.Add(key);
 			if (!_stableByKey.TryGetValue(key, out string stable))
 			{
@@ -5046,6 +5079,7 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 				{
 					OwnerHwnd = info.OwnerHwnd,
 					Id = info.Id,
+					Guid = info.Guid,
 					StableKey = stable
 				});
 				if (over)
@@ -5065,10 +5099,9 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 			{
 				vm.StableKey = stable;
 			}
-			vm.CallbackMessage = info.CallbackMessage;
+			ApplyCallbackAndVersion(vm, info);
 			vm.IsAudioSwitcher = audioSwitcher;
 			vm.IsOwn = ownerPid == _ownPid;
-			vm.Version = info.Version;
 			vm.Hidden = info.Hidden; vm.ExecutablePath = info.ExecutablePath;
 			vm.Tooltip = (string.IsNullOrEmpty(info.Tooltip) ? "" : info.Tooltip);
 			if (info.HIcon != vm.HIcon || vm.Image == null)
@@ -5076,7 +5109,10 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 				vm.HIcon = info.HIcon;
 				string trayName = (!string.IsNullOrEmpty(info.Tooltip)) ? info.Tooltip : ((!string.IsNullOrEmpty(info.ExecutablePath)) ? System.IO.Path.GetFileNameWithoutExtension(info.ExecutablePath) : "App");
 				bool fromHIcon = false;
-				System.Windows.Media.ImageSource got = info.Image ?? IconToSource(info.HIcon, info.OwnerHwnd, out fromHIcon);
+				// The owner window's icon (WM_GETICON, a wait on the app) is asked off this thread: the stand-in is needed
+				// exactly when the app is busiest (Electron's first NIM_ADD has no icon and comes while it starts up).
+				System.Windows.Media.ImageSource got = info.Image ?? IconToSource(info.HIcon, info.OwnerHwnd, out fromHIcon, askWindow: false);
+				bool askWindow = info.Image == null && !fromHIcon && info.OwnerHwnd != IntPtr.Zero && !audioSwitcher && ownerPid != _ownPid;
 				vm.RawImage = IconResolver.EnsureNonBlank(got, trayName);
 				// Only the app's own tray HICON shows its state; a registry snapshot, the window or program icon or a letter
 				// tile is a stand-in (the state-aware seasonal tray icons never learn from one).
@@ -5099,6 +5135,10 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 				// icons' visible size at Small / Medium / Large; ApplyTrayIconMetrics re-fits from RawImage on a size change.
 				// While a seasonal icon applies, its frame for the box is shown instead (RawImage stays the app's own).
 				vm.Image = TrayImageFor(vm, _trayAppPx);
+				if (askWindow)
+				{
+					ResolveTrayWindowIconAsync(vm, info.OwnerHwnd, info.HIcon);
+				}
 			}
 			else if (vm.SeasonalTray != null && SeasonalTrayIcons.NeedsSettle(vm))
 			{
@@ -5127,16 +5167,37 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 			_stableByKey.Remove(key4);
 		}
 		ApplySavedOrder(_appIcons, st.TrayOrder ?? new List<string>());
-		int diagSig = (live.Count * 1000) + (_appIcons.Count * 10) + _overflowIcons.Count;
+		// Icons that cannot be clicked yet (no callback: their NIM_ADD never reached the host; repair is under way).
+		int noCallback = live.Count(i => i.CallbackMessage == 0 && i.ExecutablePath == null && i.OwnerHwnd != IntPtr.Zero && TrayReader.ProcessIdOf(i.OwnerHwnd) != _shellPid);
+		int diagSig = (live.Count * 1000) + (_appIcons.Count * 10) + _overflowIcons.Count + (noCallback * 100000);
 		if (diagSig != _lastTrayDiagSig)
 		{
 			_lastTrayDiagSig = diagSig;
-			Logger.Log($"[traydiag] source={(TrayHostService.Active ? "host" : (Win11TrayReader.IsWin11 ? "registry" : "toolbar"))} live={live.Count} bar={_appIcons.Count} overflow={_overflowIcons.Count}");
+			Logger.Log($"[traydiag] source={(TrayHostService.Active ? "host" : (Win11TrayReader.IsWin11 ? "registry" : "toolbar"))} live={live.Count} bar={_appIcons.Count} overflow={_overflowIcons.Count} nocallback={noCallback}");
 		}
 		OverflowChevron.Visibility = ((_overflowIcons.Count <= 0) ? Visibility.Collapsed : Visibility.Visible);
 		if (_overflowIcons.Count == 0 && OverflowPopup.IsOpen)
 		{
 			OverflowPopup.IsOpen = false;
+		}
+		DeliverPendingTrayEvent();
+	}
+
+	// Never trade a working callback for none on the same icon: a later snapshot of an orphaned re-registration (its
+	// NIM_ADD went elsewhere) must not turn a clickable icon into a dead one. The version goes with the callback it
+	// belongs to: such an orphan's version 0 only means its NIM_SETVERSION went elsewhere too, and taking it would send a
+	// version 4 icon version 0 clicks. A version the orphan did receive is taken. Also used by --traytest.
+	internal static void ApplyCallbackAndVersion(TrayAppIcon vm, TrayIconInfo info)
+	{
+		if (info.CallbackMessage != 0 || vm.CallbackMessage == 0)
+		{
+			vm.CallbackMessage = info.CallbackMessage;
+			vm.Version = info.Version;
+			vm.VersionKnown = info.VersionKnown;
+		}
+		else if (info.Version != 0)
+		{
+			vm.Version = info.Version;
 		}
 	}
 
@@ -5172,18 +5233,109 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		}
 	}
 
+	// Tray icon gestures. Each one reaches the app once, as Explorer delivers it (TrayProtocol): the Button raises Click
+	// for a left click and for Enter / Space. The second press of a double click on an app's icon is kept from the
+	// Button (it would raise a second Click on release, so the app got click + double click + click): its
+	// WM_LBUTTONDBLCLK goes out at the press, as Explorer sends it (an app that times single vs double clicks from the
+	// first WM_LBUTTONUP sees it in time), and the release sends WM_LBUTTONUP (+ NIN_SELECT). The launcher's own
+	// entries (the audio switcher, registry icons) keep one Click per press, so two quick clicks still act twice.
+	private static bool IsForwardedTrayIcon(TrayAppIcon icon)
+	{
+		return icon != null && icon.HostElement == null && icon.ExecutablePath == null && !icon.IsAudioSwitcher;
+	}
+
 	private void OnTrayIconPreviewMouseDown(object sender, MouseButtonEventArgs e)
 	{
 		//IL_0004: Unknown result type (might be due to invalid IL or missing references)
 		//IL_0009: Unknown result type (might be due to invalid IL or missing references)
-		if (e.ClickCount == 2 && (sender as FrameworkElement)?.DataContext is TrayAppIcon dcIcon)
+		TrayAppIcon icon = (sender as FrameworkElement)?.DataContext as TrayAppIcon;
+		_trayDragItem = null;
+		if (IsForwardedTrayIcon(icon) && TrayProtocol.IsDoubleClickPress(e.ClickCount))
 		{
-			// Double-click a tray icon → forward WM_LBUTTONDBLCLK so legacy apps restore/open their main window.
-			if (dcIcon.ExecutablePath != null) { TrayActivate(dcIcon); } else { TrayReader.ForwardClick(dcIcon.OwnerHwnd, dcIcon.CallbackMessage, dcIcon.Id, right: false, version: dcIcon.Version, dbl: true); }
+			(int X, int Y) at = TrayAnchor(TrayEvent.LeftDoubleClickPress, sender);
+			_trayDblPending = (icon, at.X, at.Y);
+			DeliverTrayEvent(icon, TrayEvent.LeftDoubleClickPress, sender, at);
+			// The release comes back here even if the pointer slides off the icon (Explorer's toolbar holds the capture
+			// the same way), so the app always gets the WM_LBUTTONUP that ends its double click.
+			(sender as UIElement)?.CaptureMouse();
+			e.Handled = true;
 			return;
 		}
+		_trayDblPending = null;
 		_trayDragStart = e.GetPosition(null);
-		_trayDragItem = (sender as FrameworkElement)?.DataContext as TrayAppIcon;
+		_trayDragItem = icon;
+	}
+
+	private void OnTrayIconPreviewMouseUp(object sender, MouseButtonEventArgs e)
+	{
+		// A press that never became a drag must not leave a stale drag source behind.
+		_trayDragItem = null;
+		if (_trayDblPending is { } pending)
+		{
+			_trayDblPending = null;
+			if ((sender as UIElement)?.IsMouseCaptured == true)
+			{
+				(sender as UIElement)?.ReleaseMouseCapture();
+			}
+			DeliverTrayEvent(pending.Icon, TrayEvent.LeftDoubleClickRelease, sender, (pending.X, pending.Y));
+			e.Handled = true;
+		}
+	}
+
+	private void OnTrayIconLostCapture(object sender, System.Windows.Input.MouseEventArgs e)
+	{
+		if (!_trayDragging)
+		{
+			_trayDragItem = null;
+		}
+	}
+
+	// Middle and right presses: the Button ignores both buttons, so they arrive here. A press is a double click's second
+	// press when Windows would report it as one (TrayProtocol.IsDoubleClickPress): the release then sends the DBLCLK
+	// message in place of the DOWN, as Explorer does.
+	private void OnTrayIconMouseDown(object sender, MouseButtonEventArgs e)
+	{
+		TrayAppIcon icon = (sender as FrameworkElement)?.DataContext as TrayAppIcon;
+		if (e.ChangedButton == MouseButton.Middle)
+		{
+			_trayMiddleItem = icon;
+			_trayMiddleDouble = icon != null && TrayProtocol.IsDoubleClickPress(e.ClickCount);
+			e.Handled = _trayMiddleItem != null;
+		}
+		else if (e.ChangedButton == MouseButton.Right)
+		{
+			_trayRightItem = icon;
+			_trayRightDouble = icon != null && TrayProtocol.IsDoubleClickPress(e.ClickCount);
+		}
+	}
+
+	private void OnTrayIconMouseUp(object sender, MouseButtonEventArgs e)
+	{
+		if (e.ChangedButton != MouseButton.Middle)
+		{
+			return;
+		}
+		TrayAppIcon item = _trayMiddleItem;
+		bool dbl = _trayMiddleDouble;
+		_trayMiddleItem = null;
+		_trayMiddleDouble = false;
+		if (item != null && ReferenceEquals((sender as FrameworkElement)?.DataContext, item))
+		{
+			DeliverTrayEvent(item, (dbl && IsForwardedTrayIcon(item)) ? TrayEvent.MiddleDoubleClick : TrayEvent.MiddleClick, sender);
+			e.Handled = true;
+		}
+	}
+
+	// Shift+F10 / the Menu key on a focused icon (Enter / Space come through the Button's Click).
+	private void OnTrayIconKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+	{
+		bool menuKey = e.Key == Key.Apps || (e.Key == Key.F10 && (Keyboard.Modifiers & ModifierKeys.Shift) != 0)
+			|| (e.Key == Key.System && e.SystemKey == Key.F10 && (Keyboard.Modifiers & ModifierKeys.Shift) != 0);
+		if (menuKey && (sender as FrameworkElement)?.DataContext is TrayAppIcon a)
+		{
+			DeliverTrayEvent(a, TrayEvent.KeyContextMenu, sender);
+			e.Handled = true;
+		}
 	}
 
 	private void OnTrayIconPreviewMouseMove(object sender, System.Windows.Input.MouseEventArgs e)
@@ -5192,12 +5344,30 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		//IL_0026: Unknown result type (might be due to invalid IL or missing references)
 		//IL_00d3: Unknown result type (might be due to invalid IL or missing references)
 		//IL_00e9: Expected O, but got Unknown
-		if (e.LeftButton != MouseButtonState.Pressed || _trayDragItem == null)
+		if (e.LeftButton != MouseButtonState.Pressed)
+		{
+			// Hover: Explorer reports every move over an icon (WM_MOUSEMOVE; Electron's mouse-enter / mouse-move); a
+			// few per second are enough, and only while the pointer is actually over an icon.
+			long now = Environment.TickCount64;
+			if (now - _trayHoverAt >= 60 && (sender as FrameworkElement)?.DataContext is TrayAppIcon hovered && hovered.HostElement == null && hovered.CallbackMessage != 0)
+			{
+				_trayHoverAt = now;
+				DeliverTrayEvent(hovered, TrayEvent.Hover, sender);
+			}
+			return;
+		}
+		if (_trayDragItem == null)
 		{
 			return;
 		}
 		System.Windows.Point p = e.GetPosition(null);
-		if (Math.Abs(p.X - _trayDragStart.X) < SystemParameters.MinimumHorizontalDragDistance && Math.Abs(p.Y - _trayDragStart.Y) < SystemParameters.MinimumVerticalDragDistance)
+		// Half a slot of travel before an icon drag starts: hand wobble during a click must stay a click (a drag that
+		// starts eats the click). Either axis, so an icon can still be dragged out of the overflow flyout.
+		double slotW = Math.Max(1.0, (sender as FrameworkElement)?.ActualWidth ?? 0.0);
+		double slotH = Math.Max(1.0, (sender as FrameworkElement)?.ActualHeight ?? 0.0);
+		double minX = Math.Max(SystemParameters.MinimumHorizontalDragDistance, slotW / 2.0);
+		double minY = Math.Max(SystemParameters.MinimumVerticalDragDistance, slotH / 2.0);
+		if (Math.Abs(p.X - _trayDragStart.X) < minX && Math.Abs(p.Y - _trayDragStart.Y) < minY)
 		{
 			return;
 		}
@@ -5227,6 +5397,12 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 			_trayGhost = null;
 			ClearTrayDropHints();
 			_trayDragging = false;
+			if (_trayApplyDeferred)
+			{
+				// An icon change (a repaired callback, a removal, a version) arrived during the drag: pick it up now.
+				_trayApplyDeferred = false;
+				ScanTrayAsync();
+			}
 		}
 		void OnFeedback(object? s, System.Windows.GiveFeedbackEventArgs fe)
 		{
@@ -5310,7 +5486,13 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		TrayAppIcon dragged = e.Data.GetData("Win81TrayIcon") as TrayAppIcon;
 		TrayAppIcon target = (sender as FrameworkElement)?.DataContext as TrayAppIcon;
 		e.Handled = true;
-		if (dragged == null || target == null || dragged == target)
+		if (dragged != null && ReferenceEquals(dragged, target))
+		{
+			// Dropped back on itself: the press was a click after all (the drag ate the Button's Click).
+			DeliverTrayEvent(target, TrayEvent.LeftClick, sender);
+			return;
+		}
+		if (dragged == null || target == null)
 		{
 			return;
 		}
@@ -5442,8 +5624,46 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		TaskOverflowPopup.IsOpen = !TaskOverflowPopup.IsOpen;
 	}
 
+	// The owner window's own icon as the tray stand-in, fetched on a worker (WM_GETICON waits on the app). It replaces
+	// the stand-in shown meanwhile (the program's icon or a letter tile) only while the icon still has no image of its
+	// own (no newer HICON arrived) and is still on this bar, so the end result is what the synchronous order gave.
+	private void ResolveTrayWindowIconAsync(TrayAppIcon vm, nint owner, nint hIcon)
+	{
+		Task.Run(delegate
+		{
+			ImageSource img = null;
+			try
+			{
+				ImageSource viaWnd = WindowList.GetIcon(owner, preferLarge: false);
+				if (viaWnd != null && !IconResolver.IsBlank(viaWnd))
+				{
+					img = AppInventory.EnsureVisibleOnDark(viaWnd);
+				}
+			}
+			catch
+			{
+			}
+			if (img == null)
+			{
+				return;
+			}
+			((DispatcherObject)this).Dispatcher.BeginInvoke((Delegate)(Action)delegate
+			{
+				bool onBar = (_appByKey.TryGetValue(vm.Key, out TrayAppIcon a) && ReferenceEquals(a, vm)) || (_overflowByKey.TryGetValue(vm.Key, out TrayAppIcon o) && ReferenceEquals(o, vm));
+				if (!onBar || vm.HIcon != hIcon || vm.OwnerHwnd != owner)
+				{
+					return;
+				}
+				vm.RawImage = img;
+				vm.RawSubstitute = true;
+				vm.Image = TrayImageFor(vm, _trayAppPx);
+			}, Array.Empty<object>());
+		});
+	}
+
 	// fromHIcon: true when the image is the tray HICON itself, false for a fallback (window or program icon).
-	private static ImageSource? IconToSource(nint hIcon, nint ownerHwnd, out bool fromHIcon)
+	// askWindow: false leaves out the owner window's icon (WM_GETICON); the caller fetches it off the UI thread.
+	private static ImageSource IconToSource(nint hIcon, nint ownerHwnd, out bool fromHIcon, bool askWindow = true)
 	{
 		fromHIcon = false;
 		//IL_0017: Unknown result type (might be due to invalid IL or missing references)
@@ -5480,7 +5700,7 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		// source the taskbar task buttons already render successfully, so it works where the stored tray hIcon won't.
 		try
 		{
-			ImageSource? viaWnd = WindowList.GetIcon(ownerHwnd, preferLarge: false);
+			ImageSource viaWnd = askWindow ? WindowList.GetIcon(ownerHwnd, preferLarge: false) : null;
 			if (viaWnd != null && !IconResolver.IsBlank(viaWnd))
 			{
 				return AppInventory.EnsureVisibleOnDark(viaWnd);
@@ -5536,21 +5756,161 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 	{
 		if ((sender as FrameworkElement)?.DataContext is TrayAppIcon a)
 		{
-			if (a.HostElement != null) { return; }   // hosted system button handles its own click
-			if (a.IsAudioSwitcher) { CycleAudioOutput(); }
-			else if (a.ExecutablePath != null) { TrayActivate(a); } else { TrayReader.ForwardClick(a.OwnerHwnd, a.CallbackMessage, a.Id, right: false, version: a.Version); }
+			// Enter / Space on a focused icon also raise Click: Explorer reports those as a keyboard selection.
+			bool keyboard = InputManager.Current.MostRecentInputDevice is KeyboardDevice;
+			DeliverTrayEvent(a, keyboard ? TrayEvent.KeySelect : TrayEvent.LeftClick, sender);
 		}
 	}
 
 	private void OnAppIconRightClick(object sender, MouseButtonEventArgs e)
 	{
+		bool dbl = _trayRightDouble;
+		TrayAppIcon pressed = _trayRightItem;
+		_trayRightItem = null;
+		_trayRightDouble = false;
 		if ((sender as FrameworkElement)?.DataContext is TrayAppIcon a)
 		{
-			if (a.HostElement != null) { return; }   // hosted system button handles its own right-click
-			if (a.IsAudioSwitcher) { ShowAudioDeviceMenu(sender); }
-			else if (a.ExecutablePath != null) { ShowTrayIconMenu(a, sender); } else { TrayReader.ForwardClick(a.OwnerHwnd, a.CallbackMessage, a.Id, right: true, version: a.Version); }
-			e.Handled = true;
+			// A second right click within the double-click time: WM_RBUTTONDBLCLK takes the DOWN's place (an app's own
+			// icon only; the launcher's own entries open their menu on every right click).
+			bool asDouble = dbl && ReferenceEquals(pressed, a) && IsForwardedTrayIcon(a);
+			DeliverTrayEvent(a, asDouble ? TrayEvent.RightDoubleClick : TrayEvent.RightClick, sender);
+			e.Handled = a.HostElement == null;
 		}
+	}
+
+	// One gesture on a tray icon. The audio switcher and the registry-sourced icons (no owner window) act here; every
+	// real icon gets exactly what Explorer sends for its version. An icon that lost its callback is repaired (the owner
+	// is asked to register again) and its click is delivered once it is back, or at once for Electron / Chromium.
+	private void DeliverTrayEvent(TrayAppIcon a, TrayEvent ev, object sender, (int X, int Y)? anchor = null)
+	{
+		if (a == null || a.HostElement != null)
+		{
+			return;   // hosted system button handles its own input
+		}
+		bool select = ev == TrayEvent.LeftClick || ev == TrayEvent.KeySelect;
+		bool menu = ev == TrayEvent.RightClick || ev == TrayEvent.KeyContextMenu;
+		if (a.IsAudioSwitcher)
+		{
+			if (select)
+			{
+				CycleAudioOutput();
+			}
+			else if (menu)
+			{
+				ShowAudioDeviceMenu(sender);
+			}
+			return;
+		}
+		if (a.ExecutablePath != null)
+		{
+			if (select)
+			{
+				TrayActivate(a);
+			}
+			else if (menu)
+			{
+				ShowTrayIconMenu(a, sender);
+			}
+			return;
+		}
+		(int x, int y) = anchor ?? TrayAnchor(ev, sender);
+		TrayReader.Delivery d = TrayReader.Deliver(a.OwnerHwnd, a.CallbackMessage, a.Id, a.Version, ev, x, y, a.VersionKnown);
+		if (d == TrayReader.Delivery.Recovering)
+		{
+			TrayEvent hold = ev;
+			if (ev == TrayEvent.LeftDoubleClickRelease)
+			{
+				// Its press was held too (or is lost): deliver the whole second half of the double click once.
+				hold = TrayEvent.LeftDoubleClick;
+			}
+			_trayPendingEvent = (a.Key, hold, x, y, Environment.TickCount64);
+			QueueTrayScan();
+		}
+		else if (d == TrayReader.Delivery.Guessed)
+		{
+			QueueTrayScan();
+		}
+	}
+
+	// Version 4 anchor, physical screen pixels: the cursor for mouse events, the icon's upper-left for keyboard events.
+	private static (int X, int Y) TrayAnchor(TrayEvent ev, object sender)
+	{
+		if ((ev == TrayEvent.KeySelect || ev == TrayEvent.KeyContextMenu) && sender is FrameworkElement fe && PresentationSource.FromVisual(fe) != null)
+		{
+			try
+			{
+				System.Windows.Point p = fe.PointToScreen(new System.Windows.Point(0.0, 0.0));
+				return ((int)Math.Round(p.X), (int)Math.Round(p.Y));
+			}
+			catch
+			{
+			}
+		}
+		return TrayReader.CursorPosition();
+	}
+
+	// A click held for an icon without a callback: deliver it once the icon came back with one.
+	private void DeliverPendingTrayEvent()
+	{
+		if (!_trayPendingEvent.HasValue)
+		{
+			return;
+		}
+		var p = _trayPendingEvent.Value;
+		if (Environment.TickCount64 - p.At > 2000)
+		{
+			_trayPendingEvent = null;
+			return;
+		}
+		if ((_appByKey.TryGetValue(p.Key, out TrayAppIcon vm) || _overflowByKey.TryGetValue(p.Key, out vm)) && vm.CallbackMessage != 0)
+		{
+			_trayPendingEvent = null;
+			Logger.Log($"[tray] icon 0x{(long)vm.OwnerHwnd:X}:{vm.Id} re-registered with callback 0x{vm.CallbackMessage:X}: delivering the held {p.Ev}");
+			TrayReader.Forward(vm.OwnerHwnd, vm.CallbackMessage, vm.Id, vm.Version, p.Ev, p.X, p.Y, vm.VersionKnown);
+		}
+	}
+
+	// Shell_NotifyIconGetRect, called on the tray-host thread: the icon's rectangle on this bar in physical pixels (the
+	// overflow chevron while the icon sits in the closed overflow flyout). Bounded wait on the UI thread.
+	private (int Left, int Top, int Right, int Bottom)? QueryTrayIconRect(nint owner, uint id, Guid guid)
+	{
+		(int, int, int, int)? r = null;
+		try
+		{
+			if (((DispatcherObject)this).Dispatcher.HasShutdownStarted)
+			{
+				return null;
+			}
+			((DispatcherObject)this).Dispatcher.Invoke(delegate
+			{
+				r = TrayIconScreenRect(owner, id, guid);
+			}, DispatcherPriority.Send, System.Threading.CancellationToken.None, TimeSpan.FromMilliseconds(100.0));
+		}
+		catch
+		{
+		}
+		return r;
+	}
+
+	private (int, int, int, int)? TrayIconScreenRect(nint owner, uint id, Guid guid)
+	{
+		string key = TrayAppIcon.KeyOf(owner, id, guid);
+		FrameworkElement el = null;
+		if (_appByKey.TryGetValue(key, out TrayAppIcon vm))
+		{
+			el = TrayAppHost.ItemContainerGenerator.ContainerFromItem(vm) as FrameworkElement;
+		}
+		else if (_overflowByKey.TryGetValue(key, out vm))
+		{
+			el = OverflowPopup.IsOpen ? (OverflowHost.ItemContainerGenerator.ContainerFromItem(vm) as FrameworkElement) : OverflowChevron;
+		}
+		if (el == null || !el.IsVisible || el.ActualWidth <= 0.0 || PresentationSource.FromVisual(el) == null)
+		{
+			return null;
+		}
+		System.Windows.Point a = el.PointToScreen(new System.Windows.Point(0.0, 0.0));
+		System.Windows.Point b = el.PointToScreen(new System.Windows.Point(el.ActualWidth, el.ActualHeight));
+		return ((int)Math.Round(Math.Min(a.X, b.X)), (int)Math.Round(Math.Min(a.Y, b.Y)), (int)Math.Round(Math.Max(a.X, b.X)), (int)Math.Round(Math.Max(a.Y, b.Y)));
 	}
 
 	// Win11 registry-sourced tray icons carry no owner HWND / callback message, so a click can't be forwarded to the app
@@ -8365,9 +8725,9 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		{
 			TaskOverflowPopup.IsOpen = false;
 			nint rawForeground = GetForegroundWindow();
-			nint fg = GetEffectiveForegroundWindow();
+			nint fg = PressForeground();
 			bool targetIsForeground = tw.Hwnd == fg || tw.Members.Contains(fg);
-			Logger.Log($"[taskbar-diag] task Click -> '{tw.Title}' rawFg=0x{rawForeground:X} effectiveFg=0x{fg:X} rep=0x{tw.Hwnd:X} members={tw.Members.Count} targetForeground={targetIsForeground}");
+			Logger.Log($"[taskbar-diag] task Click -> '{tw.Title}' rawFg=0x{rawForeground:X} pressFg=0x{fg:X} rep=0x{tw.Hwnd:X} members={tw.Members.Count} targetForeground={targetIsForeground}");
 			if (targetIsForeground)
 			{
 				WindowList.Minimize(fg);
@@ -8429,12 +8789,23 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		nint hwnd = tw.Hwnd;
 		string exe = ExeFor(hwnd) ?? WindowList.GetExePath(hwnd);
 		int pid = PidForWindow(hwnd);
+		// A UWP window belongs to ApplicationFrameHost.exe, which hosts every UWP app: act on the app's own process.
+		nint core = UwpCoreWindow(hwnd, pid);
+		if (core != IntPtr.Zero)
+		{
+			pid = PidForWindow(core);
+			exe = WindowList.GetExePath(core) ?? exe;
+		}
+		TaskProcessKind kind = ClassifyTaskProcess(pid, (int)_ownPid, ShellPid(), exe);
 		System.Windows.Controls.ContextMenu menu = new System.Windows.Controls.ContextMenu
 		{
 			Style = (Style)System.Windows.Application.Current.Resources["Win81ContextMenu"]
 		};
 		TaskbarContextMenu.ApplyTheme(menu);
-		AppendJumpListForApp(menu, JumpListApi.GetAppId(exe) ?? AumidForWindow(hwnd));
+		if (kind != TaskProcessKind.Shell)
+		{
+			AppendJumpListForWindow(menu, hwnd, exe);
+		}
 		menu.Items.Add(TaskbarContextMenu.Leaf("Restore / Activate", 59559, delegate
 		{
 			WindowList.Activate(hwnd);
@@ -8443,6 +8814,14 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		{
 			WindowList.Minimize(hwnd);
 		}));
+		// Pinning stays for shared hosts: PinTaskWindow pins their shell app by its AppUserModelID, not the host exe.
+		string? pinExe = (kind == TaskProcessKind.Shell) ? null : exe;
+		if (kind != TaskProcessKind.App)
+		{
+			// The shell's own window, or a window of a process that hosts many others: no process actions.
+			exe = null;
+			pid = 0;
+		}
 		if (!string.IsNullOrEmpty(exe))
 		{
 			menu.Items.Add(TaskbarContextMenu.Sep());
@@ -8462,9 +8841,9 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		}
 		if (pid > 0)
 		{
-			menu.Items.Add(PrioritySub(hwnd));
+			menu.Items.Add(PrioritySub(pid));
 		}
-		if (!string.IsNullOrEmpty(exe) && !TaskbarPins.IsPinned(_pins, exe))
+		if (!string.IsNullOrEmpty(pinExe) && !TaskbarPins.IsPinned(_pins, pinExe))
 		{
 			menu.Items.Add(TaskbarContextMenu.Sep());
 			menu.Items.Add(TaskbarContextMenu.Leaf("Pin to taskbar", 57665, delegate
@@ -8492,9 +8871,10 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		}
 		if (pid > 0)
 		{
+			int endPid = pid;
 			menu.Items.Add(TaskbarContextMenu.Leaf("End task", 59162, delegate
 			{
-				EndTask(hwnd);
+				EndTask(endPid);
 			}));
 		}
 		menu.PlacementTarget = (UIElement)sender;
@@ -8502,6 +8882,93 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		OpenTrackedMenu(menu);
 		e.Handled = true;
 	}
+
+	internal enum TaskProcessKind
+	{
+		// The window's own process: every process action applies.
+		App,
+		// A process that hosts many windows or apps (explorer.exe, ApplicationFrameHost.exe): window actions only.
+		SharedHost,
+		// The shell itself (this process, e.g. the PC settings window): window actions only.
+		Shell
+	}
+
+	// explorer.exe hosts every File Explorer window and the desktop, ApplicationFrameHost.exe every UWP app, and this
+	// process is the shell: End task, Priority, Run as administrator or Pin on them would kill or change far more than
+	// the window that was right-clicked.
+	internal static TaskProcessKind ClassifyTaskProcess(int pid, int ownPid, int shellPid, string? exe)
+	{
+		if (pid > 0 && pid == ownPid)
+		{
+			return TaskProcessKind.Shell;
+		}
+		if (pid > 0 && shellPid > 0 && pid == shellPid)
+		{
+			return TaskProcessKind.SharedHost;
+		}
+		string name = string.IsNullOrEmpty(exe) ? "" : System.IO.Path.GetFileName(exe);
+		if (name.Equals("explorer.exe", StringComparison.OrdinalIgnoreCase) || name.Equals("applicationframehost.exe", StringComparison.OrdinalIgnoreCase))
+		{
+			return TaskProcessKind.SharedHost;
+		}
+		return TaskProcessKind.App;
+	}
+
+	private static int ShellPid()
+	{
+		try
+		{
+			GetWindowThreadProcessId(GetShellWindow(), out var pid);
+			return (int)pid;
+		}
+		catch
+		{
+			return 0;
+		}
+	}
+
+	// The app's own window inside a UWP frame (its Windows.UI.Core.CoreWindow child, of another process), else Zero.
+	// Reads the window tree only (no window message).
+	private static nint UwpCoreWindow(nint frame, int framePid)
+	{
+		nint found = IntPtr.Zero;
+		try
+		{
+			StringBuilder cls = new StringBuilder(64);
+			GetClassName(frame, cls, cls.Capacity);
+			if (cls.ToString() != "ApplicationFrameWindow")
+			{
+				return IntPtr.Zero;
+			}
+			EnumChildWindows(frame, delegate(nint child, nint _)
+			{
+				StringBuilder c = new StringBuilder(64);
+				GetClassName(child, c, c.Capacity);
+				if (c.ToString() == "Windows.UI.Core.CoreWindow")
+				{
+					GetWindowThreadProcessId(child, out var cp);
+					if (cp != 0 && (int)cp != framePid)
+					{
+						found = child;
+						return false;
+					}
+				}
+				return true;
+			}, IntPtr.Zero);
+		}
+		catch
+		{
+		}
+		return found;
+	}
+
+	private delegate bool EnumChildProc(nint hwnd, nint lParam);
+
+	[DllImport("user32.dll")]
+	private static extern bool EnumChildWindows(nint parent, EnumChildProc cb, nint lParam);
+
+	[DllImport("user32.dll")]
+	private static extern nint GetShellWindow();
 
 	private static int PidForWindow(nint hwnd)
 	{
@@ -8516,15 +8983,14 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		}
 	}
 
-	private static System.Windows.Controls.MenuItem PrioritySub(nint hwnd)
+	private static System.Windows.Controls.MenuItem PrioritySub(int pid)
 	{
 		ProcessPriorityClass? cur = null;
 		try
 		{
-			int p = PidForWindow(hwnd);
-			if (p > 0)
+			if (pid > 0)
 			{
-				cur = Process.GetProcessById(p).PriorityClass;
+				cur = Process.GetProcessById(pid).PriorityClass;
 			}
 		}
 		catch
@@ -8535,7 +9001,7 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		{
 			return TaskbarContextMenu.Choice(label, cur == cls, delegate
 			{
-				SetPriority(hwnd, cls);
+				SetPriority(pid, cls);
 			});
 		}
 	}
@@ -8590,17 +9056,25 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		});
 	}
 
-	private static void SetPriority(nint hwnd, ProcessPriorityClass cls)
+	// Backstop for the menu policy: never this process (the shell) or Explorer.
+	private static bool IsProtectedPid(int pid)
 	{
+		return pid <= 0 || pid == Environment.ProcessId || pid == ShellPid();
+	}
+
+	private static void SetPriority(int pid, ProcessPriorityClass cls)
+	{
+		if (IsProtectedPid(pid))
+		{
+			Logger.Log($"Set priority refused for protected pid {pid}");
+			return;
+		}
 		ShellLaunch.Run(delegate
 		{
 			try
 			{
-				int pid = PidForWindow(hwnd);
-				if (pid > 0)
-				{
-					Process.GetProcessById(pid).PriorityClass = cls;
-				}
+				using Process p = Process.GetProcessById(pid);
+				p.PriorityClass = cls;
 			}
 			catch (Exception ex)
 			{
@@ -8609,17 +9083,19 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		});
 	}
 
-	private static void EndTask(nint hwnd)
+	private static void EndTask(int pid)
 	{
+		if (IsProtectedPid(pid))
+		{
+			Logger.Log($"End task refused for protected pid {pid}");
+			return;
+		}
 		ShellLaunch.Run(delegate
 		{
 			try
 			{
-				int pid = PidForWindow(hwnd);
-				if (pid > 0)
-				{
-					Process.GetProcessById(pid).Kill();
-				}
+				using Process p = Process.GetProcessById(pid);
+				p.Kill();
 			}
 			catch (Exception ex)
 			{
@@ -8635,7 +9111,17 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 			_pinDidDrag = false;
 			return;
 		}
-		FrameworkElement fe = sender as FrameworkElement;
+		PinnedClickCore(sender as FrameworkElement);
+	}
+
+	private static bool IsPointerInside(FrameworkElement fe, System.Windows.Input.MouseEventArgs e)
+	{
+		System.Windows.Point p = e.GetPosition(fe);
+		return p.X >= 0.0 && p.Y >= 0.0 && p.X < fe.ActualWidth && p.Y < fe.ActualHeight;
+	}
+
+	private void PinnedClickCore(FrameworkElement fe)
+	{
 		TaskOverflowPopup.IsOpen = false;
 		if (fe?.DataContext is GroupTile group)
 		{
@@ -8684,7 +9170,7 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 			TaskbarPins.Launch(tile);
 			return;
 		}
-		nint fg = GetEffectiveForegroundWindow();
+		nint fg = PressForeground();
 		if (tile.RunningHwnds.Contains(fg))
 		{
 			WindowList.Minimize(fg);
@@ -8699,9 +9185,33 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 				_lastExternalForeground = target;
 				return;
 			}
-			tile.RunningHwnds.Remove(target);
+			if (!WindowList.IsWindowAlive(target))
+			{
+				tile.RunningHwnds.Remove(target);
+			}
+		}
+		if (tile.RunningHwnds.Count > 0)
+		{
+			// Backstop: TryActivate is true for any live window (a busy or hung one too, its activation is queued), so
+			// this is reached only if none could be activated while some still exist. Never start a second instance
+			// over running windows (Explorer does not either).
+			Logger.Log($"[taskbar-diag] pinned '{tile.Name}': {tile.RunningHwnds.Count} window(s) could not be activated; not launching another instance");
+			return;
 		}
 		TaskbarPins.Launch(tile);
+	}
+
+	// The foreground window when this click was pressed (stamped by the mouse hook), else the current one. Never a
+	// launcher-surface fallback: when Start, the Action Center or a pane is in front, no app is active, so a click on
+	// an app activates it instead of minimizing the app that was active before that surface opened.
+	private static nint PressForeground()
+	{
+		WinKeyHook.PressStamp? s = WinKeyHook.LastLeftPress;
+		if (s != null && Environment.TickCount64 - s.Tick < 5000)
+		{
+			return s.Foreground;
+		}
+		return GetForegroundWindow();
 	}
 
 	private void OnPinnedRightClick(object sender, MouseButtonEventArgs e)
@@ -8738,61 +9248,7 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 			{
 				return;
 			}
-			AppendJumpList(menu, tile);
-			menu.Items.Add(TaskbarContextMenu.Leaf("Open new window", 57724, delegate
-			{
-				TaskbarPins.Launch(tile);
-			}));
-			if (tile.RunningHwnds.Count > 0)
-			{
-				menu.Items.Add(TaskbarContextMenu.Leaf("Activate", 59559, delegate
-				{
-					WindowList.Activate(tile.RunningHwnds[0]);
-				}));
-				menu.Items.Add(TaskbarContextMenu.Leaf("Close", 59579, delegate
-				{
-					foreach (nint current in tile.RunningHwnds.ToList())
-					{
-						WindowList.Close(current);
-					}
-				}));
-			}
-			string exe = tile.ExePath;
-			if (!string.IsNullOrEmpty(exe) && File.Exists(exe))
-			{
-				menu.Items.Add(TaskbarContextMenu.Sep());
-				menu.Items.Add(TaskbarContextMenu.Leaf("Open file location", 57736, delegate
-				{
-					OpenFileLocation(exe);
-				}));
-				menu.Items.Add(TaskbarContextMenu.Leaf("Copy path", 59592, delegate
-				{
-					CopyToClipboard(exe);
-				}));
-				menu.Items.Add(TaskbarContextMenu.Leaf("Run as administrator", 57767, delegate
-				{
-					RunAsAdmin(exe);
-				}));
-				FileContextMenu.AppendExtras(menu, exe);
-			}
-			menu.Items.Add(TaskbarContextMenu.Sep());
-			System.Windows.Controls.MenuItem groupMenu = TaskbarContextMenu.Sub("Add to group", TaskbarContextMenu.Leaf("New group…", delegate
-			{
-				AddToNewGroup(tile);
-			}));
-			foreach (string gname in _groups.Select((GroupTile g) => g.Name).Distinct<string>(StringComparer.OrdinalIgnoreCase).ToList())
-			{
-				string gn = gname;
-				groupMenu.Items.Add(TaskbarContextMenu.Leaf(gn, delegate
-				{
-					SetPinGroup(tile, gn);
-				}));
-			}
-			menu.Items.Add(groupMenu);
-			menu.Items.Add(TaskbarContextMenu.Leaf("Unpin from taskbar", 57750, delegate
-			{
-				Unpin(tile);
-			}));
+			AppendPinnedTileItems(menu, tile, inGroupFlyout: false);
 		}
 		menu.PlacementTarget = (UIElement)sender;
 		menu.Placement = FlyoutMode();
@@ -8800,9 +9256,95 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		e.Handled = true;
 	}
 
+	// A pinned app's menu items (jump list, window and file actions, grouping). In the group flyout the grouping part is
+	// "Remove from group" instead, so a right-click there opens a menu rather than silently ungrouping the app.
+	private void AppendPinnedTileItems(System.Windows.Controls.ContextMenu menu, PinnedTile tile, bool inGroupFlyout)
+	{
+		AppendJumpList(menu, tile);
+		menu.Items.Add(TaskbarContextMenu.Leaf("Open new window", 57724, delegate
+		{
+			TaskbarPins.Launch(tile);
+		}));
+		if (tile.RunningHwnds.Count > 0)
+		{
+			menu.Items.Add(TaskbarContextMenu.Leaf("Activate", 59559, delegate
+			{
+				WindowList.Activate(tile.RunningHwnds[0]);
+			}));
+			menu.Items.Add(TaskbarContextMenu.Leaf("Close", 59579, delegate
+			{
+				foreach (nint current in tile.RunningHwnds.ToList())
+				{
+					WindowList.Close(current);
+				}
+			}));
+		}
+		string exe = tile.ExePath;
+		if (!string.IsNullOrEmpty(exe) && File.Exists(exe))
+		{
+			menu.Items.Add(TaskbarContextMenu.Sep());
+			menu.Items.Add(TaskbarContextMenu.Leaf("Open file location", 57736, delegate
+			{
+				OpenFileLocation(exe);
+			}));
+			menu.Items.Add(TaskbarContextMenu.Leaf("Copy path", 59592, delegate
+			{
+				CopyToClipboard(exe);
+			}));
+			menu.Items.Add(TaskbarContextMenu.Leaf("Run as administrator", 57767, delegate
+			{
+				RunAsAdmin(exe);
+			}));
+			FileContextMenu.AppendExtras(menu, exe);
+		}
+		menu.Items.Add(TaskbarContextMenu.Sep());
+		if (inGroupFlyout)
+		{
+			menu.Items.Add(TaskbarContextMenu.Leaf("Remove from group", 57750, delegate
+			{
+				RemoveFromGroup(tile);
+			}));
+			return;
+		}
+		System.Windows.Controls.MenuItem groupMenu = TaskbarContextMenu.Sub("Add to group", TaskbarContextMenu.Leaf("New group…", delegate
+		{
+			AddToNewGroup(tile);
+		}));
+		foreach (string gname in _groups.Select((GroupTile g) => g.Name).Distinct<string>(StringComparer.OrdinalIgnoreCase).ToList())
+		{
+			string gn = gname;
+			groupMenu.Items.Add(TaskbarContextMenu.Leaf(gn, delegate
+			{
+				SetPinGroup(tile, gn);
+			}));
+		}
+		menu.Items.Add(groupMenu);
+		menu.Items.Add(TaskbarContextMenu.Leaf("Unpin from taskbar", 57750, delegate
+		{
+			Unpin(tile);
+		}));
+	}
+
 	private void AppendJumpList(System.Windows.Controls.ContextMenu menu, PinnedTile tile)
 	{
 		AppendJumpListForApp(menu, tile.Aumid ?? JumpListApi.GetAppId(tile.LaunchPath) ?? JumpListApi.GetAppId(tile.ExePath));
+	}
+
+	// A task button's jump list. The window's own AppUserModelID comes first: Word, VS Code, Squirrel / Electron apps
+	// and UWP frames set one on the window, and an .exe file never carries one (so the exe lookup alone found nothing
+	// for them). Then the exe's, then the packaged process's. The window id is read from the window's property store
+	// (window properties, no window message).
+	private static void AppendJumpListForWindow(System.Windows.Controls.ContextMenu menu, nint hwnd, string? exe)
+	{
+		string? appId = null;
+		try
+		{
+			appId = AppInventory.GetWindowAppId(hwnd);
+		}
+		catch
+		{
+		}
+		AppendJumpListForApp(menu, string.IsNullOrEmpty(appId) ? (JumpListApi.GetAppId(exe) ?? AumidForWindow(hwnd)) : appId);
 	}
 
 	private static void AppendJumpListForApp(System.Windows.Controls.ContextMenu menu, string? appId)
@@ -9008,9 +9550,17 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 			};
 			btn.MouseRightButtonUp += delegate(object _, MouseButtonEventArgs ev)
 			{
-				onClose?.Invoke();
-				RemoveFromGroup(member);
+				// The app's own menu, with "Remove from group" in it: a bare right-click never changes the group.
 				ev.Handled = true;
+				onClose?.Invoke();
+				System.Windows.Controls.ContextMenu menu = new System.Windows.Controls.ContextMenu
+				{
+					Style = (Style)System.Windows.Application.Current.Resources["Win81ContextMenu"]
+				};
+				TaskbarContextMenu.ApplyTheme(menu);
+				AppendPinnedTileItems(menu, member, inGroupFlyout: true);
+				menu.Placement = System.Windows.Controls.Primitives.PlacementMode.MousePoint;
+				OpenTrackedMenu(menu);
 			};
 			panel.Children.Add(btn);
 		}
@@ -9119,7 +9669,10 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		System.Windows.Point pos = e.GetPosition(PinnedHost);
 		if (!_pinDragging)
 		{
-			if (Math.Abs(pos.X - _pinDragStart.X) < SystemParameters.MinimumHorizontalDragDistance && Math.Abs(pos.Y - _pinDragStart.Y) < SystemParameters.MinimumVerticalDragDistance)
+			// A click with a little hand wobble must stay a click: only horizontal travel of a third of a slot starts a
+			// reorder (the grouping lift needs sideways travel onto a neighbour too), and vertical travel alone never
+			// does. Pins in the overflow flyout have no slot on the bar and are not draggable.
+			if (!PinDragShouldStart(pos.X - _pinDragStart.X, _pinDragFromVisible))
 			{
 				return;
 			}
@@ -9191,6 +9744,13 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 			tt.X = pos.X - naturalLeft - _pinDragGrabOffset;
 		}
 		e.Handled = true;
+	}
+
+	internal static double PinDragThreshold => Math.Max(SystemParameters.MinimumHorizontalDragDistance, Math.Min(16.0, PinSlot / 3.0));
+
+	internal static bool PinDragShouldStart(double dx, int fromVisible)
+	{
+		return fromVisible >= 0 && Math.Abs(dx) >= PinDragThreshold;
 	}
 
 	// Slide every visible neighbour to open a gap at `target` for a tile dragged from `from`. Pure RenderTransform —
@@ -9300,6 +9860,7 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 			}
 			ClearGroupHilite();
 			bool rebuilt = false;
+			bool clickInstead = false;
 			if (groupIdx >= 0 && dragged is PinnedTile dt)
 			{
 				// Grouping gesture. On a real merge GroupOnDrop fires PinsChanged -> RebuildPins regenerates every
@@ -9322,12 +9883,14 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 			}
 			else
 			{
-				// Dropped back where it started: no reorder. Ease the lifted tile home from wherever the cursor left it.
+				// Dropped back where it started: no reorder, so nothing to save. Ease the lifted tile home from wherever
+				// the cursor left it; when the release is still on the pressed button the press was a click after all
+				// (the drag ate the Button's Click), so it acts as one.
 				if (el?.RenderTransform is TranslateTransform tt)
 				{
 					tt.BeginAnimation(TranslateTransform.XProperty, Motion.GlideTo(tt.X, 0.0));
 				}
-				PersistPinOrder();
+				clickInstead = _pinDragButton != null && IsPointerInside(_pinDragButton, e);
 			}
 			if (!rebuilt)
 			{
@@ -9340,6 +9903,12 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 				ReflowAppStrip();
 			}
 			e.Handled = true;
+			if (clickInstead && _pinDragButton != null)
+			{
+				Logger.Log("[taskbar-diag] pin drag ended in place: treated as a click");
+				_pinDidDrag = false;
+				PinnedClickCore(_pinDragButton);
+			}
 		}
 		_pinDragItem = null;
 		_pinDragButton = null;

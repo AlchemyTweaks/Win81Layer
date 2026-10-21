@@ -114,11 +114,21 @@ public static class WindowList
 		return next;
 	}
 
+	// Task-button actions on other apps' windows. None of them waits on the target app: a synchronous ShowWindow or
+	// SetWindowPos on a window of another thread sends WM_WINDOWPOSCHANGING and friends and waits, with no timeout, until
+	// that app answers, so a busy or hung app froze the taskbar (and the shell). Explorer's taskbar works the same way:
+	// ShowWindowAsync, a plain SetForegroundWindow (the click gave us the right to set the foreground), no
+	// AttachThreadInput. The queued calls return at once even for a window Windows flags as hung, so they are made
+	// regardless (the app acts on them when it answers again): a busy moment never throws the user's click away.
+
+	// Set by --traytest: never grant or take the foreground (its target windows are test windows, the foreground is not).
+	internal static bool DiagnosticsNoForeground;
+
 	public static void ActivateOrMinimize(nint hwnd)
 	{
 		if (GetForegroundWindow() == hwnd)
 		{
-			ShowWindow(hwnd, 6);
+			Minimize(hwnd);
 		}
 		else
 		{
@@ -136,27 +146,40 @@ public static class WindowList
 		return hwnd != IntPtr.Zero && IsWindow(hwnd);
 	}
 
+	// True when the window is alive, so a "try the next window" loop stops at the first live one (a busy or hung window
+	// included: its activation is queued, and nothing else of the group is pulled in front of it). A refused
+	// SetForegroundWindow still counts: Windows then flashes the app instead, and the window must not be dropped or
+	// replaced by a new instance.
 	public static bool TryActivate(nint hwnd)
 	{
 		if (!IsWindowAlive(hwnd))
 		{
 			return false;
 		}
-		if (IsIconic(hwnd))
+		using (Breadcrumbs.Enter("TryActivate", hwnd))
 		{
-			ShowWindow(hwnd, 9);
+			if (IsIconic(hwnd))
+			{
+				ShowWindowAsync(hwnd, SW_RESTORE);
+			}
+			// A window with a modal dialog up is disabled; the dialog is what must come forward (as Alt+Tab does).
+			nint target = hwnd;
+			if (!IsWindowEnabled(hwnd))
+			{
+				nint popup = GetLastActivePopup(hwnd);
+				if (popup != IntPtr.Zero && popup != hwnd && IsWindowVisible(popup))
+				{
+					target = popup;
+				}
+			}
+			if (!DiagnosticsNoForeground)
+			{
+				ShellLaunch.AllowForeground();
+				SetForegroundWindow(target);
+			}
+			SetWindowPos(target, IntPtr.Zero, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS);
+			return IsWindow(hwnd);
 		}
-		ShellLaunch.AllowForeground();
-		uint thisThread = GetCurrentThreadId();
-		uint fg = GetWindowThreadProcessId(GetForegroundWindow(), out var _);
-		bool att = fg != 0 && fg != thisThread && AttachThreadInput(fg, thisThread, f: true);
-		BringWindowToTop(hwnd);
-		bool foregrounded = SetForegroundWindow(hwnd);
-		if (att)
-		{
-			AttachThreadInput(fg, thisThread, f: false);
-		}
-		return foregrounded || GetForegroundWindow() == hwnd;
 	}
 
 	public static bool IsForeground(nint hwnd)
@@ -164,9 +187,25 @@ public static class WindowList
 		return hwnd != IntPtr.Zero && GetForegroundWindow() == hwnd;
 	}
 
+	public static bool IsHung(nint hwnd)
+	{
+		return hwnd != IntPtr.Zero && IsHungAppWindow(hwnd);
+	}
+
 	public static void Minimize(nint hwnd)
 	{
-		ShowWindow(hwnd, 6);
+		if (hwnd != IntPtr.Zero)
+		{
+			ShowWindowAsync(hwnd, SW_MINIMIZE);
+		}
+	}
+
+	public static void Restore(nint hwnd)
+	{
+		if (hwnd != IntPtr.Zero)
+		{
+			ShowWindowAsync(hwnd, SW_RESTORE);
+		}
 	}
 
 	public static bool IsMaximized(nint hwnd)
@@ -176,7 +215,10 @@ public static class WindowList
 
 	public static void ToggleMaximize(nint hwnd)
 	{
-		ShowWindow(hwnd, IsZoomed(hwnd) ? 9 : 3);
+		if (hwnd != IntPtr.Zero)
+		{
+			ShowWindowAsync(hwnd, IsZoomed(hwnd) ? SW_RESTORE : SW_MAXIMIZE);
+		}
 	}
 
 	public static void NewWindow(nint hwnd)
@@ -210,15 +252,28 @@ public static class WindowList
 		PostMessage(hwnd, 16, IntPtr.Zero, IntPtr.Zero);
 	}
 
+	// WM_GETICON is the one window message here: at most one 150 ms wait per call (a window that did not answer the
+	// first ask is not asked again), none at all for a window Windows already flags as hung, and none for a few seconds
+	// for any window of a thread that just timed out (a list of N windows of one busy app waits once, not N times; the
+	// class icon is used meanwhile).
 	public static ImageSource? GetIcon(nint hwnd, bool preferLarge = true)
 	{
 		//IL_0053: Unknown result type (might be due to invalid IL or missing references)
 		try
 		{
-			nint icon = IconMessage(hwnd, preferLarge ? 1 : 2);
-			if (icon == IntPtr.Zero)
+			nint icon = IntPtr.Zero;
+			uint thread = GetWindowThreadProcessId(hwnd, out _);
+			if (!IsHungAppWindow(hwnd) && !IconThreadRecentlySlow(thread))
 			{
-				icon = IconMessage(hwnd, (!preferLarge) ? 1 : 2);
+				icon = IconMessage(hwnd, preferLarge ? 1 : 2, out bool timedOut);
+				if (icon == IntPtr.Zero && !timedOut)
+				{
+					icon = IconMessage(hwnd, (!preferLarge) ? 1 : 2, out timedOut);
+				}
+				if (timedOut)
+				{
+					MarkIconThreadSlow(thread);
+				}
 			}
 			if (icon == IntPtr.Zero)
 			{
@@ -244,10 +299,60 @@ public static class WindowList
 		}
 	}
 
-	private static nint IconMessage(nint hwnd, int which)
+	// Threads whose window did not answer WM_GETICON in time, and when.
+	private static readonly Dictionary<uint, long> SlowIconThreads = new Dictionary<uint, long>();
+
+	internal const long SlowIconThreadMs = 3000;
+
+	private static bool IconThreadRecentlySlow(uint thread)
+	{
+		if (thread == 0)
+		{
+			return false;
+		}
+		lock (SlowIconThreads)
+		{
+			if (!SlowIconThreads.TryGetValue(thread, out long at))
+			{
+				return false;
+			}
+			if (Environment.TickCount64 - at < SlowIconThreadMs)
+			{
+				return true;
+			}
+			SlowIconThreads.Remove(thread);
+			return false;
+		}
+	}
+
+	private static void MarkIconThreadSlow(uint thread)
+	{
+		if (thread == 0)
+		{
+			return;
+		}
+		lock (SlowIconThreads)
+		{
+			if (SlowIconThreads.Count > 64)
+			{
+				SlowIconThreads.Clear();
+			}
+			SlowIconThreads[thread] = Environment.TickCount64;
+		}
+	}
+
+	private static nint IconMessage(nint hwnd, int which, out bool timedOut)
 	{
 		nint res;
-		return (SendMessageTimeout(hwnd, 127, which, IntPtr.Zero, 3u, 150u, out res) == IntPtr.Zero) ? IntPtr.Zero : res;
+		// SMTO_BLOCK | SMTO_ABORTIFHUNG | SMTO_ERRORONEXIT
+		if (SendMessageTimeout(hwnd, 127, which, IntPtr.Zero, 0x23u, 150u, out res) == IntPtr.Zero)
+		{
+			// Timed out, hung or gone: asking again would only wait again.
+			timedOut = true;
+			return IntPtr.Zero;
+		}
+		timedOut = false;
+		return res;
 	}
 
 	public static string? GetExePath(nint hwnd)
@@ -324,22 +429,30 @@ public static class WindowList
 	private static extern nint GetForegroundWindow();
 
 	[DllImport("user32.dll")]
-	private static extern bool ShowWindow(nint h, int n);
+	private static extern bool ShowWindowAsync(nint h, int n);
 
 	[DllImport("user32.dll")]
-	private static extern bool BringWindowToTop(nint h);
+	private static extern bool IsHungAppWindow(nint h);
+
+	[DllImport("user32.dll")]
+	private static extern bool IsWindowEnabled(nint h);
+
+	[DllImport("user32.dll")]
+	private static extern bool SetWindowPos(nint h, nint after, int x, int y, int cx, int cy, uint flags);
+
+	private const uint SWP_NOSIZE = 0x0001u;
+
+	private const uint SWP_NOMOVE = 0x0002u;
+
+	private const uint SWP_NOACTIVATE = 0x0010u;
+
+	private const uint SWP_ASYNCWINDOWPOS = 0x4000u;
 
 	[DllImport("user32.dll")]
 	private static extern bool SetForegroundWindow(nint h);
 
 	[DllImport("user32.dll")]
-	private static extern bool AttachThreadInput(uint a, uint b, bool f);
-
-	[DllImport("user32.dll")]
 	private static extern uint GetWindowThreadProcessId(nint h, out uint pid);
-
-	[DllImport("kernel32.dll")]
-	private static extern uint GetCurrentThreadId();
 
 	[DllImport("user32.dll")]
 	private static extern nint SendMessageTimeout(nint h, int msg, nint w, nint l, uint flags, uint timeout, out nint result);

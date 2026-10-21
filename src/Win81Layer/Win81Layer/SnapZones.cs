@@ -75,20 +75,25 @@ internal static class SnapZones
 		return r;
 	}
 
+	// Restore + move/size, queued to the window's own thread (ShowWindowAsync, SWP_ASYNCWINDOWPOS) in that order: the
+	// synchronous calls waited, with no timeout, on the app being snapped. Queuing returns at once even for a window
+	// Windows flags as hung, so the snap is always made; the app applies it when it answers again.
 	public static void Apply(nint hwnd, Rectangle physical)
 	{
 		try
 		{
-			ShowWindow(hwnd, 9);
-			SetWindowPos(hwnd, IntPtr.Zero, physical.Left, physical.Top, physical.Width, physical.Height, 20u);
+			ShowWindowAsync(hwnd, 9);
+			SetWindowPos(hwnd, IntPtr.Zero, physical.Left, physical.Top, physical.Width, physical.Height, 20u | SWP_ASYNCWINDOWPOS);
 		}
 		catch
 		{
 		}
 	}
 
+	internal const uint SWP_ASYNCWINDOWPOS = 0x4000u;
+
 	[DllImport("user32.dll")]
-	private static extern bool ShowWindow(nint hWnd, int nCmdShow);
+	private static extern bool ShowWindowAsync(nint hWnd, int nCmdShow);
 
 	[DllImport("user32.dll")]
 	private static extern bool SetWindowPos(nint hWnd, nint after, int x, int y, int cx, int cy, uint flags);

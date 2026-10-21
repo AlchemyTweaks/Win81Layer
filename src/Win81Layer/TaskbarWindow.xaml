@@ -60,7 +60,7 @@
       <SolidColorBrush x:Key="TB.NetworkConnectionsTile" Color="#FF086DBD" />
       <SolidColorBrush x:Key="TB.NetworkTroubleshootTile" Color="#FF743EC4" />
       <DataTemplate x:Key="TrayIconTemplate" DataType="{x:Type local:TrayAppIcon}">
-        <Button Cursor="Hand" AllowDrop="True" FocusVisualStyle="{x:Null}" ToolTip="{Binding Tooltip}" Click="OnAppIconClick" MouseRightButtonUp="OnAppIconRightClick" PreviewMouseLeftButtonDown="OnTrayIconPreviewMouseDown" PreviewMouseMove="OnTrayIconPreviewMouseMove" DragOver="OnTrayDragOver" Drop="OnTrayIconDrop">
+        <Button Cursor="Hand" AllowDrop="True" FocusVisualStyle="{x:Null}" ToolTip="{Binding Tooltip}" Click="OnAppIconClick" MouseRightButtonUp="OnAppIconRightClick" PreviewMouseLeftButtonDown="OnTrayIconPreviewMouseDown" PreviewMouseLeftButtonUp="OnTrayIconPreviewMouseUp" PreviewMouseMove="OnTrayIconPreviewMouseMove" LostMouseCapture="OnTrayIconLostCapture" MouseDown="OnTrayIconMouseDown" MouseUp="OnTrayIconMouseUp" PreviewKeyDown="OnTrayIconKeyDown" DragOver="OnTrayDragOver" Drop="OnTrayIconDrop">
           <Control.Template>
             <ControlTemplate TargetType="{x:Type Button}">
               <Grid>

@@ -26,7 +26,7 @@ internal static class Workspace
 	private static extern bool GetWindowRect(nint hWnd, out RECT lpRect);
 
 	[DllImport("user32.dll")]
-	private static extern bool ShowWindow(nint hWnd, int nCmdShow);
+	private static extern bool ShowWindowAsync(nint hWnd, int nCmdShow);
 
 	[DllImport("user32.dll")]
 	[return: MarshalAs(UnmanagedType.Bool)]
@@ -200,24 +200,26 @@ internal static class Workspace
 		}
 	}
 
-	// Position + state a single window. SetWindowPos/ShowWindow are thread-agnostic, so this is safe off the UI thread.
+	// Position + state a single window. Everything is queued to the window's own thread in order (SnapZones.Apply is
+	// ShowWindowAsync + SWP_ASYNCWINDOWPOS), so the final maximize / minimize lands after the move, and a slow app
+	// never holds this worker.
 	private static void ApplyTo(nint hwnd, Profile.WindowLayoutRecord rec)
 	{
 		try
 		{
 			if (rec.State == "Minimized")
 			{
-				ShowWindow(hwnd, SW_MINIMIZE);
+				ShowWindowAsync(hwnd, SW_MINIMIZE);
 				return;
 			}
 			if (rec.W > 0 && rec.H > 0)
 			{
 				Rectangle target = ClampToScreens(new Rectangle(rec.X, rec.Y, rec.W, rec.H), rec.Monitor);
-				SnapZones.Apply(hwnd, target);   // ShowWindow(SW_RESTORE) + SetWindowPos to the physical rect
+				SnapZones.Apply(hwnd, target);   // restore + move/size to the physical rect, queued
 			}
 			if (rec.State == "Maximized")
 			{
-				ShowWindow(hwnd, SW_MAXIMIZE);
+				ShowWindowAsync(hwnd, SW_MAXIMIZE);
 			}
 		}
 		catch (Exception ex)

@@ -1387,6 +1387,16 @@ public partial class App : System.Windows.Application
 			SeasonalTrayDiagnostics.Begin(this, e.Args);
 			return;
 		}
+		if (e.Args.Contains("--traytest"))
+		{
+			// Offscreen QA of the tray protocol, the tray table and the no-hang guarantees. Read-only: it never registers
+			// a Shell_TrayWnd, never sends anything to a window it did not create, and writes results into the given
+			// folder only.
+			SettingsStore.ReadOnlyDiagnostics = true;
+			PersistenceDiagnostics.SuppressAutomaticPostBootVerification = true;
+			TrayDiagnostics.Begin(this, e.Args);
+			return;
+		}
 		if (e.Args.Contains("--cursortest"))
 		{
 			// Offscreen QA of the Alchemy pointers. Read-only: the pointer engine is driven against an in-memory

@@ -11,10 +11,16 @@ public sealed class TrayAppIcon : INotifyPropertyChanged
 
 	public uint Id;
 
+	// The icon's guidItem when it was registered with NIF_GUID (two guid icons may share a window and id), else empty.
+	public Guid Guid;
+
 	public uint CallbackMessage;
 
 	// NOTIFYICON version the icon registered (from NIM_SETVERSION); 0 = legacy. Selects the click-forward convention.
 	public uint Version;
+
+	// False when the source could not tell the version (TrayIconInfo.VersionKnown).
+	public bool VersionKnown = true;
 
 	public nint HIcon;
 
@@ -72,7 +78,12 @@ public sealed class TrayAppIcon : INotifyPropertyChanged
 
 	private int _dropHint;
 
-	public string Key => $"{((IntPtr)OwnerHwnd).ToInt64():X}:{Id}";
+	public string Key => KeyOf(OwnerHwnd, Id, Guid);
+
+	public static string KeyOf(nint owner, uint id, Guid guid)
+	{
+		return (guid == Guid.Empty) ? $"{((IntPtr)owner).ToInt64():X}:{id}" : $"{((IntPtr)owner).ToInt64():X}:{id}:{guid:N}";
+	}
 
 	public ImageSource? Image
 	{

@@ -16,6 +16,19 @@ internal static class WindowUtil
 
 	private const byte VK_TAB = 9;
 
+	// Bumped by every ForceForeground: a foreground helper that finishes late acts only for the latest request.
+	private static int _foregroundRequest;
+
+	// Brings one of our windows to the foreground (Start, Action Center, charms, panes, the lock screen). Never attaches
+	// the calling (UI) thread to another app's input queue: with the queues attached the old foreground window must
+	// answer the activation hand-over synchronously, so a busy or hung app froze the whole shell.
+	//   1. A plain SetForegroundWindow, which works whenever this process received the last input or already owns the
+	//      foreground, and never waits on another app.
+	//   2. Only if that was refused: ForegroundBroker attaches a helper thread (not this one) to the foreground thread,
+	//      after checking that the foreground window answers, and this thread waits for it for at most ~150 ms. A busy
+	//      app may answer later: the helper then still hands the foreground over, but only for the latest request and
+	//      only while the window is still shown (never for a surface that was closed or replaced meanwhile).
+	//   3. The same-thread calls (raise, activate, focus) run here once no queue is attached.
 	public static void ForceForeground(Window window)
 	{
 		nint hwnd = new WindowInteropHelper(window).EnsureHandle();
@@ -24,26 +37,35 @@ internal static class WindowUtil
 			window.Activate();
 			return;
 		}
-		uint thisThread = GetCurrentThreadId();
-		uint fgThread = GetWindowThreadProcessId(GetForegroundWindow(), out var _);
-		bool attached = false;
-		try
+		int request = System.Threading.Interlocked.Increment(ref _foregroundRequest);
+		using (Breadcrumbs.Enter("ForceForeground", hwnd))
 		{
-			if (fgThread != 0 && fgThread != thisThread)
+			uint thisThread = GetCurrentThreadId();
+			SetForegroundWindow(hwnd);
+			nint fg = GetForegroundWindow();
+			if (fg != hwnd && fg != IntPtr.Zero)
 			{
-				attached = AttachThreadInput(fgThread, thisThread, fAttach: true);
+				uint fgThread = GetWindowThreadProcessId(fg, out var _);
+				if (fgThread != 0 && fgThread != thisThread)
+				{
+					Func<bool> current = () => System.Threading.Volatile.Read(ref _foregroundRequest) == request && IsWindowVisible(hwnd);
+					ForegroundBroker.Run(fgThread, fg, delegate
+					{
+						if (current())
+						{
+							SetForegroundWindow(hwnd);
+						}
+					}, ForegroundBroker.TimeoutMs, current);
+					if (GetForegroundWindow() != hwnd)
+					{
+						Logger.Log($"[foreground] could not take the foreground for 0x{(long)hwnd:X}: {ForegroundBroker.LastOutcome}; fg={Breadcrumbs.Describe(fg)}");
+					}
+				}
 			}
 			BringWindowToTop(hwnd);
 			SetForegroundWindow(hwnd);
 			SetActiveWindow(hwnd);
 			SetFocus(hwnd);
-		}
-		finally
-		{
-			if (attached)
-			{
-				AttachThreadInput(fgThread, thisThread, fAttach: false);
-			}
 		}
 		window.Activate();
 	}
@@ -110,13 +132,13 @@ internal static class WindowUtil
 	private static extern nint GetForegroundWindow();
 
 	[DllImport("user32.dll")]
+	private static extern bool IsWindowVisible(nint hWnd);
+
+	[DllImport("user32.dll")]
 	private static extern uint GetWindowThreadProcessId(nint hWnd, out uint pid);
 
 	[DllImport("kernel32.dll")]
 	private static extern uint GetCurrentThreadId();
-
-	[DllImport("user32.dll")]
-	private static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
 
 	[DllImport("user32.dll")]
 	private static extern bool BringWindowToTop(nint hWnd);

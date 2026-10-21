@@ -794,12 +794,25 @@ public sealed class SettingsPane : Window
 					pc.Close();
 				}
 			}
-			Type t = Type.GetTypeFromProgID("Shell.Application");
-			if (t != null)
+			// Shell.Application's MinimizeAll posts the tray's minimize-all command to Shell_TrayWnd; while the launcher
+			// hosts the tray that is its own tray window, which passes tray commands on to Explorer's taskbar
+			// (TrayHostService.ForwardTrayCommand). The COM object is made on the shell worker, off the UI thread.
+			ShellLaunch.Run(delegate
 			{
-				dynamic shell = Activator.CreateInstance(t);
-				shell.MinimizeAll();
-			}
+				try
+				{
+					Type t = Type.GetTypeFromProgID("Shell.Application");
+					if (t != null)
+					{
+						dynamic shell = Activator.CreateInstance(t);
+						shell.MinimizeAll();
+					}
+				}
+				catch (Exception ex2)
+				{
+					Logger.Log("ShowDesktop: " + ex2.Message);
+				}
+			});
 		}
 		catch (Exception ex)
 		{

@@ -13,7 +13,7 @@ public static class AppBar
 	{
 		ForEachTaskbar(delegate(nint t)
 		{
-			ShowWindow(t, 0);
+			ShowWindowAsync(t, 0);
 		});
 	}
 
@@ -24,7 +24,7 @@ public static class AppBar
 		{
 			if (IsWindowVisible(t))
 			{
-				ShowWindow(t, 0);
+				ShowWindowAsync(t, 0);
 				leaked = true;
 			}
 		});
@@ -40,7 +40,7 @@ public static class AppBar
 		TaskbarWorkArea.Restore();
 		ForEachTaskbar(delegate(nint t)
 		{
-			ShowWindow(t, 5);
+			ShowWindowAsync(t, 5);
 		});
 	}
 
@@ -90,8 +90,10 @@ public static class AppBar
 	[DllImport("user32.dll", CharSet = CharSet.Unicode)]
 	private static extern nint FindWindowEx(nint parent, nint after, string? cls, string? win);
 
+	// Async: Explorer is busiest exactly when these run (TaskbarCreated, display changes), and a synchronous
+	// ShowWindow on its taskbar would wait on its UI thread with no timeout. A hide or show need not be waited for.
 	[DllImport("user32.dll")]
-	private static extern bool ShowWindow(nint hWnd, int nCmdShow);
+	private static extern bool ShowWindowAsync(nint hWnd, int nCmdShow);
 
 	[DllImport("user32.dll")]
 	private static extern bool IsWindowVisible(nint hWnd);

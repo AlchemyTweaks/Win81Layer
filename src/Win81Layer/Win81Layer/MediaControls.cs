@@ -49,6 +49,53 @@ public static class MediaControls
 		});
 	}
 
+	private static int _lookupBusy;
+
+	// ForApp + Playing for a UI-thread caller (the task-button preview): every call on the session manager and its
+	// sessions goes out of process to the system media broker, so the lookup runs on a worker and the caller waits at
+	// most timeoutMs, getting no session (no media bar) when the broker is slow. One lookup at a time: a broker that
+	// stopped answering holds one worker, and later callers return at once.
+	public static (GlobalSystemMediaTransportControlsSession Session, bool Playing) LookupBounded(string exePath, int timeoutMs)
+	{
+		if (string.IsNullOrEmpty(exePath) || (object)Mgr == null)
+		{
+			return (null, false);
+		}
+		if (Interlocked.CompareExchange(ref _lookupBusy, 1, 0) != 0)
+		{
+			return (null, false);
+		}
+		Task<(GlobalSystemMediaTransportControlsSession, bool)> lookup;
+		try
+		{
+			lookup = Task.Run(delegate
+			{
+				try
+				{
+					GlobalSystemMediaTransportControlsSession s = ForApp(exePath);
+					return (s, (object)s != null && Playing(s));
+				}
+				finally
+				{
+					Interlocked.Exchange(ref _lookupBusy, 0);
+				}
+			});
+		}
+		catch
+		{
+			Interlocked.Exchange(ref _lookupBusy, 0);
+			return (null, false);
+		}
+		try
+		{
+			return lookup.Wait(Math.Max(1, timeoutMs)) ? lookup.Result : (null, false);
+		}
+		catch
+		{
+			return (null, false);
+		}
+	}
+
 	public static GlobalSystemMediaTransportControlsSession? ForApp(string? exePath)
 	{
 		if (string.IsNullOrEmpty(exePath))
@@ -112,36 +159,46 @@ public static class MediaControls
 		}
 	}
 
+	// The commands are started on a worker too: even starting one is a call to the media broker.
 	public static void TogglePlayPause(GlobalSystemMediaTransportControlsSession s)
 	{
-		try
+		Task.Run(delegate
 		{
-			s.TryTogglePlayPauseAsync();
-		}
-		catch
-		{
-		}
+			try
+			{
+				_ = s.TryTogglePlayPauseAsync();
+			}
+			catch
+			{
+			}
+		});
 	}
 
 	public static void Next(GlobalSystemMediaTransportControlsSession s)
 	{
-		try
+		Task.Run(delegate
 		{
-			s.TrySkipNextAsync();
-		}
-		catch
-		{
-		}
+			try
+			{
+				_ = s.TrySkipNextAsync();
+			}
+			catch
+			{
+			}
+		});
 	}
 
 	public static void Previous(GlobalSystemMediaTransportControlsSession s)
 	{
-		try
+		Task.Run(delegate
 		{
-			s.TrySkipPreviousAsync();
-		}
-		catch
-		{
-		}
+			try
+			{
+				_ = s.TrySkipPreviousAsync();
+			}
+			catch
+			{
+			}
+		});
 	}
 }
