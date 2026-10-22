@@ -2137,6 +2137,7 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 
 	public void StartOn(Screen screen)
 	{
+		PerfProbe.Refuse("TaskbarWindow.StartOn");
 		//IL_00d3: Unknown result type (might be due to invalid IL or missing references)
 		//IL_00d8: Unknown result type (might be due to invalid IL or missing references)
 		//IL_00ec: Expected O, but got Unknown
@@ -2192,7 +2193,10 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		{
 			Refresh();
 		};
-		_timer.Start();
+		if (!ExternalClock)
+		{
+			_timer.Start();   // the shell clock drives the refresh when it runs (one timer for every bar)
+		}
 		_fastTimer = new DispatcherTimer((DispatcherPriority)4)
 		{
 			// Only auto-hide needs sub-200ms responsiveness; foreground/fullscreen changes arrive via the shell hook.
@@ -2203,7 +2207,16 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		{
 			FastTick();
 		};
-		_fastTimer.Start();
+		if (!ExternalClock || SettingsStore.Current.TaskbarAutoHide)
+		{
+			_fastTimer.Start();   // with the shell clock the fast timer runs only for auto-hide or a fullscreen-hidden bar
+		}
+		// Any press on the bar is shell use (idle maintenance waits for the shell to be unused before it trims).
+		base.PreviewMouseDown += delegate
+		{
+			ShellActivity.Stamp();
+		};
+		StartMinuteClock();
 		Refresh();
 		void ReapplyAll()
 		{
@@ -2338,14 +2351,11 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 
 	private bool _hiddenForFullscreen;
 
-	// Seeded at construction so the first trim waits a full interval instead of landing mid-boot.
-	private long _lastWorkingSetTrimMs = Environment.TickCount64;
-
 	private static int _strayFrameHookReports;
 
 	// Idle tripwire: with Start and the Action Center both hidden nothing should tick per frame, so a hook still live
 	// here is a stray ~60 Hz wake-up source. Name it in the log (capped) and stop it.
-	private static void StopStrayFrameHooks()
+	internal static void StopStrayFrameHooks()
 	{
 		try
 		{
@@ -2406,6 +2416,98 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		{
 			_fastTimer.Interval = TimeSpan.FromMilliseconds((hidden || _autoHide) ? 150L : 1000L);
 		}
+		UpdateFastTimerRun();
+	}
+
+	// Driven by the shell clock, the fast timer runs only while it has fast work: auto-hide, or a bar hidden under a
+	// fullscreen window (so leaving fullscreen reveals the bar in ~150 ms). Otherwise the clock's own tick runs FastTick.
+	private void UpdateFastTimerRun()
+	{
+		if (!ExternalClock || _fastTimer == null || _stopped)
+		{
+			return;
+		}
+		if (_hiddenForFullscreen || _autoHide)
+		{
+			if (!_fastTimer.IsEnabled)
+			{
+				_fastTimer.Start();
+			}
+		}
+		else
+		{
+			_fastTimer.Stop();
+		}
+	}
+
+	// True when the shell clock drives the bars (one coalesced timer) instead of each bar's own timers.
+	internal static bool ExternalClock;
+
+	internal void ClockRefresh()
+	{
+		if (!_stopped)
+		{
+			Refresh();
+		}
+	}
+
+	internal void ClockFastTick()
+	{
+		if (!_stopped && (_fastTimer == null || !_fastTimer.IsEnabled))
+		{
+			FastTick();
+		}
+	}
+
+	// Back from lock or display-off: the tray telemetry that was paused is read once now.
+	internal void ClockWake()
+	{
+		if (_stopped || !_isPrimary)
+		{
+			return;
+		}
+		ScanTrayAsync();
+		RefreshPowerNow();
+		RefreshNetNow();
+	}
+
+	private DispatcherTimer? _minuteTimer;
+
+	// The clock text changes once a minute: a one-shot timer lands just past each minute boundary (the refresh also
+	// rewrites it, but at the idle cadence that alone could lag by up to 10 s).
+	private void StartMinuteClock()
+	{
+		if (!ExternalClock)
+		{
+			return;
+		}
+		_minuteTimer = new DispatcherTimer(DispatcherPriority.Background);
+		_minuteTimer.Tick += delegate
+		{
+			_minuteTimer.Stop();
+			if (_stopped)
+			{
+				return;
+			}
+			UpdateClockText();
+			ArmMinuteClock();
+		};
+		ArmMinuteClock();
+	}
+
+	private void ArmMinuteClock()
+	{
+		DateTime now = DateTime.Now;
+		double ms = 60000.0 - (now.Second * 1000 + now.Millisecond) + 40.0;
+		_minuteTimer!.Interval = TimeSpan.FromMilliseconds(Math.Max(50.0, ms));
+		_minuteTimer.Start();
+	}
+
+	private void UpdateClockText()
+	{
+		DateTime now = DateTime.Now;
+		ClockTime.Text = now.ToString("HH:mm");
+		ClockDate.Text = now.ToString((_orientedVertical == true) ? "d/M" : "ddd, d MMM");
 	}
 
 	private void FastTick()
@@ -2465,6 +2567,7 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 	public void StopBar()
 	{
 		_stopped = true;
+		_minuteTimer?.Stop();
 		DispatcherTimer? timer = _timer;
 		if (timer != null)
 		{
@@ -2480,6 +2583,7 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		{
 			trayScanDebounce.Stop();
 		}
+		_traySettleTimer?.Stop();
 		DispatcherTimer? hoverShow = _hoverShow;
 		if (hoverShow != null)
 		{
@@ -2674,6 +2778,10 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 						((DispatcherObject)this).Dispatcher.BeginInvoke((Delegate)(Action)TaskbarWorkArea.NudgeWindows, (DispatcherPriority)4, Array.Empty<object>());
 					}
 					Logger.Log("TaskbarCreated: native bar re-hidden, shell hook + work area reapplied");
+					if (_isPrimary)
+					{
+						NativeHostWarden.RequestPass("TaskbarCreated");   // explorer restarted: its hosts may have respawned
+					}
 				}
 				catch (Exception ex)
 				{
@@ -3053,6 +3161,7 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 			// poll (foreground is event-driven via the shell hook), so 1s halves the idle wakeups.
 			_fastTimer.Interval = TimeSpan.FromMilliseconds(_autoHide ? 150L : 1000L);
 		}
+		UpdateFastTimerRun();
 		if (!_autoHide)
 		{
 			SetHiddenState(hide: false);
@@ -3941,30 +4050,14 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		{
 			_screenCache.Clear();
 			_exeCache.Clear();
-		}
-		// Keep the idle working set low over long uptime: trim at most every 45s (primary bar only, one process-wide
-		// call). EmptyWorkingSet is cheap and idle pages fault back lazily only if touched, so there is no perceptible
-		// cost while the shell sits idle — which is most of the time.
-		if (_isPrimary)
-		{
-			long trimNow = Environment.TickCount64;
-			if (trimNow - _lastWorkingSetTrimMs >= 45000L)
+			if (_isPrimary)
 			{
-				_lastWorkingSetTrimMs = trimNow;
-				StopStrayFrameHooks();
-				NativeShell.TrimSelf();
-				// Keep native hosts dormant: if Windows respawned StartMenuExperienceHost/SearchHost in the background,
-				// re-suspend + trim the fresh instance back to WS ~0 (churn-free; no kill/respawn cycle). No-op when
-				// native suppression is off (nothing to re-suspend).
-				if (SettingsStore.FastSnapshot.SuspendNativeStart)
-				{
-					NativeShell.ReassertSuspension();
-				}
+				ClearAumidCache();   // bounded anyway; forget closed windows and exited processes with the other caches
 			}
 		}
-		DateTime now = DateTime.Now;
-		ClockTime.Text = now.ToString("HH:mm");
-		ClockDate.Text = now.ToString((_orientedVertical == true) ? "d/M" : "ddd, d MMM");
+		// Working-set trims and the native-host check no longer run here: IdleMaintenance trims when the shell is unused
+		// (off the UI thread) and NativeHostWarden keeps the native hosts dormant on a pool thread.
+		UpdateClockText();
 		if (_isPrimary)
 		{
 			UpdateTray();
@@ -4480,18 +4573,50 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 
 	private void UpdateTray()
 	{
-		if (!VolumePopup.IsOpen)
+		ReadVolume();
+		// With the tray host active every real change is pushed (Changed) and the host's 1 s timer drops icons whose
+		// owner window is gone, so the periodic scan is only a 30 s wall-clock backstop (whatever the refresh cadence);
+		// the legacy readers still poll every other refresh.
+		long nowMs = Environment.TickCount64;
+		if (TrayHostService.Active ? (nowMs - _lastTrayBackstopMs >= 30000L) : (_tick % 2 == 0))
 		{
-			_tray.VolumePct = (int)Math.Round(_audio.GetVolume() * 100f);
-			_tray.Muted = _audio.GetMute();
-		}
-		if (_tick % 2 == 0)
-		{
+			_lastTrayBackstopMs = nowMs;
 			ScanTrayAsync();
 		}
 		bool doPerf = _tray.PerfVisible;
 		bool doSlow = _tick % 5 == 0;
 		_tick++;
+		RunTrayTelemetry(doPerf, doSlow);
+	}
+
+	private long _lastTrayBackstopMs = long.MinValue / 2;
+
+	private void ReadVolume()
+	{
+		if (!VolumePopup.IsOpen)
+		{
+			_tray.VolumePct = (int)Math.Round(_audio.GetVolume() * 100f);
+			_tray.Muted = _audio.GetMute();
+		}
+	}
+
+	// Idle shell clock ticks between two bar refreshes (see ShellClock.Telemetry): the readings the user may be watching,
+	// volume and mute and the CPU/RAM/network meter when it is shown, keep a 3 s cadence while nobody touches the input.
+	internal void ClockTelemetry()
+	{
+		if (_stopped || !_isPrimary || base.Visibility != Visibility.Visible)
+		{
+			return;
+		}
+		ReadVolume();
+		if (_tray.PerfVisible)
+		{
+			RunTrayTelemetry(doPerf: true, doSlow: false);
+		}
+	}
+
+	private void RunTrayTelemetry(bool doPerf, bool doSlow)
+	{
 		if (!(doPerf | doSlow) || _trayTelemetryBusy)
 		{
 			return;
@@ -4553,11 +4678,42 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		}
 		try
 		{
+			if (TrayHostService.Active && ((DispatcherObject)this).Dispatcher.CheckAccess())
+			{
+				ScanTrayNow();   // raised on the UI thread: the host's table is an in-memory copy, apply it right here
+				return;
+			}
 			((DispatcherObject)this).Dispatcher.BeginInvoke((Delegate)(Action)ScanTrayAsync, Array.Empty<object>());
 		}
 		catch
 		{
 		}
+	}
+
+	// The tray host's table applied synchronously (its Snapshot is an in-memory copy under a short lock). A scan already
+	// in flight picks the change up through the dirty flag instead.
+	private void ScanTrayNow()
+	{
+		if (!_isPrimary)
+		{
+			return;
+		}
+		if (_trayScanBusy)
+		{
+			_trayScanDirty = true;
+			return;
+		}
+		List<TrayIconInfo> infos;
+		try
+		{
+			infos = TrayHostService.Snapshot();
+		}
+		catch (Exception ex)
+		{
+			Logger.Log("TrayHost snapshot failed: " + ex.Message);
+			return;
+		}
+		ApplyTrayInfos(infos);
 	}
 
 	protected override void OnClosed(EventArgs e)
@@ -5181,6 +5337,58 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 			OverflowPopup.IsOpen = false;
 		}
 		DeliverPendingTrayEvent();
+		ArmTraySettle();
+	}
+
+	// State-aware seasonal tray icons: a blinking state that went quiet, or a start-up vote or an idle change that came
+	// due, is drawn by the next tray scan (ApplyTrayInfos, NeedsSettle). With the tray host active the periodic scan is
+	// only a 30 s backstop and an app that stops blinking sends nothing more, so a one-shot scan is armed for the earliest
+	// of these (field reads only; nothing is armed while no icon has one pending).
+	private DispatcherTimer? _traySettleTimer;
+
+	private void ArmTraySettle()
+	{
+		long next = -1L;
+		foreach (TrayAppIcon vm in _appIcons)
+		{
+			long ms = SeasonalTrayIcons.SettleDueInMs(vm);
+			if (ms > 0 && (next < 0 || ms < next)) next = ms;
+		}
+		foreach (TrayAppIcon vm in _overflowIcons)
+		{
+			long ms = SeasonalTrayIcons.SettleDueInMs(vm);
+			if (ms > 0 && (next < 0 || ms < next)) next = ms;
+		}
+		if (next < 0)
+		{
+			_traySettleTimer?.Stop();   // nothing pending (one already due was drawn by this scan)
+			return;
+		}
+		DispatcherTimer? timer = _traySettleTimer;
+		if (timer == null)
+		{
+			DispatcherTimer t = new DispatcherTimer(DispatcherPriority.Background, ((DispatcherObject)this).Dispatcher);
+			t.Tick += delegate
+			{
+				t.Stop();
+				if (_stopped || !_isPrimary)
+				{
+					return;
+				}
+				if (TrayHostService.Active)
+				{
+					ScanTrayNow();
+				}
+				else
+				{
+					ScanTrayAsync();
+				}
+			};
+			_traySettleTimer = timer = t;
+		}
+		timer.Stop();
+		timer.Interval = TimeSpan.FromMilliseconds(Math.Min(next + 20L, 600000L));
+		timer.Start();
 	}
 
 	// Never trade a working callback for none on the same icon: a later snapshot of an orphaned re-registration (its
@@ -10377,15 +10585,48 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 	[DllImport("user32.dll")]
 	private static extern void keybd_event(byte vk, byte scan, uint flags, nuint extra);
 
+	// A process's package identity (AUMID) never changes, so the OpenProcess + GetApplicationUserModelId of every refresh
+	// is done once per process and kept in two layers:
+	// - by process id, with the process's creation time: a process id reused by a new process (the old one exited) has
+	//   another creation time, so the entry is never handed to it; the creation time is read on the same handle the
+	//   lookup opens anyway;
+	// - by (window, process id) for windows already resolved: the steady state of a refresh is a dictionary lookup, no
+	//   process handle at all. A window belongs to one process for its whole life, so this key cannot cross processes.
+	// A lookup that failed is not cached: only an identity, or the definite answer "not a packaged app". Both layers are
+	// bounded and cleared with the bars' other caches; neither needs the clear to stay correct.
+	private static readonly ConcurrentDictionary<(nint, uint), string?> AumidByWindow = new ConcurrentDictionary<(nint, uint), string?>();
+
+	private static readonly ConcurrentDictionary<uint, (long Created, string? Aumid)> AumidByProcess = new ConcurrentDictionary<uint, (long, string?)>();
+
 	private static string? AumidForWindow(nint hwnd)
 	{
+		GetWindowThreadProcessId(hwnd, out var pid);
+		if (pid == 0)
+		{
+			return null;
+		}
+		(nint, uint) key = (hwnd, pid);
+		if (AumidByWindow.TryGetValue(key, out string? known))
+		{
+			return known;
+		}
+		string? aumid = AumidForProcess(pid, out bool definite);
+		if (definite)
+		{
+			if (AumidByWindow.Count > 512)
+			{
+				AumidByWindow.Clear();
+			}
+			AumidByWindow[key] = aumid;
+		}
+		return aumid;
+	}
+
+	private static string? AumidForProcess(uint pid, out bool definite)
+	{
+		definite = false;
 		try
 		{
-			GetWindowThreadProcessId(hwnd, out var pid);
-			if (pid == 0)
-			{
-				return null;
-			}
 			nint h = OpenProcess(4096u, inherit: false, pid);
 			if (h == IntPtr.Zero)
 			{
@@ -10393,9 +10634,35 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 			}
 			try
 			{
+				long created = GetProcessTimes(h, out long c, out _, out _, out _) ? c : 0L;
+				if (created != 0L && AumidByProcess.TryGetValue(pid, out (long Created, string? Aumid) entry) && entry.Created == created)
+				{
+					definite = true;   // the same process as when it was resolved
+					return entry.Aumid;
+				}
 				uint len = 260u;
 				StringBuilder sb = new StringBuilder((int)len);
-				return (GetApplicationUserModelId(h, ref len, sb) == 0) ? sb.ToString() : null;
+				int rc = GetApplicationUserModelId(h, ref len, sb);
+				string? aumid = null;
+				if (rc == 0)
+				{
+					definite = true;
+					aumid = sb.ToString();
+				}
+				else
+				{
+					// APPMODEL_ERROR_NO_PACKAGE / APPMODEL_ERROR_NO_APPLICATION: an unpackaged process (the usual answer).
+					definite = rc == 15700 || rc == 15703;
+				}
+				if (definite && created != 0L)
+				{
+					if (AumidByProcess.Count > 256)
+					{
+						AumidByProcess.Clear();
+					}
+					AumidByProcess[pid] = (created, aumid);
+				}
+				return aumid;
 			}
 			finally
 			{
@@ -10407,6 +10674,34 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 			return null;
 		}
 	}
+
+	// Clears both AUMID layers (with the bars' other caches; correctness never depends on it).
+	internal static void ClearAumidCache()
+	{
+		AumidByWindow.Clear();
+		AumidByProcess.Clear();
+	}
+
+	// --perfprobe unit seams.
+	internal static string? QaAumid(nint hwnd)
+	{
+		return AumidForWindow(hwnd);
+	}
+
+	internal static (long Created, string? Aumid)? QaAumidEntry(uint pid)
+	{
+		return AumidByProcess.TryGetValue(pid, out (long Created, string? Aumid) e) ? e : null;
+	}
+
+	// Plants a process entry (and forgets the resolved windows, so the next lookup goes through it).
+	internal static void QaPlantAumid(uint pid, long created, string aumid)
+	{
+		AumidByWindow.Clear();
+		AumidByProcess[pid] = (created, aumid);
+	}
+
+	[DllImport("kernel32.dll")]
+	private static extern bool GetProcessTimes(nint process, out long creation, out long exit, out long kernel, out long user);
 
 	[DllImport("user32.dll")]
 	private static extern uint GetWindowThreadProcessId(nint hWnd, out uint pid);

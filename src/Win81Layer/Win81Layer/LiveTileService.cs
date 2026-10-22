@@ -82,7 +82,10 @@ public sealed partial class LiveTileService : IDisposable
 		}
 	}
 
-	public LiveTileService(Func<IEnumerable<TileVm>> tiles, string weatherCity, string weatherUnits)
+	// The art warmup (weather pictures, clock/agenda backgrounds, cached feeds) waits for EnsureWarm when deferred.
+	private bool _warmPending;
+
+	public LiveTileService(Func<IEnumerable<TileVm>> tiles, string weatherCity, string weatherUnits, bool deferWarm = false)
 	{
 		//IL_003d: Unknown result type (might be due to invalid IL or missing references)
 		//IL_0042: Unknown result type (might be due to invalid IL or missing references)
@@ -103,6 +106,17 @@ public sealed partial class LiveTileService : IDisposable
 			Update();
 		};
 		_weatherAssetsReady = !_lastWeather.HasValue;
+		if (deferWarm)
+		{
+			_warmPending = true;
+			return;
+		}
+		WarmNow();
+	}
+
+	private void WarmNow()
+	{
+		_weatherAssetsReady = !_lastWeather.HasValue;
 		if (_lastWeather.HasValue)
 		{
 			SetWeatherLoadingFaces();
@@ -111,9 +125,47 @@ public sealed partial class LiveTileService : IDisposable
 		_ = WarmMetroTilesAsync();
 	}
 
+	// Runs a warmup that was deferred (first show of a deferred Start, or after ReleaseArt).
+	internal void EnsureWarm()
+	{
+		if (!_warmPending)
+		{
+			return;
+		}
+		_warmPending = false;
+		WarmNow();
+	}
+
+	// Gives back the decoded tile art while Start stays hidden (Windows 7 Start mode); EnsureWarm builds it again, and
+	// the clock, agenda and news faces are then rebuilt as soon as that warm-up lands (not only by the next shown tick),
+	// so a later show has its faces on the first frame as it had before the release.
+	internal void ReleaseArt()
+	{
+		if (_timer.IsEnabled || _warmPending)
+		{
+			return;
+		}
+		foreach (TileVm t in _tiles())
+		{
+			if (t.Live is LiveKind.Weather or LiveKind.Clock or LiveKind.Agenda or LiveKind.News)
+			{
+				t.MetroVisual = null;
+			}
+		}
+		_weatherFaceKey.Clear();
+		ReleaseMetroArt();
+		WeatherTileArt.ClearCache();
+		MetroLiveTileArt.ReleaseBackgrounds();
+		_warmPending = true;
+		_rebuildFacesOnWarm = true;
+	}
+
+	private bool _rebuildFacesOnWarm;
+
 	public void Start()
 	{
-		if (App.SafeMode)
+		EnsureWarm();
+		if (App.SafeMode || PerfProbe.Active)
 		{
 			return;   // safe mode: tiles stay static (no flip timers / Weather-Mail-Agenda network fetches). Covers all call sites.
 		}

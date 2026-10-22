@@ -201,6 +201,10 @@ public static class AppInventory
 				baseline = count;
 				try
 				{
+					if (SettingsStore.ReadOnlyDiagnostics)
+					{
+						throw new InvalidOperationException("read-only diagnostics");   // never writes the baseline file
+					}
 					Directory.CreateDirectory(Path.GetDirectoryName(InvCountPath));
 					File.WriteAllText(InvCountPath, count.ToString());
 				}

@@ -32,7 +32,8 @@ internal static class WeatherTileArt
 	private static readonly object AssetGate = new object();
 	private static readonly Dictionary<string, BitmapSource> AssetCache = new Dictionary<string, BitmapSource>(StringComparer.OrdinalIgnoreCase);
 	private static readonly LinkedList<string> AssetLru = new LinkedList<string>();
-	private const int MaxDecodedAssets = 4;
+	// The current and the next band (Preload); a crossfade's outgoing picture is held by the presenter, not by this cache.
+	private const int MaxDecodedAssets = 2;
 
 	internal enum Category { Clear, Partly, Cloudy, Rain, Snow, Thunder, Fog }
 	internal enum Band { Dawn, Day, Dusk, Night }
@@ -321,6 +322,15 @@ internal static class WeatherTileArt
 			text += ". Tomorrow " + TemperaturePair(result.TomHiC, result.TomLoC, fahrenheit) + ", " + Cap(result.TomDesc ?? "");
 		if (result.IsStale) text += ". Offline, showing last known data";
 		return text;
+	}
+
+	internal static void ClearCache()
+	{
+		lock (AssetGate)
+		{
+			AssetCache.Clear();
+			AssetLru.Clear();
+		}
 	}
 
 	internal static BitmapSource LoadAsset(string name)

@@ -430,6 +430,10 @@ public static class Profile
 
 	public static void Save(IReadOnlyList<GroupVm> groups)
 	{
+		if (PerfProbe.Active)
+		{
+			return;
+		}
 		try
 		{
 			ProfileRecord record = new ProfileRecord

@@ -39,6 +39,7 @@ public sealed class TaskbarManager
 
 	public void Activate()
 	{
+		PerfProbe.Refuse("TaskbarManager.Activate");
 		if (_active)
 		{
 			return;
@@ -226,6 +227,39 @@ public sealed class TaskbarManager
 		_bars.Clear();
 		Volatile.Write(ref _wheelRouteBars, Array.Empty<TaskbarWindow>());
 		AppBar.ShowNativeTaskbar();
+	}
+
+	// Shell clock consumers (UI thread). Each bar has its own guard: a bar that keeps failing never stops the other.
+	internal void ClockRefreshAll()
+	{
+		foreach (TaskbarWindow b in _bars)
+		{
+			try { b.ClockRefresh(); } catch (Exception ex) { ShellClock.LogFailure("taskbar refresh", ex); }
+		}
+	}
+
+	internal void ClockFastAll()
+	{
+		foreach (TaskbarWindow b in _bars)
+		{
+			try { b.ClockFastTick(); } catch (Exception ex) { ShellClock.LogFailure("taskbar fast tick", ex); }
+		}
+	}
+
+	internal void ClockTelemetryAll()
+	{
+		foreach (TaskbarWindow b in _bars)
+		{
+			try { b.ClockTelemetry(); } catch (Exception ex) { ShellClock.LogFailure("taskbar telemetry", ex); }
+		}
+	}
+
+	internal void ClockWakeAll()
+	{
+		foreach (TaskbarWindow b in _bars)
+		{
+			try { b.ClockWake(); } catch (Exception ex) { ShellClock.LogFailure("taskbar wake", ex); }
+		}
 	}
 
 	public void CloseFlyoutsOutside(int x, int y)

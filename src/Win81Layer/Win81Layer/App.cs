@@ -313,7 +313,17 @@ public partial class App : System.Windows.Application
 
 	private Process? _watchdog;
 
-	private DispatcherTimer? _shellTimer;
+	private ShellClock? _shellClock;
+
+	private IdleMaintenance? _idleMaintenance;
+
+	private bool _profileSignalWatched;
+
+	// Input-hook liveness, observed on every shell clock tick (see InputHookLiveness).
+	private readonly InputHookLiveness _hookLiveness = new InputHookLiveness();
+
+	// Last run of the stray frame-hook tripwire (every 45 s, independent of the idle trims).
+	private long _lastTripwireMs;
 
 	private bool _managed;   // true when launched by the supervisor (--managed) Ã¢â€ â€™ do not spawn a self-watchdog
 
@@ -369,42 +379,21 @@ public partial class App : System.Windows.Application
 	// instead of Process.GetProcessesByName which can stall during the boot storm and freeze the whole recovery loop.
 	private static int _supManagedPid;
 
-	private static int _heartbeatTick;   // gate WriteHeartbeat to ~every 4th shell tick (~4s)
-
 	private static System.DateTime _supManagedLaunchUtc;   // when the CURRENT healthy managed shell was launched (for young-death detection)
 
 	private static string HeartbeatPath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Win81Layer", "heartbeat.dat");
 
+	// Startup stamp: the shared-memory beat and heartbeat.dat (wall-clock UTC ticks; see Heartbeat).
 	private static void WriteHeartbeat()
 	{
-		try
-		{
-			using FileStream fs = new FileStream(HeartbeatPath, FileMode.Create, FileAccess.Write, FileShare.ReadWrite);
-			// WALL-CLOCK, not Environment.TickCount64: TickCount64 resets to ~0 on reboot while heartbeat.dat persists,
-			// which made the watchdog mis-read a pre-reboot beat as a bogus/future age and never recover a wedged boot.
-			byte[] bytes = BitConverter.GetBytes(DateTime.UtcNow.Ticks);
-			fs.Write(bytes, 0, bytes.Length);
-		}
-		catch
-		{
-		}
+		Heartbeat.BeatNow();
 	}
 
+	// The fresher of the shell's shared-memory beat and heartbeat.dat (see Heartbeat); -1 when neither can be read.
 	private static long ReadHeartbeat()
 	{
-		try
-		{
-			using FileStream fs = new FileStream(HeartbeatPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-			byte[] bytes = new byte[8];
-			if (fs.Read(bytes, 0, 8) == 8)
-			{
-				return BitConverter.ToInt64(bytes, 0);
-			}
-		}
-		catch
-		{
-		}
-		return -1L;
+		long beat = Heartbeat.ReadFreshest(HeartbeatPath);
+		return beat > 0L ? beat : -1L;
 	}
 
 	[DllImport("user32.dll")]
@@ -511,7 +500,7 @@ public partial class App : System.Windows.Application
 					if (s.SuspendNativeStart)
 					{
 						NativeShell.SuspendShellHosts();   // idempotent-guarded; no-op if already suspended
-						NativeShell.ReassertSuspension();   // catch any host Windows respawned during boot -> re-suspend + trim to WS ~0
+						NativeHostWarden.RequestPass("dominance backstop");   // catch a host respawned during boot (pool thread)
 						suspended = true;
 					}
 					if (s.TaskbarEnabled)
@@ -1404,6 +1393,17 @@ public partial class App : System.Windows.Application
 			SettingsStore.ReadOnlyDiagnostics = true;
 			PersistenceDiagnostics.SuppressAutomaticPostBootVerification = true;
 			CursorDiagnostics.Begin(this, e.Args);
+			return;
+		}
+		if (e.Args.Contains("--perfprobe"))
+		{
+			// Offscreen performance probe. Read-only and isolated: settings and state writes throw, every window stays
+			// offscreen and is never activated, and it never creates a taskbar, tray host, hook, supervisor or watchdog,
+			// never touches native hosts, and exits by itself. Results go into the given folder only.
+			SettingsStore.ReadOnlyDiagnostics = true;
+			PersistenceDiagnostics.SuppressAutomaticPostBootVerification = true;
+			PerfProbe.Active = true;
+			PerfProbeDiagnostics.Begin(this, e.Args);
 			return;
 		}
 		// A shell started BY the supervisor is "managed" Ã¢â‚¬â€ it must NOT spawn its own watchdog (the supervisor is the
@@ -2938,6 +2938,15 @@ public partial class App : System.Windows.Application
 			_startScreen.ShowPersonalize();
 		};
 		_settingsPane.ChangePcSettingsRequested += OpenPcSettings;
+		// Windows 7 Start mode: the Settings pane's Personalization links are the only way to the full Metro Start, so
+		// the pane opening is the signal to prepare it in the background (no-op in Metro mode or once it is ready).
+		_settingsPane.IsVisibleChanged += (DependencyPropertyChangedEventHandler)delegate(object _, DependencyPropertyChangedEventArgs e)
+		{
+			if ((bool)e.NewValue)
+			{
+				_startScreen?.PrepareInBackground("Settings pane opened");
+			}
+		};
 		_searchPane = new SearchPane(() => _startScreen.Apps, delegate(AppEntry a)
 		{
 			_startScreen.LaunchApp(a);
@@ -3218,36 +3227,58 @@ public partial class App : System.Windows.Application
 		}, (DispatcherPriority)2, Array.Empty<object>());
 		ScheduleDominanceBackstop();   // re-assert dominant composition + native suppression if an early degraded read applied native
 		AppLauncher.PrewarmIdentities();   // warm the packaged-app AUMID cache off-thread so the first app launch is instant
-		_shellTimer = new DispatcherTimer((DispatcherPriority)4)   // Background: never competes with input/animation
+		// One coalesced shell clock (see ShellClock): heartbeat on every tick, the bars' refresh and fast checks, the
+		// supervisor tick, idle maintenance and the native-host backstop, at a cadence that backs off when the user is
+		// idle and nearly stops while the session is locked or the display is off.
+		_idleMaintenance = new IdleMaintenance(AnyShellSurfaceOpen);
+		_shellClock = new ShellClock(((DispatcherObject)this).Dispatcher);
+		TaskbarWindow.ExternalClock = true;
+		_shellClock.Heartbeat = Heartbeat.Beat;   // UI-thread liveness stamp (stays OUTSIDE every guard)
+		_shellClock.Supervisor = delegate
 		{
-			Interval = TimeSpan.FromMilliseconds(1000L)   // heartbeat + supervisor tick; thresholds are 12s+, so 1s is ample
-		};
-		_shellTimer.Tick += delegate
-		{
-			// Heartbeat only needs to stay ahead of the 12s watchdog threshold; writing on every 4th tick (~4s)
-			// instead of every second cuts heartbeat.dat create/writes ~4x (SEP scan + SSD churn); coverage kept.
-			if ((++_heartbeatTick & 3) == 0) WriteHeartbeat();   // UI-thread liveness stamp (stays OUTSIDE the guard)
-			try
+			if (!_profileSignalWatched && ShellProfileChangeSignal.TryConsume())
 			{
-				if (ShellProfileChangeSignal.TryConsume())
+				ApplyShellProfileSignal();
+			}
+			ShellSupervisor.Tick(_taskbar?.IsActive ?? false);
+		};
+		_shellClock.RefreshBars = delegate
+		{
+			_taskbar?.ClockRefreshAll();
+		};
+		_shellClock.FastBars = delegate
+		{
+			_taskbar?.ClockFastAll();
+		};
+		_shellClock.Telemetry = delegate
+		{
+			_taskbar?.ClockTelemetryAll();
+		};
+		_shellClock.Maintenance = OnShellMaintenance;
+		_shellClock.Asleep = delegate(bool locked)
+		{
+			_idleMaintenance?.OnAsleep(locked);
+		};
+		_shellClock.ModeChanged = delegate(ShellClock.Mode was, ShellClock.Mode now)
+		{
+			if (was == ShellClock.Mode.Asleep && now != ShellClock.Mode.Asleep)
+			{
+				// Unlock or display-on: input typed on the lock screen or another desktop never reached the hooks.
+				_hookLiveness.Grace(Environment.TickCount64);
+				_taskbar?.ClockWakeAll();
+				if (SettingsStore.FastSnapshot.SuspendNativeStart)
 				{
-					AppSettings refreshed = SettingsStore.LoadForced();   // external profile change must bypass the Load() TTL
-					SeasonalTheme.InvalidateCache();   // a maintenance command may also have changed the seasonal restore point
-					DesktopComposition.ApplyPersistedModeTransition(refreshed.DesktopCompositionMode);
-					ApplyShellProfileLive(refreshed);
-					// A maintenance command (for example --seasonal-restore) may have changed the seasonal look.
-					ApplySeasonalLive();
-					Logger.Log("Shell profile refresh signal consumed by the managed shell.");
+					NativeHostWarden.RequestPass("wake");
 				}
-				ShellSupervisor.Tick(_taskbar?.IsActive ?? false);
-			}
-			catch (Exception exTick)
-			{
-				Logger.Log("shell tick body failed (heartbeat unaffected, watchdog still fed): " + exTick.Message);
+				_hotCorners?.CheckNow();
 			}
 		};
-		WriteHeartbeat();   // initial stamp so the watchdog has a baseline before it starts polling
-		_shellTimer.Start();
+		_profileSignalWatched = ShellProfileChangeSignal.Watch(delegate
+		{
+			((DispatcherObject)this).Dispatcher.BeginInvoke((Delegate)new Action(ApplyShellProfileSignal), (DispatcherPriority)4, Array.Empty<object>());
+		});
+		WriteHeartbeat();   // initial stamp (section + file) so the watchdog has a baseline before it starts polling
+		_shellClock.Start();
 		SystemEvents.DisplaySettingsChanged += delegate
 		{
 			((DispatcherObject)this).Dispatcher.BeginInvoke((Delegate)(Action)delegate
@@ -3306,6 +3337,30 @@ public partial class App : System.Windows.Application
 			ReplaceExplorerShortcut = settings.DominantMode,
 			DominantMode = settings.DominantMode
 		};
+		// Hot corners: armed by the mouse hook's zone changes instead of a 10 Hz poll; the poll comes back whenever the
+		// mouse hook is not installed.
+		_winHook.HooksInstalled += delegate
+		{
+			((DispatcherObject)this).Dispatcher.BeginInvoke((Delegate)(Action)delegate
+			{
+				WinKeyHook? hook = _winHook;
+				if (hook != null && hook.MouseHookActive)
+				{
+					_hotCorners?.AttachHook(hook);
+				}
+			}, Array.Empty<object>());
+		};
+		_winHook.HookInstallFailed += delegate
+		{
+			((DispatcherObject)this).Dispatcher.BeginInvoke((Delegate)(Action)delegate
+			{
+				_hotCorners?.DetachHook();
+			}, Array.Empty<object>());
+		};
+		if (_winHook.MouseHookActive)
+		{
+			_hotCorners?.AttachHook(_winHook);
+		}
 		_winHook.WinTapped += delegate
 		{
 			int pressTime = Environment.TickCount;
@@ -3517,18 +3572,28 @@ public partial class App : System.Windows.Application
 		{
 			Interval = TimeSpan.FromSeconds(12.0)
 		};
+		int bootTrimWaits = 0;
 		bootTrim.Tick += delegate
 		{
+			// The blocking collection also pauses the managed input hook: wait (up to a minute) for a second without input.
+			if (ShellClock.InputIdleMs() < 1000L && ++bootTrimWaits < 60)
+			{
+				bootTrim.Interval = TimeSpan.FromSeconds(1.0);
+				return;
+			}
 			bootTrim.Stop();
-			try
+			System.Threading.ThreadPool.UnsafeQueueUserWorkItem(delegate
 			{
-				// Aggressive (blocking + compacting) so the GC also decommits its free regions, not just the working set.
-				GC.Collect(2, GCCollectionMode.Aggressive, blocking: true, compacting: true);
-				NativeShell.TrimSelf();
-			}
-			catch
-			{
-			}
+				try
+				{
+					// Aggressive (blocking + compacting) so the GC also decommits its free regions, not just the working set.
+					GC.Collect(2, GCCollectionMode.Aggressive, blocking: true, compacting: true);
+					NativeShell.TrimSelf();
+				}
+				catch
+				{
+				}
+			}, null);
 		};
 		bootTrim.Start();
 		// Pre-warm our Start screen off the first-open critical path. A few seconds after boot — once the taskbar and
@@ -4484,7 +4549,15 @@ public partial class App : System.Windows.Application
 					{
 						GC.Collect(2, GCCollectionMode.Optimized, blocking: false, compacting: false);
 					}
-					NativeShell.TrimHosts();
+					// Suspended hosts were trimmed once when suspended (NativeHostWarden); running ones are trimmed off the
+					// UI thread (three process enumerations used to run here).
+					if (!SettingsStore.FastSnapshot.SuspendNativeStart)
+					{
+						System.Threading.Tasks.Task.Run(delegate
+						{
+							try { NativeShell.TrimHosts(); } catch { }
+						});
+					}
 				}
 			}
 			}
@@ -4690,6 +4763,7 @@ public partial class App : System.Windows.Application
 
 	private void ScheduleIdleTrim()
 	{
+		ShellActivity.Stamp();   // a surface just closed: the shell was in use
 		if (_idleTrimTimer == null)
 		{
 			return;
@@ -4705,6 +4779,111 @@ public partial class App : System.Windows.Application
 				_idleTrimTimer.Start();
 			}
 		}
+	}
+
+	// A profile change committed by a maintenance command (second process): re-read and apply it live.
+	private void ApplyShellProfileSignal()
+	{
+		try
+		{
+			AppSettings refreshed = SettingsStore.LoadForced();   // external profile change must bypass the Load() TTL
+			SeasonalTheme.InvalidateCache();   // a maintenance command may also have changed the seasonal restore point
+			DesktopComposition.ApplyPersistedModeTransition(refreshed.DesktopCompositionMode);
+			ApplyShellProfileLive(refreshed);
+			// A maintenance command (for example --seasonal-restore) may have changed the seasonal look.
+			ApplySeasonalLive();
+			Logger.Log("Shell profile refresh signal consumed by the managed shell.");
+		}
+		catch (Exception ex)
+		{
+			Logger.Log("Shell profile refresh failed: " + ex.Message);
+		}
+	}
+
+	// Shell clock maintenance (UI thread): idle trims, the native-host backstop, the stray frame-hook tripwire, the hot
+	// corners' cursor check and the input-hook liveness check.
+	// Each part has its own guard, so one that keeps failing never stops the others.
+	private void OnShellMaintenance(long now, long inputIdleMs)
+	{
+		try { _startScreen?.MaybeReleaseVisuals(now); } catch (Exception ex) { ShellClock.LogFailure("Start visual release", ex); }
+		try { _idleMaintenance?.Tick(now, inputIdleMs); } catch (Exception ex) { ShellClock.LogFailure("idle maintenance", ex); }
+		ShellClock.Mode mode = _shellClock?.CurrentMode ?? ShellClock.Mode.Active;
+		try
+		{
+			if (now - NativeHostWarden.LastPassMs >= ShellClock.WardenEveryMs(mode) && SettingsStore.FastSnapshot.SuspendNativeStart)
+			{
+				NativeHostWarden.RequestPass("backstop");
+			}
+		}
+		catch (Exception ex)
+		{
+			ShellClock.LogFailure("native-host backstop", ex);
+		}
+		// A frame hook left live with Start, the Windows 7 menu and Action Center hidden wakes the UI and render threads
+		// every frame: stop it within 45 s whatever the trims do (it returns at once while one of them is shown).
+		if (now - _lastTripwireMs >= 45000L)
+		{
+			_lastTripwireMs = now;
+			try { TaskbarWindow.StopStrayFrameHooks(); } catch (Exception ex) { ShellClock.LogFailure("frame-hook tripwire", ex); }
+		}
+		if (mode != ShellClock.Mode.Asleep)
+		{
+			bool mouseHookSilent = false;
+			try { mouseHookSilent = CheckInputHookLiveness(now, inputIdleMs, mode == ShellClock.Mode.Active); } catch (Exception ex) { ShellClock.LogFailure("input-hook liveness", ex); }
+			try { _hotCorners?.ClockTick(mouseHookSilent); } catch (Exception ex) { ShellClock.LogFailure("hot-corner sweep", ex); }
+		}
+		else
+		{
+			_hookLiveness.Reset();
+		}
+	}
+
+	// Windows removes a low-level hook without notice when one callback overruns LowLevelHooksTimeout: the Win key, the
+	// Start button, light dismiss and the hot corners would all stop. InputHookLiveness tells a removed hook from one that
+	// only saw no input (and which of the two hooks it is); only a hook proven dead is re-installed, so a live one never
+	// moves in front of a remote-desktop or VM client's own capture hook. Returns true when the cursor moved since the
+	// last tick without the mouse hook seeing it (the hot corners then poll until the hook sees the pointer again).
+	private bool CheckInputHookLiveness(long now, long inputIdleMs, bool active)
+	{
+		WinKeyHook? hook = _winHook;
+		if (hook == null || !hook.MouseHookActive)
+		{
+			_hookLiveness.Reset();
+			return false;
+		}
+		InputHookLiveness.Sample s = default;
+		s.Now = now;
+		s.HaveCursor = WindowUtil.TryGetCursorPos(out s.X, out s.Y);
+		s.MouseEvents = hook.MouseEvents;
+		s.KeyEvents = hook.KeyEvents;
+		s.InputIdleMs = inputIdleMs;
+		if (!_hookLiveness.Observe(in s))
+		{
+			_hookLiveness.Judge(now, excused: false, active);   // nothing silent: clears the strikes
+			return false;
+		}
+		// Something looked silent: the excuses (these may open a process on a cache miss, so only now).
+		bool excused = WindowUtil.WindowAtInputHiddenFromHooks(s.X, s.Y) || WindowUtil.ForegroundIsElevatedOrUnknown() || WindowUtil.ForegroundIsInputCaptureClient();
+		(bool keyboard, bool mouse) = _hookLiveness.Judge(now, excused, active);
+		if (keyboard || mouse)
+		{
+			Logger.Log($"Input hook looks removed ({(mouse ? "the cursor moved" : "keys were typed")} for {InputHookLiveness.StrikesNeeded} shell ticks with no {(mouse ? "mouse" : "keyboard")}-hook event): re-installing {(keyboard && mouse ? "both" : (mouse ? "the mouse hook" : "the keyboard hook"))}");
+			hook.RequestReinstall(keyboard, mouse);
+		}
+		return _hookLiveness.SilentMove;
+	}
+
+	// True while a shell surface is on screen (idle maintenance never trims under an open surface).
+	private static bool AnyShellSurfaceOpen()
+	{
+		foreach (Window w in System.Windows.Application.Current.Windows)
+		{
+			if (w.IsVisible && (w is StartScreen || w is Win7StartMenu || w is ActionCenter || w is AppSwitcher || w is CharmListPane || w is CharmsBar || w is CharmsClock || w is SearchPane || w is SettingsPane || w is SnapAssist || w is ThumbnailPreview || w is OsdWindow))
+			{
+				return true;
+			}
+		}
+		return false;
 	}
 
 	private void AdjustVolume(int deltaPct)
@@ -4786,6 +4965,7 @@ public partial class App : System.Windows.Application
 	// decided first, with its own press-time debounce; otherwise this is the original Metro toggle (Metro stays default).
 	private void ToggleStartAt(int pressTime, string route)
 	{
+		ShellActivity.Stamp();
 		if (_startScreen == null)
 		{
 			return;
@@ -4891,6 +5071,7 @@ public partial class App : System.Windows.Application
 	{
 		try
 		{
+			_startScreen?.SetWin7Mode(on);
 			if (on)
 			{
 				if (_win7Start == null)
@@ -5215,6 +5396,11 @@ public partial class App : System.Windows.Application
 
 	private void MaybeSelfHealDegradedBoot(string[] args)
 	{
+		// A diagnostics or probe process must never arm the self-heal restart: it would start a REAL shell.
+		if (SettingsStore.ReadOnlyDiagnostics || PerfProbe.Active)
+		{
+			return;
+		}
 		if (Array.IndexOf(args, "--healed") >= 0 || !AppInventory.ColdBoot() || (!Profile.LoadWasDegraded && Profile.LastDropped <= 0 && !TaskbarPins.LoadWasDegraded && !AppInventory.LastLoadDegraded))
 		{
 			return;
@@ -5354,11 +5540,8 @@ public partial class App : System.Windows.Application
 		catch
 		{
 		}
-		DispatcherTimer? shellTimer = _shellTimer;
-		if (shellTimer != null)
-		{
-			shellTimer.Stop();
-		}
+		try { _shellClock?.Dispose(); } catch { }
+		try { _idleMaintenance?.Dispose(); } catch { }
 		try
 		{
 			_instanceMutex?.ReleaseMutex();

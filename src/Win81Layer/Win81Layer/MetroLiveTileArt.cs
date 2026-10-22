@@ -13,8 +13,26 @@ internal static class MetroLiveTileArt
 	private static readonly Typeface Light = new(new FontFamily("Segoe UI Light"), FontStyles.Normal, FontWeights.Light, FontStretches.Normal);
 	private static readonly Typeface Regular = new(new FontFamily("Segoe UI"), FontStyles.Normal, FontWeights.Normal, FontStretches.Normal);
 	internal static readonly ImageSource NewsLogo = CreateNewsLogo();
-	private static readonly Lazy<ImageSource> ClockBackground = new(() => LoadStationaryBackground("clock-stationary.png", Color.FromRgb(14, 64, 69)));
-	private static readonly Lazy<ImageSource> AgendaBackground = new(() => LoadStationaryBackground("agenda-stationary.png", Color.FromRgb(91, 34, 52)));
+	// Decoded on first use and releasable (ReleaseBackgrounds) while Start stays hidden in Windows 7 Start mode.
+	private static readonly object BackgroundGate = new();
+	private static ImageSource? _clockBackground;
+	private static ImageSource? _agendaBackground;
+	private static ImageSource ClockBackground()
+	{
+		lock (BackgroundGate) return _clockBackground ??= LoadStationaryBackground("clock-stationary.png", Color.FromRgb(14, 64, 69));
+	}
+	private static ImageSource AgendaBackground()
+	{
+		lock (BackgroundGate) return _agendaBackground ??= LoadStationaryBackground("agenda-stationary.png", Color.FromRgb(91, 34, 52));
+	}
+	internal static void ReleaseBackgrounds()
+	{
+		lock (BackgroundGate)
+		{
+			_clockBackground = null;
+			_agendaBackground = null;
+		}
+	}
 	private static ImageSource LoadStationaryBackground(string name, Color fallback)
 	{
 		try
@@ -48,8 +66,8 @@ internal static class MetroLiveTileArt
 	}
 	internal static void Preload()
 	{
-		_ = ClockBackground.Value;
-		_ = AgendaBackground.Value;
+		_ = ClockBackground();
+		_ = AgendaBackground();
 	}
 	internal static MetroTileVisual Build(LiveKind kind, TileSize size, DateTimeOffset now,
 		GoogleServices.AgendaSnapshot? agenda = null, bool signedIn = false,
@@ -144,7 +162,7 @@ internal static class MetroLiveTileArt
 			DrawingImage brand = new(new GeometryDrawing(LiveTiles.BrandBrush(kind), null, new RectangleGeometry(new Rect(0, 0, 1, 1))));
 			brand.Freeze(); background = brand;
 		}
-		else background = kind == LiveKind.Clock ? ClockBackground.Value : AgendaBackground.Value;
+		else background = kind == LiveKind.Clock ? ClockBackground() : AgendaBackground();
 		return new MetroTileVisual { Background = background, Foreground = foreground, Key = accessible + size,
 			AccessibleName = accessible, Size = size, Width = w, Height = h, Tint = Colors.Transparent, AnimateBackground = false };
 	}

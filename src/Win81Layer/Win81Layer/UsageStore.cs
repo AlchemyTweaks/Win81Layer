@@ -61,6 +61,10 @@ public static class UsageStore
 
 	private static void Save()
 	{
+		if (SettingsStore.ReadOnlyDiagnostics)
+		{
+			return;   // diagnostics and probes never write usage.json
+		}
 		try
 		{
 			Directory.CreateDirectory(Path.GetDirectoryName(Path_));

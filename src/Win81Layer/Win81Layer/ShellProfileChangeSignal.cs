@@ -23,6 +23,30 @@ internal static class ShellProfileChangeSignal
 		}
 	}
 
+	private static RegisteredWaitHandle? _watch;
+
+	// The shell waits on the event on a pool thread instead of polling it every second. The event is auto-reset, so the
+	// satisfied wait consumes the signal. Returns false when the wait could not be registered (the caller polls then).
+	public static bool Watch(Action onSignal)
+	{
+		try
+		{
+			_watch = ThreadPool.RegisterWaitForSingleObject(Handle(), delegate(object? state, bool timedOut)
+			{
+				if (!timedOut)
+				{
+					try { onSignal(); } catch { }
+				}
+			}, null, Timeout.Infinite, executeOnlyOnce: false);
+			return true;
+		}
+		catch (Exception ex)
+		{
+			Logger.Log("Shell profile refresh signal wait failed (polling instead): " + ex.Message);
+			return false;
+		}
+	}
+
 	public static bool TryConsume()
 	{
 		try

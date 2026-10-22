@@ -997,7 +997,10 @@ internal static class DarkRestIcons
 		return result;
 	}
 
-	private static readonly ConditionalWeakTable<ImageSource, ImageSource> MutedArtCache = new ConditionalWeakTable<ImageSource, ImageSource>();
+	// Keyed by the source picture; the muted copy itself is held weakly, so it goes away once no tile or row shows it
+	// (before, it lived as long as the app's icon even with Metro Start never shown). A copy needed again is made by the
+	// same per-pixel routine at the same size, so it is identical.
+	private static readonly ConditionalWeakTable<ImageSource, WeakReference<ImageSource>> MutedArtCache = new ConditionalWeakTable<ImageSource, WeakReference<ImageSource>>();
 
 	// The 8.1 and Office 2013 tile art (an opaque square in the brand colour with a white glyph) toned down with the
 	// dimmed tile it sits on: the brand colour becomes DarkRestPalette.MuteTile(brand), white becomes the soft ink, and
@@ -1005,7 +1008,17 @@ internal static class DarkRestIcons
 	// plate instead of standing out as a vivid square. Cached per picture; the picture itself when it cannot be read.
 	public static ImageSource MutedArt(ImageSource art, Color brand)
 	{
-		return MutedArtCache.GetValue(art, a => MuteArt(a, brand));
+		WeakReference<ImageSource> slot = MutedArtCache.GetValue(art, static _ => new WeakReference<ImageSource>(null!));
+		lock (slot)
+		{
+			if (slot.TryGetTarget(out ImageSource? muted) && muted != null)
+			{
+				return muted;
+			}
+			muted = MuteArt(art, brand);
+			slot.SetTarget(muted);
+			return muted;
+		}
 	}
 
 	private static ImageSource MuteArt(ImageSource source, Color brand)

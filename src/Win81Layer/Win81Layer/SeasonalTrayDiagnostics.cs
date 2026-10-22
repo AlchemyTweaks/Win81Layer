@@ -52,6 +52,11 @@ internal static class SeasonalTrayDiagnostics
 
 	private static int _procSeq;
 
+	// Settle steps (no new image, a redraw expected) and those the bar's one-shot settle scan would not have reached in time.
+	private static int _settleSteps;
+
+	private static readonly List<string> _settleMissed = new List<string>();
+
 	private static AppSettings _real = new AppSettings();
 
 	private static string _outDir = "";
@@ -139,6 +144,7 @@ internal static class SeasonalTrayDiagnostics
 			Animation();
 			StoreRobustness(store);
 			CostChecks();
+			Check("settle-scan-armed", _settleSteps > 0 && _settleMissed.Count == 0, _settleMissed.Count == 0 ? $"{_settleSteps} settle steps: each was due within its step, so the one-shot scan armed after the previous change would have drawn it (no 30 s backstop wait)" : string.Join("; ", _settleMissed));
 			if (samples != null && Directory.Exists(samples))
 			{
 				RealSamples(samples);
@@ -296,7 +302,17 @@ internal static class SeasonalTrayDiagnostics
 
 		public Cell Play(Step s)
 		{
+			// What the bar's one-shot settle scan (TaskbarWindow.ArmTraySettle) would have been armed for after the last step.
+			long dueMs = SeasonalTrayIcons.SettleDueInMs(Vm);
 			_now += (long)(s.After * TimeSpan.TicksPerSecond);
+			if (s.Image == null && !s.Quiet)
+			{
+				_settleSteps++;
+				if (!(dueMs > 0 && dueMs + 20 <= s.After * 1000.0))
+				{
+					_settleMissed.Add($"{s.Name} (due in {dueMs} ms, step after {s.After * 1000.0:F0} ms)");
+				}
+			}
 			_fresh = s.Fresh;
 			ImageSource?[] shown = new ImageSource?[Sizes.Length];
 			bool needed = false;

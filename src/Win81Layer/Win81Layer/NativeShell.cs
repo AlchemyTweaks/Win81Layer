@@ -9,6 +9,8 @@ public static class NativeShell
 {
 	private static readonly string[] Hosts = new string[3] { "StartMenuExperienceHost", "SearchApp", "SearchHost" };
 
+	internal static string[] HostNames => Hosts;
+
 	private const string StartHost = "StartMenuExperienceHost";
 
 	private const uint PROCESS_SET_QUOTA = 256u;
@@ -21,7 +23,11 @@ public static class NativeShell
 
 	private const string SuspensionEventName = "Local\\Win81Layer.NativeShellSuspended.v1";
 
-	private static readonly object SuspensionGate = new object();
+	internal static readonly object SuspensionGate = new object();
+
+	// Blocked (under SuspensionGate) by every resume path and unblocked by a successful claim: while blocked, the warden's
+	// passes refuse to suspend anything, so a resume on exit can never be followed by a late re-suspend.
+	internal static readonly SuspensionGuard Guard = new SuspensionGuard(SuspensionGate, SuspensionHeldLocked);
 
 	private static EventWaitHandle? _suspensionEvent;
 
@@ -29,6 +35,7 @@ public static class NativeShell
 
 	public static void TrimHosts()
 	{
+		PerfProbe.Refuse("NativeShell.TrimHosts");
 		string[] hosts = Hosts;
 		foreach (string name in hosts)
 		{
@@ -84,11 +91,13 @@ public static class NativeShell
 
 	public static void SuspendStartHost()
 	{
+		PerfProbe.Refuse("NativeShell.SuspendStartHost");
 		ForEachStartHost(NtSuspendProcess, "suspended");
 	}
 
 	public static void ResumeStartHost()
 	{
+		PerfProbe.Refuse("NativeShell.ResumeStartHost");
 		ForEachStartHost(NtResumeProcess, "resumed");
 	}
 
@@ -96,6 +105,7 @@ public static class NativeShell
 	// NtSuspend/NtResume as Start; Hosts[] already lists all three. Foreground-guarded so a visible host is never frozen.
 	public static void SuspendShellHosts()
 	{
+		PerfProbe.Refuse("NativeShell.SuspendShellHosts");
 		if (!TryClaimSuspension())
 		{
 			Logger.Log("Native shell hosts already suspended by this launcher session; nesting avoided");
@@ -104,10 +114,20 @@ public static class NativeShell
 		ForEachHost(Hosts, NtSuspendProcess, "suspended");
 		TrimHosts();
 		Logger.Log("Native shell hosts suspended and working sets trimmed; restart-loop termination avoided");
+		NativeHostWarden.RequestPass("suspended");   // registers the exit watches that catch a respawn
+	}
+
+	// Taking the lock waits for a warden pass in flight; once blocked no later pass suspends anything.
+	private static void BlockWardenPasses()
+	{
+		Guard.Block();
+		try { NativeHostWarden.CancelWatches(); } catch { }
 	}
 
 	public static void ResumeShellHosts()
 	{
+		PerfProbe.Refuse("NativeShell.ResumeShellHosts");
+		BlockWardenPasses();
 		ForEachHost(Hosts, NtResumeProcess, "resumed");
 		ReleaseSuspensionClaim();
 	}
@@ -116,6 +136,8 @@ public static class NativeShell
 	// an unclean exit, while a running process remains unchanged.
 	public static void ResumeAll()
 	{
+		PerfProbe.Refuse("NativeShell.ResumeAll");
+		BlockWardenPasses();
 		ForEachHost(Hosts, NtResumeProcess, "resumed(all)");
 		ReleaseSuspensionClaim();
 	}
@@ -125,53 +147,82 @@ public static class NativeShell
 	// working set. Deliberately NOT a kill: empirically, TERMINATING StartMenuExperienceHost/SearchHost makes Windows
 	// proactively relaunch a fresh copy at full memory (a killed host is gone, so the OS restarts it), which is worse;
 	// a SUSPENDED host still exists, so the OS never relaunches it and it sits at WS ~0. Only suspends hosts that are
-	// not already suspended (no nested suspend counts) and never freezes a foreground host. This is what makes the
-	// pre-existing one-shot boot suspension robust against later respawns. Cheap enough for a ~45s idle tick.
+	// not already suspended (no nested suspend counts) and never freezes a foreground host. One synchronous warden pass;
+	// the shell itself schedules passes on a pool thread (NativeHostWarden).
 	public static void ReassertSuspension()
 	{
-		uint fgPid = 0u;
-		nint fg = GetForegroundWindow();
-		if (fg != IntPtr.Zero)
+		PerfProbe.Refuse("NativeShell.ReassertSuspension");
+		NativeHostWarden.RunPass("reassert");
+	}
+
+	// One warden pass (NativeHostWarden.RunPass holds its own pass lock). Under SuspensionGate: refuses while a resume is
+	// pending or this session does not hold the suspension; reads one snapshot; suspends and trims each host that is
+	// running and not in the foreground. Returns the pids to watch for exit (every host present), or null.
+	internal static System.Collections.Generic.List<uint>? WardenPassLocked(SystemProcessSnapshot snap, SystemProcessSnapshot.HostInfo[] found, string reason)
+	{
+		if (PerfProbe.Active || !SettingsStore.FastSnapshot.SuspendNativeStart)
 		{
-			GetWindowThreadProcessId(fg, out fgPid);
+			return null;
 		}
-		string[] hosts = Hosts;
-		foreach (string name in hosts)
+		return Guard.Run(delegate
 		{
-			Process[] processesByName = Process.GetProcessesByName(name);
-			foreach (Process p in processesByName)
+			uint fgPid = 0u;
+			nint fg = GetForegroundWindow();
+			if (fg != IntPtr.Zero)
 			{
-				try
-				{
-					if (fgPid != 0u && (uint)p.Id == fgPid)
-					{
-						continue;   // never freeze a host that currently owns the foreground window
-					}
-					if (!HasSuspendedThreads(p.Id))
-					{
-						nint hs = OpenProcess(PROCESS_SUSPEND_RESUME, inherit: false, (uint)p.Id);
-						if (hs != IntPtr.Zero)
-						{
-							NtSuspendProcess(hs);
-							CloseHandle(hs);
-							Logger.Log($"Native host {name} re-suspended (respawn caught, pid {p.Id})");
-						}
-					}
-					nint ht = OpenProcess(1280u, inherit: false, (uint)p.Id);
-					if (ht != IntPtr.Zero)
-					{
-						EmptyWorkingSet(ht);
-						CloseHandle(ht);
-					}
-				}
-				catch
-				{
-				}
-				finally
-				{
-					p.Dispose();
-				}
+				GetWindowThreadProcessId(fg, out fgPid);
 			}
+			if (!snap.Refresh())
+			{
+				return null!;
+			}
+			int n = snap.FindProcesses(Hosts, found);
+			System.Collections.Generic.List<uint> watch = new System.Collections.Generic.List<uint>(n);
+			for (int i = 0; i < n; i++)
+			{
+				SystemProcessSnapshot.HostInfo h = found[i];
+				if (h.SuspendedThreads > 0)
+				{
+					watch.Add(h.Pid);   // already dormant: no second suspend (no nested counts) and no re-trim
+					continue;
+				}
+				if (fgPid != 0u && h.Pid == fgPid)
+				{
+					continue;   // never freeze a host that currently owns the foreground window
+				}
+				nint hs = OpenProcess(PROCESS_SUSPEND_RESUME, inherit: false, h.Pid);
+				if (hs == IntPtr.Zero)
+				{
+					continue;
+				}
+				NtSuspendProcess(hs);
+				CloseHandle(hs);
+				nint ht = OpenProcess(1280u, inherit: false, h.Pid);
+				if (ht != IntPtr.Zero)
+				{
+					EmptyWorkingSet(ht);
+					CloseHandle(ht);
+				}
+				Logger.Log($"Native host {Hosts[h.NameIndex]} re-suspended (respawn caught, pid {h.Pid}, {reason})");
+				watch.Add(h.Pid);
+			}
+			return watch;
+		});
+	}
+
+	private static bool SuspensionHeldLocked()
+	{
+		if (_localSuspensionClaim)
+		{
+			return true;
+		}
+		try
+		{
+			return SuspensionMarker().WaitOne(0);
+		}
+		catch
+		{
+			return false;
 		}
 	}
 
@@ -256,6 +307,7 @@ public static class NativeShell
 					return false;
 				}
 				marker.Set();
+				Guard.Unblock();
 				return true;
 			}
 			catch (Exception ex)
@@ -266,6 +318,7 @@ public static class NativeShell
 					return false;
 				}
 				_localSuspensionClaim = true;
+				Guard.Unblock();
 				return true;
 			}
 		}

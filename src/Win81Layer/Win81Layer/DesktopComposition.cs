@@ -250,6 +250,10 @@ public static class DesktopComposition
 	// this method changes only runtime effects using an explicit previous mode.
 	public static void ApplyPersistedModeTransition(string previousMode)
 	{
+		if (PerfProbe.Active)
+		{
+			return;
+		}
 		CompositionProfile previous = CompositionProfiles.Resolve(previousMode);
 		StopPreviewTimer();
 		_previewMode = null;
@@ -690,6 +694,10 @@ public static class DesktopComposition
 
 	public static void RefreshAccent()
 	{
+		if (PerfProbe.Active)
+		{
+			return;
+		}
 		int version = Interlocked.Increment(ref _accentVersion);
 		EnqueueNative("composition accent refresh", delegate
 		{

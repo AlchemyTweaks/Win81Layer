@@ -163,6 +163,25 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 
 	private readonly bool _transitionDiagnostics;
 
+	// Windows 7 Start mode: StartScreen still owns the inventory, profile and live-tile models (the Win7 menu reads them),
+	// but Metro Start's visuals are not built or decoded until Metro Start is first shown (EnsureVisualsReady): no board
+	// prewarm, no all-apps rows, no live-tile art warmup, no background picture decode, no boot weather fetch. After 5
+	// minutes hidden in that mode they are released again (MaybeReleaseVisuals). Nothing is constructed later or nulled:
+	// only realized visuals and decoded pixels wait.
+	private bool _visualsDeferred;
+
+	private bool _bgPending;
+
+	private bool _bgSync;
+
+	private bool _weatherPending;
+
+	private bool _win7Mode;
+
+	private long _hiddenSinceMs = Environment.TickCount64;
+
+	internal bool VisualsDeferred => _visualsDeferred;
+
 	private event Action<int, bool, double> ViewTransitionCompletedForQa;
 
 	internal long QaLastRequestAllocatedBytes { get; private set; }
@@ -526,11 +545,458 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 		}
 		else
 		{
+			_win7Mode = SettingsStore.FastSnapshot.Win7StartMenuEnabled;
+			_visualsDeferred = _win7Mode && !(PerfProbe.Active && PerfProbe.LegacyPolicy);
+			base.IsVisibleChanged += delegate(object _, DependencyPropertyChangedEventArgs e)
+			{
+				if ((bool)e.NewValue)
+				{
+					// catch-all for any show path (runs before the first frame is rendered)
+					EnsureVisualsReady(chromeVisible: BgLayer.Visibility == Visibility.Visible);
+				}
+				else
+				{
+					_hiddenSinceMs = Environment.TickCount64;
+				}
+			};
 			LoadUserAccount();
 			RefreshBackground();
 			SystemEvents.DisplaySettingsChanged += OnDisplaySettingsChanged;
 			LoadAppsOnStaThread();
 		}
+	}
+
+	// Builds what a deferred Metro Start needs before it is shown: the background is decoded synchronously (no flash of
+	// another background), the live-tile art warms (faces arrive as their decodes land) and a weather city set while
+	// deferred is fetched now. A background preparation still running is taken over: what it has not done yet is done by
+	// this show (and every tile group it held back is put back first). chromeVisible is false for the standalone
+	// Personalize pane, which hides the background: its picture is then decoded on a worker like any other refresh.
+	internal void EnsureVisualsReady(bool chromeVisible = true)
+	{
+		bool handedOver = PrepareActive;
+		CancelPrepare("shown");
+		RealizeDeferredVisuals(chromeVisible ? "for the first show" : "for the standalone Personalize pane", syncBackground: chromeVisible);
+		if (chromeVisible && _bgDeferredToken != 0)
+		{
+			int token = _bgDeferredToken;
+			_bgDeferredToken = 0;
+			if (token == _bgToken && _bgAppliedToken != _bgToken)
+			{
+				// The picture a background preparation or a standalone pane started decoding on a worker has not landed:
+				// decode it here (the worker's result is then only cached), so the first frame still has it.
+				_bgSync = true;
+				try
+				{
+					ApplyDeferredBackground();
+				}
+				finally
+				{
+					_bgSync = false;
+				}
+				Logger.Log("Start background finished on the show (its worker decode had not landed)");
+			}
+		}
+		if (handedOver && !_win7Mode)
+		{
+			ScheduleAppsViewWarmup();   // the preparation after the Windows 7 menu was turned off would have queued it
+		}
+	}
+
+	// The background decode a deferred realization left on a worker (Start not shown, or shown without its background);
+	// 0 = none. A show with the background visible finishes it if it has not landed.
+	private int _bgDeferredToken;
+
+	private void RealizeDeferredVisuals(string when, bool syncBackground)
+	{
+		if (!_visualsDeferred)
+		{
+			return;
+		}
+		_visualsDeferred = false;
+		Stopwatch sw = Stopwatch.StartNew();
+		if (_bgPending)
+		{
+			_bgPending = false;
+			_bgSync = syncBackground;
+			try
+			{
+				ApplyDeferredBackground();
+			}
+			finally
+			{
+				_bgSync = false;
+			}
+			_bgDeferredToken = syncBackground ? 0 : _bgToken;
+		}
+		try
+		{
+			_liveTiles?.EnsureWarm();
+		}
+		catch (Exception ex)
+		{
+			Logger.Log("Live tile warm on first show: " + ex.Message);
+		}
+		if (_weatherPending && _liveTiles != null)
+		{
+			_weatherPending = false;
+			_liveTiles.WeatherCity = _weatherCity;
+			_liveTiles.WeatherUnits = _weatherUnits;
+			if (!App.SafeMode)
+			{
+				_liveTiles.RefreshWeatherNow();
+			}
+		}
+		Logger.Log($"Start visuals realized {when} in {sw.Elapsed.TotalMilliseconds:0.0} ms");
+	}
+
+	// The Windows 7 menu option changed (App.ApplyWin7StartMenu). Turning it off makes Metro Start the Start surface
+	// again: it is realized and prewarmed in the same small idle steps as the Settings-pane preparation (laying the whole
+	// board out in one go would freeze the shell for about a second right after the toggle), then the all-apps view is
+	// warmed, as at boot in Metro mode.
+	internal void SetWin7Mode(bool on)
+	{
+		_win7Mode = on;
+		if (on)
+		{
+			return;
+		}
+		PrepareInBackground("the Windows 7 menu was turned off", anyMode: true);
+		if (PrepareActive)
+		{
+			return;
+		}
+		// Nothing to lay out step by step (no board yet, Start on screen, or already prepared).
+		((DispatcherObject)this).Dispatcher.BeginInvoke((Delegate)(Action)delegate
+		{
+			if (!base.IsVisible)
+			{
+				RealizeDeferredVisuals("after the Windows 7 menu was turned off", syncBackground: false);
+			}
+			Prewarm();
+			ScheduleAppsViewWarmup();
+		}, DispatcherPriority.ApplicationIdle, Array.Empty<object>());
+	}
+
+	// Windows 7 mode, Metro Start hidden for 5 minutes: give back what EnsureVisualsReady built (the background picture,
+	// the all-apps rows and their muted icon copies, the live-tile art). The next Metro show builds them again.
+	internal void MaybeReleaseVisuals(long now)
+	{
+		if (_visualsDeferred || !_win7Mode || base.IsVisible || _transitionDiagnostics || now - _hiddenSinceMs < 300000L || _peekActive || PrepareActive)
+		{
+			return;
+		}
+		try
+		{
+			ReleaseRestBackground();
+			_bgBrushCache.Clear();
+			if (DarkRest.Visuals && RestBackgroundWanted(SettingsStore.FastSnapshot))
+			{
+				SetStartBg(RestCanvasBrush);
+			}
+			else if (FindResource("StartBackground") is System.Windows.Media.Brush def)
+			{
+				SetStartBg(def);
+			}
+			_bgPending = true;
+			if (_appsViewBuilt && !_showingAllApps && _appsWarmupOperation == null)
+			{
+				AppsHost.Children.Clear();
+				_appButtons.Clear();
+				_appsViewBuilt = false;
+			}
+			_liveTiles?.ReleaseArt();
+			_prewarmed = false;
+			_visualsDeferred = true;
+			Logger.Log("Start visuals released after 5 min hidden (Windows 7 Start mode)");
+		}
+		catch (Exception ex)
+		{
+			Logger.Log("Start visual release failed: " + ex.Message);
+		}
+	}
+
+	// ---- background preparation (Windows 7 Start mode) ----
+	// In Windows 7 Start mode the full Metro Start opens only from the Settings charm pane (its Personalization links);
+	// the Action Center's Personalize shows the pane standalone, with the board collapsed, and every Start route opens
+	// the Windows 7 menu. The first full show after boot (or after a release) used to lay the whole board out inside the
+	// click: about 1 s. Opening the Settings pane is the signal: Metro Start is then prepared at idle priority, in small
+	// steps, while the user reads the pane: the deferred visuals (background picture, live-tile art), then the tile
+	// groups one per idle dispatcher slot (each held collapsed until its turn, so one step lays out one group with the
+	// board's exact constraints), then one cheap full pass. The pane stays responsive between steps and the
+	// Personalization click finds Metro Start ready. Nothing is prepared without that signal, so a session that never
+	// goes there keeps the memory saving. A show while the preparation runs takes over (EnsureVisualsReady). The same
+	// preparation runs once when the Windows 7 menu is turned off (SetWin7Mode), followed by the all-apps warm-up.
+	private DispatcherTimer? _prepareDelay;
+
+	private DispatcherOperation? _prepareOp;
+
+	private int _prepareStage;
+
+	private List<UIElement>? _prepareHeld;
+
+	private int _prepareIndex;
+
+	private Stopwatch? _prepareClock;
+
+	private string _prepareReason = "";
+
+	internal bool PrepareActive => _prepareDelay?.IsEnabled == true || _prepareOp != null;
+
+	// Probe statistics of the last preparation: steps, their total and longest UI-thread time, groups laid out one by one.
+	internal int QaPrepareSteps { get; private set; }
+
+	internal double QaPrepareStepsMs { get; private set; }
+
+	internal double QaPrepareMaxStepMs { get; private set; }
+
+	internal int QaPrepareGroups { get; private set; }
+
+	// Each step's stage and UI-thread milliseconds ("stage:ms").
+	internal readonly List<string> QaPrepareStepLog = new List<string>();
+
+	internal bool QaPrepared => !_visualsDeferred && _prewarmed;
+
+	// anyMode: also outside Windows 7 Start mode (the switch back to Metro Start, SetWin7Mode).
+	internal void PrepareInBackground(string reason, int delayMs = 250, bool anyMode = false)
+	{
+		if (_transitionDiagnostics || (!_win7Mode && !anyMode) || base.IsVisible || PrepareActive || (!_visualsDeferred && _prewarmed))
+		{
+			return;
+		}
+		if (_groups == null || _groups.Count == 0)
+		{
+			return;   // the board is not loaded yet: the show builds it as before
+		}
+		if (_prepareDelay == null)
+		{
+			_prepareDelay = new DispatcherTimer(DispatcherPriority.Background);
+			_prepareDelay.Tick += delegate
+			{
+				_prepareDelay.Stop();
+				SchedulePrepareStep();
+			};
+		}
+		_prepareReason = reason;
+		_prepareStage = 0;
+		_prepareIndex = 0;
+		_prepareHeld = null;
+		_prepareWalk = null;
+		QaPrepareSteps = 0;
+		QaPrepareStepsMs = 0.0;
+		QaPrepareMaxStepMs = 0.0;
+		QaPrepareGroups = 0;
+		QaPrepareStepLog.Clear();
+		_prepareClock = Stopwatch.StartNew();
+		// Let the signalling surface finish its entrance first (the steps only run when the dispatcher is idle anyway).
+		_prepareDelay.Interval = TimeSpan.FromMilliseconds(Math.Max(1, delayMs));
+		_prepareDelay.Start();
+	}
+
+	private void SchedulePrepareStep()
+	{
+		_prepareOp = ((DispatcherObject)this).Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle, (Action)PrepareStep);
+	}
+
+	private void PrepareStep()
+	{
+		_prepareOp = null;
+		if (base.IsVisible)
+		{
+			CancelPrepare("shown");
+			return;
+		}
+		Stopwatch sw = Stopwatch.StartNew();
+		bool more = true;
+		int stage = _prepareStage;
+		try
+		{
+			switch (_prepareStage)
+			{
+			case 0:
+				// The deferred visuals: the background picture and the live-tile art, both decoded off this thread (a show
+				// before the picture landed finishes it, EnsureVisualsReady).
+				RealizeDeferredVisuals("in the background", syncBackground: false);
+				_prepareStage = 1;
+				break;
+			case 1:
+				// Hold every group that has never been laid out, then one pass for everything else (header, scrollers).
+				_prepareHeld = HoldUnlaidGroups();
+				QaPrepareGroups = _prepareHeld.Count;
+				LayOutBoard();
+				_prepareStage = _prepareHeld.Count > 0 ? 2 : 3;
+				break;
+			case 2:
+				// The next held group's templates (its tiles' visual trees), a time-boxed slice per step; no layout yet.
+				if (_prepareWalk == null)
+				{
+					_prepareWalk = new Stack<DependencyObject>();
+					_prepareWalk.Push(_prepareHeld![_prepareIndex]);
+				}
+				if (RealizeTemplatesSlice(_prepareWalk, PrepareSliceMs))
+				{
+					_prepareWalk = null;
+					_prepareStage = 4;
+				}
+				break;
+			case 4:
+				// That group released and laid out with the board's own constraints (the rest of the board is cached).
+				_prepareHeld![_prepareIndex++].ClearValue(UIElement.VisibilityProperty);
+				LayOutBoard();
+				if (_prepareIndex >= _prepareHeld.Count)
+				{
+					_prepareHeld = null;
+					_prepareStage = 3;
+				}
+				else
+				{
+					_prepareStage = 2;
+				}
+				break;
+			default:
+				Prewarm();   // the whole board once more: every group's layout is cached by now
+				more = false;
+				break;
+			}
+		}
+		catch (Exception ex)
+		{
+			Logger.Log("Start background preparation stopped: " + ex.Message);
+			ReleaseHeldGroups();
+			more = false;
+		}
+		double ms = sw.Elapsed.TotalMilliseconds;
+		QaPrepareSteps++;
+		QaPrepareStepsMs += ms;
+		QaPrepareMaxStepMs = Math.Max(QaPrepareMaxStepMs, ms);
+		if (QaPrepareStepLog.Count < 64)
+		{
+			QaPrepareStepLog.Add(stage + ":" + ms.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture));
+		}
+		if (more)
+		{
+			SchedulePrepareStep();
+			return;
+		}
+		_hiddenSinceMs = Environment.TickCount64;   // the 5-minute release counts from now
+		if (!_win7Mode)
+		{
+			ScheduleAppsViewWarmup();   // Metro Start is the Start surface again (SetWin7Mode): as at boot in Metro mode
+		}
+		Logger.Log($"Start prepared in the background ({_prepareReason}): {QaPrepareSteps} idle steps, {QaPrepareGroups} groups one by one, {QaPrepareStepsMs:0} ms of UI time (longest step {QaPrepareMaxStepMs:0.0} ms) over {_prepareClock?.ElapsedMilliseconds ?? 0} ms");
+	}
+
+	// UI-thread time one preparation step may spend instantiating templates before it yields.
+	private const double PrepareSliceMs = 20.0;
+
+	private Stack<DependencyObject>? _prepareWalk;
+
+	// Instantiates the templates under the elements on the stack (and generates the containers of items panels met on the
+	// way) until the stack is empty (true) or the slice is used up (false; the next call goes on). Templates only: nothing
+	// is measured, so the result is exactly what the layout pass would have built.
+	private static bool RealizeTemplatesSlice(Stack<DependencyObject> walk, double sliceMs)
+	{
+		Stopwatch sw = Stopwatch.StartNew();
+		while (walk.Count > 0)
+		{
+			DependencyObject d = walk.Peek();
+			// One tile's template can take tens of milliseconds (its converters build the Dark rest and seasonal icon
+			// copies): once half the slice is spent, the next element whose template is not built yet starts the next
+			// slice, so a step is at most about half a slice plus one template.
+			if (sw.Elapsed.TotalMilliseconds >= sliceMs / 2.0 && VisualTreeHelper.GetChildrenCount(d) == 0
+				&& (d is System.Windows.Controls.Control { Template: not null } || d is ContentPresenter))
+			{
+				return false;
+			}
+			walk.Pop();
+			if (d is FrameworkElement fe)
+			{
+				fe.ApplyTemplate();
+			}
+			if (d is System.Windows.Controls.Panel panel && panel.IsItemsHost)
+			{
+				_ = panel.Children.Count;   // generates the item containers
+			}
+			for (int i = VisualTreeHelper.GetChildrenCount(d) - 1; i >= 0; i--)
+			{
+				walk.Push(VisualTreeHelper.GetChild(d, i));
+			}
+			if (sw.Elapsed.TotalMilliseconds >= sliceMs)
+			{
+				return walk.Count == 0;
+			}
+		}
+		return true;
+	}
+
+	// The group containers of the board, generated (cheap) without laying any out; those never measured are collapsed
+	// and returned in board order. Already laid-out groups (a board realized earlier) are left as they are.
+	private List<UIElement> HoldUnlaidGroups()
+	{
+		List<UIElement> held = new List<UIElement>();
+		GroupsHost.ApplyTemplate();
+		ItemsPresenter? presenter = FindVisualChild<ItemsPresenter>(GroupsHost);
+		if (presenter == null)
+		{
+			return held;
+		}
+		presenter.ApplyTemplate();
+		if (VisualTreeHelper.GetChildrenCount(presenter) == 0 || !(VisualTreeHelper.GetChild(presenter, 0) is System.Windows.Controls.Panel panel) || !panel.IsItemsHost)
+		{
+			return held;
+		}
+		foreach (UIElement container in panel.Children)   // generates the containers (no template applied yet)
+		{
+			// A container whose template was never applied (no visual child yet) has never been laid out.
+			if (VisualTreeHelper.GetChildrenCount(container) == 0 && container.Visibility == Visibility.Visible && container.ReadLocalValue(UIElement.VisibilityProperty) == DependencyProperty.UnsetValue)
+			{
+				container.Visibility = Visibility.Collapsed;
+				held.Add(container);
+			}
+		}
+		return held;
+	}
+
+	private void LayOutBoard()
+	{
+		double w = SystemParameters.PrimaryScreenWidth;
+		double h = SystemParameters.PrimaryScreenHeight;
+		if (!(w >= 1.0)) w = 1920.0;
+		if (!(h >= 1.0)) h = 1080.0;
+		System.Windows.Size s = new System.Windows.Size(w, h);
+		RootGrid.Measure(s);
+		RootGrid.Arrange(new System.Windows.Rect(new System.Windows.Point(0.0, 0.0), s));
+		RootGrid.UpdateLayout();
+	}
+
+	// Puts every group a preparation still holds back on the board again.
+	private void ReleaseHeldGroups()
+	{
+		List<UIElement>? held = _prepareHeld;
+		_prepareHeld = null;
+		if (held == null)
+		{
+			return;
+		}
+		foreach (UIElement c in held)
+		{
+			c.ClearValue(UIElement.VisibilityProperty);
+		}
+	}
+
+	// Stops a preparation (a show took over, or the Start mode changed); the board is whole again at once.
+	private void CancelPrepare(string why)
+	{
+		if (!PrepareActive && _prepareHeld == null)
+		{
+			return;
+		}
+		_prepareDelay?.Stop();
+		DispatcherOperation? op = _prepareOp;
+		_prepareOp = null;
+		op?.Abort();
+		ReleaseHeldGroups();
+		_prepareWalk = null;
+		Logger.Log($"Start background preparation ({_prepareReason}) handed over: {why} after {QaPrepareSteps} steps");
 	}
 
 	private void InitializeTransitionDiagnosticData()
@@ -596,6 +1062,40 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 		}
 	}
 
+	// The picture a deferred Start left for later (_bgPending), and nothing else: the accents and the Dark rest resources
+	// were applied by the refresh that deferred it (each refresh applies them at once), so they are not written again.
+	// A setting that changed to a background without a picture since then gets the full refresh.
+	private void ApplyDeferredBackground()
+	{
+		try
+		{
+			AppSettings s = SettingsStore.Load();
+			if (RestBackgroundWanted(s))
+			{
+				ApplyRestBgAsync();
+				SyncSeasonalAmbient();
+				return;
+			}
+			string path = s.StartBgMode switch
+			{
+				"custom" => File.Exists(s.StartBgCustomPath) ? s.StartBgCustomPath : null,
+				"desktop" => TaskbarTheme.WallpaperPath(),
+				_ => null
+			};
+			if (path != null)
+			{
+				ApplyImageBgAsync(path);
+				SyncSeasonalAmbient();
+				return;
+			}
+		}
+		catch (Exception ex)
+		{
+			Logger.Log("Start deferred background: " + ex.Message);
+		}
+		RefreshBackground();
+	}
+
 	public void RefreshBackground()
 	{
 		try
@@ -612,7 +1112,14 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 			}
 			if (restBg)
 			{
-				ApplyRestBgAsync();
+				if (_visualsDeferred)
+				{
+					_bgPending = true;   // decoded on the first show (EnsureVisualsReady)
+				}
+				else
+				{
+					ApplyRestBgAsync();
+				}
 			}
 			else
 			switch (s.StartBgMode)
@@ -622,6 +1129,11 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 				{
 					goto default;
 				}
+				if (_visualsDeferred)
+				{
+					_bgPending = true;
+					break;
+				}
 				ApplyImageBgAsync(s.StartBgCustomPath);
 				break;
 			case "desktop":
@@ -630,6 +1142,11 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 				if (wp == null)
 				{
 					goto default;
+				}
+				if (_visualsDeferred)
+				{
+					_bgPending = true;
+					break;
 				}
 				ApplyImageBgAsync(wp);
 				break;
@@ -1063,6 +1580,24 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 	internal Rect QaLastSearchField { get; private set; }
 
 	internal bool QaBackgroundSettled => _bgAppliedToken == _bgToken;
+
+	// Probe: the clock, agenda and news tiles with their live face on (Total) and how many have it built (Built).
+	internal (int Built, int Total) QaLiveFaces
+	{
+		get
+		{
+			int built = 0, total = 0;
+			foreach (TileVm t in _groups?.SelectMany(g => g.Tiles) ?? Enumerable.Empty<TileVm>())
+			{
+				if (!t.LiveOff && t.Live is LiveKind.Clock or LiveKind.Agenda or LiveKind.News)
+				{
+					total++;
+					built += t.MetroVisual != null ? 1 : 0;
+				}
+			}
+			return (built, total);
+		}
+	}
 
 	// QA: the Start background brush and the zoom overlay's brush right now.
 	internal System.Windows.Media.Brush QaBgLayerBrush => BgLayer.Background;
@@ -2094,7 +2629,8 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 		_bgBrushCache.TryGetValue(drawnKey, out ImageBrush drawnCached);
 		double wDiu = wPx / scale;
 		double hDiu = hPx / scale;
-		Task.Run(delegate
+		bool sync = _bgSync;
+		Action work = delegate
 		{
 			BitmapSource bmp = null;
 			bool pictureFailed = false;
@@ -2144,7 +2680,7 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 				};
 				ib.Freeze();
 			}
-			((DispatcherObject)this).Dispatcher.BeginInvoke((Delegate)(Action)delegate
+			Action apply = delegate
 			{
 				// A decode that finishes after Dark rest was left is not kept (Normal released the picture).
 				bool keep = token == _bgToken || RestBackgroundWanted(SettingsStore.FastSnapshot);
@@ -2175,8 +2711,24 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 					}
 					_bgAppliedToken = token;
 				}
-			}, Array.Empty<object>());
-		});
+			};
+			if (sync)
+			{
+				apply();
+			}
+			else
+			{
+				((DispatcherObject)this).Dispatcher.BeginInvoke((Delegate)apply, Array.Empty<object>());
+			}
+		};
+		if (sync)
+		{
+			work();   // first show of a deferred Start: decode here, so the first frame already has the picture
+		}
+		else
+		{
+			Task.Run(work);
+		}
 	}
 
 	// The last overlay brush and what it was built from (reused while nothing moved).
@@ -2258,7 +2810,8 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 			_bgAppliedToken = token;
 			return;
 		}
-		Task.Run(delegate
+		bool sync = _bgSync;
+		Action work = delegate
 		{
 			try
 			{
@@ -2275,7 +2828,7 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 					Stretch = Stretch.UniformToFill
 				};
 				((Freezable)ib).Freeze();
-				((DispatcherObject)this).Dispatcher.BeginInvoke((Delegate)(Action)delegate
+				Action apply = delegate
 				{
 					// Cap the full-res wallpaper brush cache; evict an older entry, never the active key. Each entry is a
 					// full-screen decoded bitmap (~8-33MB), so keep the cap tight (2) — the user rarely cycles wallpaper.
@@ -2292,13 +2845,29 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 						SetStartBg(ib);
 						_bgAppliedToken = token;
 					}
-				}, Array.Empty<object>());
+				};
+				if (sync)
+				{
+					apply();
+				}
+				else
+				{
+					((DispatcherObject)this).Dispatcher.BeginInvoke((Delegate)apply, Array.Empty<object>());
+				}
 			}
 			catch (Exception ex)
 			{
 				Logger.Log("Start bg async decode failed: " + ex.Message);
 			}
-		});
+		};
+		if (sync)
+		{
+			work();
+		}
+		else
+		{
+			Task.Run(work);
+		}
 	}
 
 	private static int MaxScreenWidth()
@@ -2427,7 +2996,8 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 					_liveTiles = new LiveTileService(
 						() => _groups.SelectMany((GroupVm g) => g.Tiles),
 						_weatherCity,
-						_weatherUnits);
+						_weatherUnits,
+						deferWarm: _visualsDeferred);
 					// Safe mode: keep tiles static (skip flip timers + Weather/Mail/Agenda network fetches).
 					if (base.IsVisible && !App.SafeMode)
 					{
@@ -3164,7 +3734,8 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 			return;
 		}
 		// Cold boot binds the board ~10 s in; warming an empty grid (or a visible window) must not burn the one-shot.
-		if (_groups == null || _groups.Count == 0 || base.IsVisible)
+		// A deferred Start (Windows 7 Start mode) is not prewarmed: the user opens the Windows 7 menu.
+		if (_groups == null || _groups.Count == 0 || base.IsVisible || _visualsDeferred)
 		{
 			return;
 		}
@@ -3187,6 +3758,7 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 
 	private void ShowStartCore()
 	{
+		EnsureVisualsReady(chromeVisible: !_personalizeStandalone);   // standalone Personalize hides the background
 		if (_closing)
 		{
 			_closing = false;
@@ -4165,32 +4737,13 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 		}
 	}
 
-	private bool _trimScheduled;
-
-	// After Start closes (the launcher's heaviest surface — it decodes tile art + every all-apps icon), return that
-	// idle RAM to the OS: a non-blocking gen2 collect frees transients, then EmptyWorkingSet trims the working set
-	// (cached bitmap pages fault back only if Start reopens). Runs at ApplicationIdle so it never competes with the
-	// close animation, and is debounced so rapid open/close can't thrash it.
+	// After Start closes: stop per-frame work and record shell use. The trim itself is IdleMaintenance's, once the shell
+	// has been unused for a while (trimming right here made the next open refault everything, and a background GC
+	// started just before the trim re-touched the heap it had just evicted).
 	private void ScheduleIdleTrim()
 	{
 		StopFrameHooks();
-		if (_trimScheduled)
-		{
-			return;
-		}
-		_trimScheduled = true;
-		base.Dispatcher.BeginInvoke((System.Windows.Threading.DispatcherPriority)2, (Delegate)(Action)delegate
-		{
-			_trimScheduled = false;
-			try
-			{
-				GC.Collect(2, GCCollectionMode.Optimized, blocking: false);
-				NativeShell.TrimSelf();
-			}
-			catch
-			{
-			}
-		});
+		ShellActivity.Stamp();
 	}
 
 	// Per-frame work must not outlive the Start surface: a scroll, drag or view transition still hooked after Start
@@ -4292,6 +4845,11 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 	public void SetWeatherCity(string city)
 	{
 		_weatherCity = city;
+		if (_visualsDeferred)
+		{
+			_weatherPending = true;   // no fetch or art decode for a Start nobody sees; done on the first show
+			return;
+		}
 		if (_liveTiles != null)
 		{
 			_liveTiles.WeatherCity = city;
@@ -4302,6 +4860,11 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 	public void SetWeatherUnits(string units)
 	{
 		_weatherUnits = string.Equals(units, "F", StringComparison.OrdinalIgnoreCase) ? "F" : "C";
+		if (_visualsDeferred)
+		{
+			_weatherPending = true;
+			return;
+		}
 		if (_liveTiles != null) _liveTiles.WeatherUnits = _weatherUnits;
 	}
 
@@ -5221,6 +5784,7 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 		//IL_010d: Unknown result type (might be due to invalid IL or missing references)
 		if (!base.IsVisible && !_peekActive)
 		{
+			EnsureVisualsReady();
 			_peekActive = true;
 			_personalizeStandalone = false;
 			SearchBox.Text = string.Empty;
@@ -8989,9 +9553,9 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 
 	private void ScheduleAppsViewWarmup()
 	{
-		if (_appsView == null || _appsViewBuilt || _appsWarmupOperation != null)
+		if (_appsView == null || _appsViewBuilt || _appsWarmupOperation != null || _visualsDeferred)
 		{
-			return;
+			return;   // deferred (Windows 7 Start mode): SwitchView builds the rows when all apps is first opened
 		}
 		_appsWarmupOperation = ((DispatcherObject)this).Dispatcher.BeginInvoke((Delegate)(Action)delegate
 		{

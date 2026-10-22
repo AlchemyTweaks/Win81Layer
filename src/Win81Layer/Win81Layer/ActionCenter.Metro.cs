@@ -1026,6 +1026,7 @@ public sealed partial class ActionCenter
 	{
 		_dismissing = false;
 		_shownTick = System.Environment.TickCount64;   // grace window so the opening click can't self-dismiss (see CloseOnOutsideClick)
+		_shownStamp = System.Diagnostics.Stopwatch.GetTimestamp();
 		int generation = ++_animationGeneration;
 		PlaceOnEdge();
 		ApplyMetroTheme();
@@ -1070,7 +1071,9 @@ public sealed partial class ActionCenter
 			generation = ++_animationGeneration;
 			Logger.Log("Action Center: mid-show dismiss cancelled (activation bounce)");
 		}
-		Logger.Log($"Action Center: show via {(_screen == null ? "Win+A" : "taskbar")} active={base.IsActive} fg={ForegroundDescription()} took={System.Environment.TickCount64 - _shownTick}ms");
+		double tookMs = System.Diagnostics.Stopwatch.GetElapsedTime(_shownStamp).TotalMilliseconds;
+		// took= stays a whole number (existing log miners parse it); precise= carries the sub-millisecond value.
+		Logger.Log($"Action Center: show via {(_screen == null ? "Win+A" : "taskbar")} active={base.IsActive} fg={ForegroundDescription()} took={(long)tookMs}ms precise={tookMs.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture)}ms");
 		if (Motion.Mode == MotionMode.Off)
 		{
 			_slide.X = 0.0;

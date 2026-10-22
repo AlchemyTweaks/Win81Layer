@@ -404,6 +404,20 @@ internal static class SeasonalTrayIcons
 		return (live.BurstUntil != 0 && now >= live.BurstUntil) || (live.RecheckAt != 0 && now >= live.RecheckAt);
 	}
 
+	// Milliseconds until NeedsSettle turns true for this icon, or -1 when nothing is pending (0 when it is due already).
+	// The bar arms a one-shot tray scan for the earliest of these, so a settle never waits for the periodic backstop.
+	internal static long SettleDueInMs(TrayAppIcon vm)
+	{
+		SeasonalTrayLive? live = vm.SeasonalTray;
+		if (live == null || (live.BurstUntil == 0 && live.RecheckAt == 0))
+		{
+			return -1L;
+		}
+		long due = live.BurstUntil == 0 ? live.RecheckAt : (live.RecheckAt == 0 ? live.BurstUntil : Math.Min(live.BurstUntil, live.RecheckAt));
+		long left = due - Now;
+		return left <= 0 ? 0L : (left + TimeSpan.TicksPerMillisecond - 1) / TimeSpan.TicksPerMillisecond;
+	}
+
 	// The icon no longer goes through the seasonal logic (it went away, its bar closed, the season or the setting
 	// changed): its display time is counted up to now and its blinking and pending checks end with it.
 	internal static void Drop(TrayAppIcon vm)

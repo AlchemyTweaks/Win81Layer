@@ -74,6 +74,9 @@ public sealed partial class ActionCenter : Window
 	// on the first tap. Outside clicks within a short grace window after a show are ignored (native flyout behaviour).
 	private long _shownTick;
 
+	// Stopwatch timestamp of the same show, for the open latency in the log (TickCount64 is quantized to ~15.6 ms).
+	private long _shownStamp;
+
 	private double _finalLeft;
 
 	private readonly List<(Border tile, Func<bool> isOn)> _toggleTiles = new List<(Border, Func<bool>)>();
@@ -106,6 +109,7 @@ public sealed partial class ActionCenter : Window
 
 	public static void Toggle(Screen? screen = null, string edge = "Bottom")
 	{
+		ShellActivity.Stamp();
 		// Called synchronously from the taskbar button's Click this is the WM_LBUTTONUP's own time; from Win+A, the dispatch time.
 		int pressTime = GetMessageTime();
 		int sinceLast = unchecked(pressTime - _lastTogglePressTime);

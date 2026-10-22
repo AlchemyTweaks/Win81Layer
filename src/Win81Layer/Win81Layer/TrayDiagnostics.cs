@@ -530,7 +530,68 @@ internal static class TrayDiagnostics
 		TrayIconInfo? qi2 = Icon(qt, 5);
 		List<Recorder.Msg> qn = rec.Drain(qt);
 		Check("setversion-miss-recovers", sv2 && qi2 != null && qi2.Version == 4 && qi2.Orphan && qn.Count(m => m.Message == tc) == 1, Describe(qi2) + $"; nudges={qn.Count(m => m.Message == tc)}");
+		// A MODIFY that repeats what the icon already holds (apps re-send icon + tooltip every few seconds) is not
+		// signalled to the bar; a new tooltip or a new icon handle is.
+		int sigSame = TrayHostService.SignalCount;
+		bool mSame = Send(Payload(NIM_MODIFY, qt, 0, NIF_ICON | NIF_TIP, icon: 0x6000, tip: "Qt app"));
+		Check("modify-noop-not-signalled", mSame && TrayHostService.SignalCount == sigSame, $"signals {TrayHostService.SignalCount - sigSame} for an identical MODIFY (want 0)");
+		int sigTip = TrayHostService.SignalCount;
+		Send(Payload(NIM_MODIFY, qt, 0, NIF_TIP, tip: "Qt app 2"));
+		TrayIconInfo? qTip = Icon(qt, 0);
+		Check("modify-tip-signalled", TrayHostService.SignalCount > sigTip && qTip?.Tooltip == "Qt app 2", Describe(qTip));
+		int sigIcon = TrayHostService.SignalCount;
+		Send(Payload(NIM_MODIFY, qt, 0, NIF_ICON, icon: 0x6001));
+		TrayIconInfo? qIcon = Icon(qt, 0);
+		Check("modify-icon-signalled", TrayHostService.SignalCount > sigIcon && qIcon?.HIcon == (nint)0x6001, Describe(qIcon));
+		// The coalescing waits for 150 ms of quiet but never more than 750 ms after the first pending change, so an icon
+		// animating faster than the quiet time cannot hold the bar's updates back.
+		bool waitRules = TrayHostService.CoalesceWaitMs(100, 0, 50) == 100 && TrayHostService.CoalesceWaitMs(400, 0, 390) == 140
+			&& TrayHostService.CoalesceWaitMs(740, 0, 735) == 10 && TrayHostService.CoalesceWaitMs(760, 0, 755) <= 0
+			&& TrayHostService.CoalesceWaitMs(200, 0, 40) <= 0;
+		Check("coalesce-wait-capped", waitRules, "quiet 150 ms, capped at 750 ms after the first signal");
+		int changedFires = 0;
+		long firstFireMs = -1;
+		Stopwatch burst = Stopwatch.StartNew();
+		Action onChanged = delegate
+		{
+			if (Interlocked.Increment(ref changedFires) == 1)
+			{
+				Interlocked.Exchange(ref firstFireMs, burst.ElapsedMilliseconds);
+			}
+		};
+		TrayHostService.Changed += onChanged;
+		try
+		{
+			burst.Restart();
+			for (int i = 0; i < 20; i++)
+			{
+				Send(Payload(NIM_MODIFY, qt, 0, NIF_ICON, icon: 0x6100u + (uint)i));
+				Thread.Sleep(50);
+			}
+			Thread.Sleep(250);
+		}
+		finally
+		{
+			TrayHostService.Changed -= onChanged;
+		}
+		long firstFire = Interlocked.Read(ref firstFireMs);
+		Check("signal-burst-max-wait", firstFire >= 0 && firstFire <= 1000 && changedFires >= 2, $"first change raised {firstFire} ms into a 1 s burst of 20 icon changes 50 ms apart; {changedFires} raised in all (want <= 1000 ms and >= 2)");
 		rec.Destroy(qt);
+
+		// --- A tray-only app that crashes never sends NIM_DELETE and destroys no shell window: the host's 1 s sweep hides
+		// its icon and tells the bar, once.
+		Fresh();
+		nint crash = rec.Create(Recorder.GenericClass);
+		Send(Payload(NIM_ADD, crash, 0, NIF_MESSAGE | NIF_ICON | NIF_TIP, cb: CB, icon: 0x8800, tip: "Tray-only app"));
+		int sigSweep = TrayHostService.SignalCount;
+		TrayHostService.SweepDeadOwnersForTest();
+		bool sweepQuiet = TrayHostService.SignalCount == sigSweep && Icon(crash, 0) != null;
+		rec.Destroy(crash);
+		TrayHostService.SweepDeadOwnersForTest();
+		bool sweepSignalled = TrayHostService.SignalCount == sigSweep + 1;
+		TrayHostService.SweepDeadOwnersForTest();
+		bool sweepOnce = TrayHostService.SignalCount == sigSweep + 1;
+		Check("dead-owner-swept", sweepQuiet && sweepSignalled && sweepOnce && Icon(crash, 0) == null, $"live owner: no signal ({sweepQuiet}); owner destroyed: signalled once ({sweepSignalled}, {sweepOnce}) and the icon is hidden");
 
 		// --- GUID icons: identity is the guid; the window can change; addressing by (window, id) still finds it.
 		Fresh();

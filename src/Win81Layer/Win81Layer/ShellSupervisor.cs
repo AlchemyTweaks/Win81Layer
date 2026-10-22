@@ -23,6 +23,7 @@ internal static class ShellSupervisor
 
 	internal static void Tick(bool taskbarActive)
 	{
+		PerfProbe.Refuse("ShellSupervisor.Tick");
 		if (!taskbarActive)
 		{
 			_explorerFailStreak = 0;

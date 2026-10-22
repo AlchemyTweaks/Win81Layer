@@ -908,6 +908,15 @@ public sealed class PcSettingsWindow : Window
 		}
 		_foregroundProc = null;
 		_pointerPreviewCache.Clear();
+		// An enabled DispatcherTimer is rooted by the dispatcher: left running, it kept this closed window (and its whole
+		// tree) alive and ticking once a second after every visit to the Composition page.
+		_compStatusTimer?.Stop();
+		_compStatusTimer = null;
+		if (_compStatus != null)
+		{
+			_compStatus.IsVisibleChanged -= OnCompStatusVisibleChanged;
+			_compStatus = null;
+		}
 		base.OnClosed(e);
 	}
 
@@ -2490,22 +2499,57 @@ public sealed class PcSettingsWindow : Window
 		try
 		{
 			_compStatusTimer?.Stop();
-			_compStatusTimer = new System.Windows.Threading.DispatcherTimer
+			System.Windows.Threading.DispatcherTimer timer = new System.Windows.Threading.DispatcherTimer
 			{
 				Interval = TimeSpan.FromSeconds(1.0)
 			};
-			_compStatusTimer.Tick += delegate
+			_compStatusTimer = timer;
+			timer.Tick += delegate
 			{
 				if (_compStatus == null || !_compStatus.IsVisible)
 				{
+					timer.Stop();   // ticks only while the status is on screen; IsVisibleChanged starts it again
 					return;
 				}
 				RefreshCompStatus();
 			};
-			_compStatusTimer.Start();
+			StackPanel status = _compStatus;
+			if (status != null)
+			{
+				status.IsVisibleChanged -= OnCompStatusVisibleChanged;
+				status.IsVisibleChanged += OnCompStatusVisibleChanged;
+			}
+			if (status == null || status.IsVisible)
+			{
+				timer.Start();
+			}
 		}
 		catch
 		{
+		}
+	}
+
+	// The Composition page's status ticks only while it is shown: a page that is switched away from or a closed window
+	// stops its timer, and showing the page again restarts it.
+	private void OnCompStatusVisibleChanged(object sender, DependencyPropertyChangedEventArgs e)
+	{
+		if (!ReferenceEquals(sender, _compStatus))
+		{
+			((UIElement)sender).IsVisibleChanged -= OnCompStatusVisibleChanged;   // a status panel from an earlier page build
+			return;
+		}
+		System.Windows.Threading.DispatcherTimer timer = _compStatusTimer;
+		if (timer == null)
+		{
+			return;
+		}
+		if ((bool)e.NewValue)
+		{
+			timer.Start();
+		}
+		else
+		{
+			timer.Stop();
 		}
 	}
 

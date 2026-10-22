@@ -201,6 +201,37 @@ public sealed class WinKeyHook : IDisposable
 
 	private nint _mouseHook;
 
+	// Hot-corner zones published by HotCorners as [left, top, right, bottom, bit] quintuples (physical pixels, the
+	// same space as the hook's points). The move fast path tests them and reports only zone changes.
+	private volatile int[] _hotZones = Array.Empty<int>();
+
+	private int _hotMask;
+
+	// Raised on the hook thread when the set of zones under the pointer changes (never per move).
+	internal volatile Action<int>? HotZoneChanged;
+
+	// Events each hook has seen (written by the hook thread only). The shell clock's liveness check compares them with
+	// what the system saw (cursor movement, GetLastInputInfo) to tell a hook that Windows removed (see InputHookLiveness).
+	private int _mouseEvents;
+
+	private int _keyEvents;
+
+	internal int MouseEvents => Volatile.Read(ref _mouseEvents);
+
+	internal int KeyEvents => Volatile.Read(ref _keyEvents);
+
+	// True while the low-level mouse hook is installed.
+	internal bool MouseHookActive => _mouseHook != IntPtr.Zero;
+
+	// Raised on the hook thread after the hooks were installed (or re-installed), and when an install failed.
+	internal event Action? HooksInstalled;
+
+	internal event Action? HookInstallFailed;
+
+	internal int Reinstalls;
+
+	private const uint WM_APP_REHOOK = 0x8001u;
+
 	private bool _winDown;
 
 	private bool _otherKeyWhileWin;
@@ -324,6 +355,7 @@ public sealed class WinKeyHook : IDisposable
 
 	public WinKeyHook()
 	{
+		PerfProbe.Refuse("WinKeyHook");
 		_kbProc = KeyboardCallback;
 		_mouseProc = MouseCallback;
 		_thread = new Thread(HookThread)
@@ -343,12 +375,19 @@ public sealed class WinKeyHook : IDisposable
 		if (_kbHook == IntPtr.Zero || _mouseHook == IntPtr.Zero)
 		{
 			Logger.Log($"SetWindowsHookEx failed: kb={_kbHook}, mouse={_mouseHook}, err={Marshal.GetLastWin32Error()}");
+			RaiseHookEvent(HookInstallFailed);
 			return;
 		}
 		Logger.Log("Input hooks installed (keyboard + mouse)");
+		RaiseHookEvent(HooksInstalled);
 		MSG msg;
 		while (GetMessage(out msg, IntPtr.Zero, 0u, 0u) > 0)
 		{
+			if (msg.hwnd == IntPtr.Zero && msg.message == WM_APP_REHOOK)
+			{
+				Rehook((int)msg.wParam);
+				continue;
+			}
 			TranslateMessage(ref msg);
 			DispatchMessage(ref msg);
 		}
@@ -364,8 +403,87 @@ public sealed class WinKeyHook : IDisposable
 		Logger.Log("Input hooks removed");
 	}
 
+	// Windows removes a low-level hook silently when a callback overruns LowLevelHooksTimeout. Re-installing it on this
+	// thread restores Start/Win-key interception or the hot corners (asked for by the shell clock's liveness check). Only
+	// the hook proven dead is re-installed: a fresh hook goes to the front of the chain, ahead of hooks other programs
+	// installed later (a fullscreen remote-desktop or VM client capturing the keyboard), so a live one is never touched.
+	// which: 1 keyboard, 2 mouse.
+	private void Rehook(int which)
+	{
+		Reinstalls++;
+		bool kb = (which & 1) != 0;
+		bool mouse = (which & 2) != 0;
+		if (kb)
+		{
+			if (_kbHook != IntPtr.Zero)
+			{
+				UnhookWindowsHookEx(_kbHook);   // fails harmlessly when Windows already removed it
+			}
+			_kbHook = SetWindowsHookEx(13, _kbProc, IntPtr.Zero, 0u);
+		}
+		if (mouse)
+		{
+			if (_mouseHook != IntPtr.Zero)
+			{
+				UnhookWindowsHookEx(_mouseHook);
+			}
+			_mouseHook = SetWindowsHookEx(14, _mouseProc, IntPtr.Zero, 0u);
+		}
+		string what = kb && mouse ? "keyboard + mouse" : (kb ? "keyboard" : "mouse");
+		if ((kb && _kbHook == IntPtr.Zero) || (mouse && _mouseHook == IntPtr.Zero))
+		{
+			Logger.Log($"Input hook re-install failed ({what}): kb={_kbHook}, mouse={_mouseHook}, err={Marshal.GetLastWin32Error()}");
+			if (_mouseHook == IntPtr.Zero)
+			{
+				RaiseHookEvent(HookInstallFailed);   // the hot corners fall back to their poll
+			}
+			return;
+		}
+		Logger.Log($"Input hook re-installed ({what})");
+		if (mouse)
+		{
+			RaiseHookEvent(HooksInstalled);
+		}
+	}
+
+	internal void RequestReinstall(bool keyboard, bool mouse)
+	{
+		int which = (keyboard ? 1 : 0) | (mouse ? 2 : 0);
+		if (_threadId != 0 && which != 0)
+		{
+			PostThreadMessage(_threadId, WM_APP_REHOOK, which, IntPtr.Zero);
+		}
+	}
+
+	internal void SetHotZones(int[] zones)
+	{
+		_hotMask = 0;
+		_hotZones = zones ?? Array.Empty<int>();
+	}
+
+	private static void RaiseHookEvent(Action? handler)
+	{
+		if (handler == null)
+		{
+			return;
+		}
+		try
+		{
+			handler();
+		}
+		catch (Exception ex)
+		{
+			Logger.Log("Input hook event handler failed: " + ex.Message);
+		}
+	}
+
 	private nint KeyboardCallback(int nCode, nint wParam, nint lParam)
 	{
+		_keyEvents++;
+		if (ShellClock.WantKick)
+		{
+			ShellClock.RequestKick();
+		}
 		if (nCode >= 0)
 		{
 			KBDLLHOOKSTRUCT info = Marshal.PtrToStructure<KBDLLHOOKSTRUCT>(lParam);
@@ -672,6 +790,37 @@ public sealed class WinKeyHook : IDisposable
 	private nint MouseCallback(int nCode, nint wParam, nint lParam)
 	{
 		int wm = (int)wParam;
+		_mouseEvents++;
+		if (ShellClock.WantKick)
+		{
+			ShellClock.RequestKick();
+		}
+		// Hot-corner zones: a few compares per move; only a change of the zones under the pointer is reported.
+		if (wm == 512 && nCode >= 0)
+		{
+			int[] zones = _hotZones;
+			if (zones.Length != 0)
+			{
+				int mx = Marshal.ReadInt32(lParam);
+				int my = Marshal.ReadInt32(lParam, 4);
+				int mask = HotCorners.ZoneMask(mx, my, zones);
+				if (mask != _hotMask)
+				{
+					_hotMask = mask;
+					Action<int>? changed = HotZoneChanged;
+					if (changed != null)
+					{
+						try
+						{
+							changed(mask);
+						}
+						catch
+						{
+						}
+					}
+				}
+			}
+		}
 		// Charms edge-pull drag: only while armed. Pure OBSERVER — we never return 1, so the underlying window still
 		// receives every move/up unchanged (no interference with scrollbars, resize borders, window drags, selection).
 		if (nCode >= 0 && TrackMouseDrag && (wm == 512 || wm == 514))

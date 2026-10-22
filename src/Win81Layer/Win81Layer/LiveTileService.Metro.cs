@@ -20,6 +20,12 @@ public sealed partial class LiveTileService
 	internal bool MetroReady => _metroReady;
 	internal NewsFeedService.Feed? CurrentNews => _newsSnapshot;
 
+	private void ReleaseMetroArt()
+	{
+		_metroFaceKeys.Clear();
+		_metroReady = false;
+	}
+
 	private async Task WarmMetroTilesAsync()
 	{
 		try
@@ -37,7 +43,20 @@ public sealed partial class LiveTileService
 			if (_googleRevision == googleRevision && GoogleAuth.HasCalendarAccess) _agendaSnapshot = cached.Item2;
 		}
 		catch (Exception ex) { Logger.Log("Metro tile warmup: " + ex.GetType().Name); }
-		finally { if (!_disposed) { _metroReady = true; QueueUpdate(); } }
+		finally
+		{
+			if (!_disposed)
+			{
+				_metroReady = true;
+				if (_rebuildFacesOnWarm)
+				{
+					// After ReleaseArt: the faces it dropped are built again now, Start hidden or not (no motion while hidden).
+					_rebuildFacesOnWarm = false;
+					BuildMetroFaces();
+				}
+				QueueUpdate();
+			}
+		}
 	}
 
 	private void EnsureMetroFace(TileVm tile, bool motion)
@@ -62,6 +81,12 @@ public sealed partial class LiveTileService
 	private void RefreshMetroFaces()
 	{
 		if (_disposed || !_timer.IsEnabled) return;
+		BuildMetroFaces();
+	}
+
+	private void BuildMetroFaces()
+	{
+		if (_disposed) return;
 		bool motion = WeatherMotionAllowed();
 		foreach (TileVm tile in _tiles())
 			if (!tile.LiveOff && tile.Live is LiveKind.Clock or LiveKind.Agenda or LiveKind.News) EnsureMetroFace(tile, motion);

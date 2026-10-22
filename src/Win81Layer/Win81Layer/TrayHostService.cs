@@ -172,12 +172,21 @@ public static class TrayHostService
 	private static uint _wmShellHook;
 	private static volatile bool _active;
 	private static Timer _coalesce;
+
+	// Retargets so far (under _gate): a MODIFY that moved or revived an entry is a change for the bar.
+	private static int _retargets;
+
+	// The UI dispatcher while the host runs: Changed is then raised on the UI thread after a 150 ms debounce.
+	private static System.Windows.Threading.Dispatcher _uiDispatcher;
+
+	private static System.Windows.Threading.DispatcherTimer _uiCoalesce;
 	private static bool _collapseArmed;
 	private static bool _inDeferredCollapse;
 	private static int _overtakes;
 	private static long _lastOvertakeLog = long.MinValue;
 
-	// Raised (coalesced, ~150ms) whenever the icon table changes. Fires on a threadpool thread; consumers marshal.
+	// Raised (coalesced, ~150ms) whenever the icon table changes. While the host runs it fires on the UI thread; without
+	// a UI dispatcher (tests) on a threadpool thread. Consumers that are not on the UI thread marshal.
 	public static event Action Changed;
 
 	public static bool Active => _active;
@@ -197,6 +206,7 @@ public static class TrayHostService
 
 	public static void Start()
 	{
+		PerfProbe.Refuse("TrayHostService.Start");
 		// Diagnostic kill-switch: WIN81_NO_TRAYHOST=1 disables the tray host takeover (used to isolate its effect on
 		// taskbar layout). Normal runs leave it unset.
 		if (Environment.GetEnvironmentVariable("WIN81_NO_TRAYHOST") == "1")
@@ -209,6 +219,7 @@ public static class TrayHostService
 		{
 			return;
 		}
+		_uiDispatcher = System.Windows.Application.Current?.Dispatcher;
 		_thread = new Thread(ThreadMain)
 		{
 			IsBackground = true,
@@ -474,6 +485,7 @@ public static class TrayHostService
 				{
 					// Only re-raise when explorer's bar has overtaken ours in FindWindow order.
 					EnsureTop("timer");
+					SweepDeadOwners();
 				}
 				return IntPtr.Zero;
 			case WM_APP_NUDGE:
@@ -683,6 +695,10 @@ public static class TrayHostService
 				}
 				case NIM_MODIFY:
 				{
+					int retargetsBefore = _retargets;
+					int iconsBefore = _icons.Count;
+					int foldsBefore = _folds.Count;
+					bool fresh = false;
 					// A MODIFY for a folded phantom restores it: it never touches (or moves) the survivor.
 					Entry e = FindOrUnfoldLocked(nid, hasGuid, ref notes) ?? Adopt(nid, hasGuid);
 					if (e == null && nid.hWnd == 0)
@@ -700,15 +716,19 @@ public static class TrayHostService
 						result = false;
 						nudge = WireHandle(nid.hWnd);
 						nudgeWhy = NudgeReason.ModifyMiss;
+						fresh = true;
 					}
 					else
 					{
 						Retarget(e, nid);
 					}
-					Merge(e, nid, now);
+					bool fieldsChanged = Merge(e, nid, now);
 					CheckGuessLocked(e, nid, ref notes);
 					CollapsePhantomsLocked(e, now, ref notes);
-					changed = true;
+					// A MODIFY that repeats what the entry already holds (apps re-send their icon and tooltip every few
+					// seconds) changes nothing on the bar, so it is not signalled. New, moved, revived or folded entries
+					// and twins (merged by freshness in Snapshot) still are.
+					changed = fresh || fieldsChanged || _retargets != retargetsBefore || _icons.Count != iconsBefore || _folds.Count != foldsBefore || HasTwinLocked(e);
 					break;
 				}
 				case NIM_DELETE:
@@ -916,6 +936,7 @@ public static class TrayHostService
 		{
 			return;
 		}
+		_retargets++;
 		e.HWnd = nid.hWnd;
 		e.Pid = PidOf(nid.hWnd);
 		e.Dead = false;
@@ -951,26 +972,60 @@ public static class TrayHostService
 
 	// Merge only the fields the sender actually supplied (uFlags), so a tooltip-only MODIFY doesn't wipe the callback
 	// message or icon we captured at ADD time.
-	private static void Merge(Entry e, in WIRE_NID nid, long now)
+	// Returns true when a field the bar shows (callback, icon handle, tooltip, hidden state) took a new value. The sequence
+	// and touch time always advance (freshness rules depend on them).
+	private static bool Merge(Entry e, in WIRE_NID nid, long now)
 	{
 		e.Seq = ++_seq;
 		e.LastTouchMs = now;
-		if ((nid.uFlags & NIF_MESSAGE) != 0)
+		bool changed = false;
+		if ((nid.uFlags & NIF_MESSAGE) != 0 && e.Callback != nid.uCallbackMessage)
 		{
 			e.Callback = nid.uCallbackMessage;
+			changed = true;
 		}
 		if ((nid.uFlags & NIF_ICON) != 0 && nid.hIcon != 0)
 		{
-			e.HIcon = WireHandle(nid.hIcon);
+			nint icon = WireHandle(nid.hIcon);
+			if (icon != e.HIcon)
+			{
+				e.HIcon = icon;
+				changed = true;
+			}
 		}
 		if ((nid.uFlags & NIF_TIP) != 0)
 		{
-			e.Tip = (nid.szTip ?? "").Replace("\0", " ").Trim();
+			string tip = (nid.szTip ?? "").Replace("\0", " ").Trim();
+			if (!string.Equals(tip, e.Tip, StringComparison.Ordinal))
+			{
+				e.Tip = tip;
+				changed = true;
+			}
 		}
 		if ((nid.uFlags & NIF_STATE) != 0 && (nid.dwStateMask & NIS_HIDDEN) != 0)
 		{
-			e.Hidden = (nid.dwState & NIS_HIDDEN) != 0;
+			bool hidden = (nid.dwState & NIS_HIDDEN) != 0;
+			if (hidden != e.Hidden)
+			{
+				e.Hidden = hidden;
+				changed = true;
+			}
 		}
+		return changed;
+	}
+
+	// An entry that shares its window and id with an entry of the other kind (a guid icon and a plain one): Snapshot
+	// merges such twins by freshness, so any message to either can change what the bar shows.
+	private static bool HasTwinLocked(Entry e)
+	{
+		foreach (Entry other in _icons.Values)
+		{
+			if (!ReferenceEquals(other, e) && other.HWnd == e.HWnd && other.UID == e.UID && (other.Guid == Guid.Empty) != (e.Guid == Guid.Empty))
+			{
+				return true;
+			}
+		}
+		return false;
 	}
 
 	private static void RemoveLocked(Entry e, long now, bool tombstone)
@@ -1036,21 +1091,28 @@ public static class TrayHostService
 
 	// An entry whose window is gone is hidden at once (Snapshot leaves it out) but kept for DeadGraceMs: an app that
 	// re-creates its window and goes on with NIM_MODIFY only is then still adopted (FindAdoptable needs the old entry)
-	// instead of becoming an orphan without a callback. Then it is dropped.
-	private static void PruneDeadLocked(long now)
+	// instead of becoming an orphan without a callback. Then it is dropped. Returns true when an icon was hidden or shown
+	// again (what Snapshot returns changed).
+	private static bool PruneDeadLocked(long now)
 	{
+		bool changed = false;
 		List<Entry> dead = null;
 		foreach (Entry e in _icons.Values)
 		{
 			if (IsWindow(WireHandle(e.HWnd)))
 			{
-				e.Dead = false;
+				if (e.Dead)
+				{
+					e.Dead = false;
+					changed = true;
+				}
 				continue;
 			}
 			if (!e.Dead)
 			{
 				e.Dead = true;
 				e.DeadSinceMs = now;
+				changed = true;
 			}
 			else if (now - e.DeadSinceMs >= DeadGraceMs)
 			{
@@ -1068,6 +1130,7 @@ public static class TrayHostService
 		{
 			_folds.Clear();
 		}
+		return changed;
 	}
 
 	// Phantoms: an old registration nobody deletes, replaced by a newer one with the same non-empty tooltip.
@@ -1480,6 +1543,11 @@ public static class TrayHostService
 
 	// ---- --traytest ----
 
+	internal static void SweepDeadOwnersForTest()
+	{
+		SweepDeadOwners();
+	}
+
 	internal static void ResetForTest()
 	{
 		lock (_gate)
@@ -1535,22 +1603,111 @@ public static class TrayHostService
 		}
 	}
 
+	// Change signals are coalesced: Changed fires once the table has been quiet for CoalesceQuietMs, but never later than
+	// CoalesceMaxWaitMs after the first pending signal. An icon that animates faster than the quiet time (a sync or scan
+	// icon changing every frame) therefore cannot hold every other tray update back: one lands at least every 750 ms.
+	// Only the first signal of a burst posts anything; later ones just stamp the time (no UI-thread work per signal).
+	internal const long CoalesceQuietMs = 150L;
+
+	internal const long CoalesceMaxWaitMs = 750L;
+
+	private static long _signalFirstMs;
+
+	private static long _signalLastMs;
+
+	private static int _signalArmed;
+
+	// Milliseconds still to wait before Changed may fire (<= 0: fire now). Pure (tested by --traytest).
+	internal static long CoalesceWaitMs(long now, long firstSignalMs, long lastSignalMs)
+	{
+		long quiet = CoalesceQuietMs - (now - lastSignalMs);
+		long cap = CoalesceMaxWaitMs - (now - firstSignalMs);
+		return Math.Min(quiet, cap);
+	}
+
 	private static void SignalChanged()
 	{
 		Interlocked.Increment(ref SignalCount);
+		long now = Environment.TickCount64;
+		Volatile.Write(ref _signalLastMs, now);
+		if (Interlocked.CompareExchange(ref _signalArmed, 1, 0) != 0)
+		{
+			return;   // a burst is already pending: its timer reads the new time stamp
+		}
+		Volatile.Write(ref _signalFirstMs, now);
+		System.Windows.Threading.Dispatcher ui = _uiDispatcher;
+		if (ui != null && !ui.HasShutdownStarted)
+		{
+			// One post to the UI thread arms the timer there; Changed then fires on the UI thread, where the bar reads the
+			// in-memory table directly (no pool timer, no pool hop, no second dispatcher hop).
+			try
+			{
+				ui.BeginInvoke(System.Windows.Threading.DispatcherPriority.Background, (Action)ArmUiCoalesce);
+				return;
+			}
+			catch
+			{
+			}
+		}
 		try
 		{
 			if (_coalesce == null)
 			{
 				_coalesce = new Timer(delegate
 				{
+					long wait = CoalesceWaitMs(Environment.TickCount64, Volatile.Read(ref _signalFirstMs), Volatile.Read(ref _signalLastMs));
+					if (wait > 0L)
+					{
+						_coalesce.Change(wait, Timeout.Infinite);
+						return;
+					}
+					Volatile.Write(ref _signalArmed, 0);   // before Changed: a signal raised from here on starts a new burst
 					try { Changed?.Invoke(); } catch { }
 				}, null, Timeout.Infinite, Timeout.Infinite);
 			}
-			_coalesce.Change(150, Timeout.Infinite);
+			_coalesce.Change(CoalesceQuietMs, Timeout.Infinite);
 		}
 		catch
 		{
+			Volatile.Write(ref _signalArmed, 0);
+		}
+	}
+
+	private static void ArmUiCoalesce()
+	{
+		if (_uiCoalesce == null)
+		{
+			_uiCoalesce = new System.Windows.Threading.DispatcherTimer(System.Windows.Threading.DispatcherPriority.Background);
+			_uiCoalesce.Tick += delegate
+			{
+				long wait = CoalesceWaitMs(Environment.TickCount64, Volatile.Read(ref _signalFirstMs), Volatile.Read(ref _signalLastMs));
+				if (wait > 0L)
+				{
+					_uiCoalesce.Interval = TimeSpan.FromMilliseconds(wait);   // still in a burst: tick again when due
+					return;
+				}
+				_uiCoalesce.Stop();
+				Volatile.Write(ref _signalArmed, 0);   // before Changed: a signal raised from here on starts a new burst
+				try { Changed?.Invoke(); } catch { }
+			};
+		}
+		_uiCoalesce.Interval = TimeSpan.FromMilliseconds(CoalesceQuietMs);
+		_uiCoalesce.Start();
+	}
+
+	// Tray-host thread, on its 1 s timer: an icon whose owner window is gone (a crashed or killed tray-only app never
+	// sends NIM_DELETE, and no shell window is destroyed) is hidden within about a second, as the bar's former 4 s scan
+	// did. One IsWindow per icon; the bar hears about it only when an icon actually went (or came back).
+	private static void SweepDeadOwners()
+	{
+		bool changed;
+		lock (_gate)
+		{
+			changed = PruneDeadLocked(Now);
+		}
+		if (changed)
+		{
+			SignalChanged();
 		}
 	}
 
