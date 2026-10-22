@@ -4127,6 +4127,10 @@ public partial class App : System.Windows.Application
 					{
 						ToastService.Show(null, "Pointers", "Could not change pointers", r.Message);
 					}
+					else if (r.ShowsAfterSignIn)
+					{
+						ToastService.Show(null, "Pointers", "Pointers change after sign-in", r.Message);
+					}
 				}
 				catch (Exception exPointers)
 				{

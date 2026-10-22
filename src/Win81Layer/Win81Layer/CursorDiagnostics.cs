@@ -19,7 +19,9 @@ namespace Win81Layer;
 
 // --cursortest <outDir> [--cursorref <dir>]: offscreen QA of the Alchemy pointers. Read-only by construction: settings,
 // state, registry and pointer-folder writes throw, the files are drawn into outDir only and loaded in this process
-// only, and the pointer engine is driven against an in-memory registry, including a crash at every write.
+// only, and the pointer engine is driven against an in-memory registry, including a crash at every write. Putting
+// pointers on screen is driven against a fake screen modelled on win32k (SPI_SETCURSORS, SetSystemCursor); the real
+// screen is only read (LoadCursor + GetIconInfo), and SPI_SETCURSORS / SetSystemCursor refuse to run.
 internal static class CursorDiagnostics
 {
 	private static readonly List<(string Name, bool Pass, string Detail)> Checks = new List<(string, bool, string)>();
@@ -71,11 +73,13 @@ internal static class CursorDiagnostics
 			GenerationChecks(outDir, files);
 			FileChecks(files);
 			LoadChecks(files);
+			RealReloadChecks(files);
 			GeometryChecks();
 			LegibilityChecks();
 			SourceChecks(outDir, refDir);
 			Renders(outDir);
 			EngineChecks();
+			ReloadChecks();
 			ProfileChecks(real);
 			StatusChecks();
 			PcSettingsRenders(outDir, real);
@@ -165,16 +169,25 @@ internal static class CursorDiagnostics
 				unguarded.Add(name + ":" + ex.GetType().Name);
 			}
 		}
+		if (!SettingsStore.ReadOnlyDiagnostics)
+		{
+			// Never probe the real write paths unless read-only diagnostics is on (each one refuses to run then).
+			Check("safety-real-writes-throw", false, "read-only diagnostics is off; the write paths were not probed");
+			return;
+		}
+		Win32CursorSystem screen = new Win32CursorSystem();
 		Expect("WriteValues", () => w.WriteValues(new List<(string, RegValue?)>()));
 		Expect("WriteSchemeEntry", () => w.WriteSchemeEntry(PointerScheme.AlchemySchemeName, null));
-		Expect("RefreshSystemCursors", () => w.RefreshSystemCursors());
+		Expect("RefreshSystemCursors", () => w.RefreshSystemCursors(new Dictionary<CursorRole, string>()));
+		Expect("Win32CursorSystem.ReloadFromRegistry", () => screen.ReloadFromRegistry(PointerReloader.ReloadFlags, out _));
+		Expect("Win32CursorSystem.SetFromFile", () => screen.SetFromFile(CursorRole.Arrow, Path.Combine(Root, "qa", "no-such-pointer.cur"), 32, out _));
 		Expect("SaveState", () => w.SaveState(new PointerStateFile()));
 		Expect("DeleteLegacySnapshot", w.DeleteLegacySnapshot);
 		Expect("EnsurePalette", () => w.EnsurePalette("dark"));
 		Expect("CleanupPalettes", () => w.CleanupPalettes(Array.Empty<string>()));
 		Expect("AlchemyCursorSet.Ensure", () => AlchemyCursorSet.Ensure("dark", null, null));
 		Expect("AlchemyCursorSet.Cleanup", () => AlchemyCursorSet.Cleanup(Array.Empty<string>()));
-		Check("safety-real-writes-throw", unguarded.Count == 0, unguarded.Count == 0 ? "9 write paths refused" : "not guarded: " + string.Join(", ", unguarded));
+		Check("safety-real-writes-throw", unguarded.Count == 0, unguarded.Count == 0 ? "11 write paths refused (registry, state, files, SPI_SETCURSORS, SetSystemCursor)" : "not guarded: " + string.Join(", ", unguarded));
 	}
 
 	// ===================================================================== files
@@ -1565,7 +1578,22 @@ internal static class CursorDiagnostics
 
 		public bool FailGeneration;
 
-		public bool RefreshFails;
+		// The session's pointers.
+		public readonly FakeScreen Screen;
+
+		// The last RefreshSystemCursors result.
+		public PointerReloadResult? LastReload;
+
+		// Windows refuses the reload with an error and setting each pointer fails too: nothing reaches the screen.
+		public bool RefreshFails
+		{
+			get => Screen.RefuseReload && Screen.SetFails;
+			set
+			{
+				Screen.RefuseReload = value;
+				Screen.SetFails = value;
+			}
+		}
 
 		public bool LegacyDeletedBeforeCommit;
 
@@ -1588,6 +1616,11 @@ internal static class CursorDiagnostics
 		public bool CrashAfter;
 
 		private DateTime _now = new DateTime(2026, 10, 1, 12, 0, 0, DateTimeKind.Utc);
+
+		public FakePointerWorld()
+		{
+			Screen = new FakeScreen(this);
+		}
 
 		public string AlchemyRoot => FakeRoot;
 
@@ -1659,10 +1692,17 @@ internal static class CursorDiagnostics
 			});
 		}
 
-		public bool RefreshSystemCursors()
+		// The real reload logic against the fake screen.
+		public PointerReloadResult RefreshSystemCursors(IReadOnlyDictionary<CursorRole, string> expected)
 		{
-			Step("refresh", delegate { Refreshes++; });
-			return !RefreshFails;
+			PointerReloadResult? result = null;
+			Step("refresh", delegate
+			{
+				Refreshes++;
+				result = PointerReloader.Reload(Screen, expected);
+				LastReload = result;
+			});
+			return result!;
 		}
 
 		public PointerStateFile LoadState()
@@ -1765,6 +1805,148 @@ internal static class CursorDiagnostics
 			StateSaves = 0;
 			Ops = 0;
 			OpLog.Clear();
+			Screen.Reloads = 0;
+			Screen.Sets = 0;
+		}
+	}
+
+	// The session's pointers in the fake, modelled on win32k: a reload reads the fake registry (a role on "" or on a file
+	// that does not load gets Windows' own pointer), and with SPIF_UPDATEINIFILE it still reloads but returns FALSE
+	// without an error code (fWriteAllowed = !fAlterWinIni, never set by SPI_SETCURSORS). Images are derived from the
+	// path, so two files only look alike when LooksLike says so.
+	private sealed class FakeScreen : ICursorSystem
+	{
+		private readonly FakePointerWorld _w;
+
+		public readonly Dictionary<CursorRole, CursorImage> Now = new Dictionary<CursorRole, CursorImage>();
+
+		// Expanded paths of files that do not load.
+		public readonly HashSet<string> BadFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+		// A file that looks exactly like another one (the Windows 8.1 pack and the Windows 11 aero set at 32 px).
+		public readonly Dictionary<string, string> LooksLike = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+		// Roles a reload leaves as they were.
+		public readonly HashSet<CursorRole> ReloadSkips = new HashSet<CursorRole>();
+
+		// Windows refuses the reload with ERROR_REQUIRES_INTERACTIVE_WINDOWSTATION and changes nothing.
+		public bool RefuseReload;
+
+		// The reload works but returns FALSE without an error code whatever the flags (what the live shell saw).
+		public bool AlwaysFalse;
+
+		public bool SetFails;
+
+		public int Size = 32;
+
+		public int Reloads;
+
+		public int Sets;
+
+		public uint LastFlags = uint.MaxValue;
+
+		public FakeScreen(FakePointerWorld w)
+		{
+			_w = w;
+		}
+
+		// Sign-in: every role loaded from the registry.
+		public void SignIn()
+		{
+			foreach (CursorRole role in AlchemyCursorArt.Roles)
+			{
+				Now[role] = FromRegistry(role);
+			}
+		}
+
+		private CursorImage FromRegistry(CursorRole role)
+		{
+			string path = PointerEngine.Find(_w.Reg, role.ToString())?.Expanded().Trim() ?? "";
+			return path.Length == 0 || BadFiles.Contains(path) ? Builtin(role, Size) : Image(path, Size);
+		}
+
+		public CursorImage Image(string path, int size)
+		{
+			string key = LooksLike.TryGetValue(path, out string? alike) ? alike : path;
+			byte[] h = SHA256.HashData(Encoding.UTF8.GetBytes(key.ToLowerInvariant() + "|" + size));
+			byte[] color = new byte[size * size * 4];
+			for (int i = 0; i < color.Length; i++)
+			{
+				color[i] = (byte)(h[i % h.Length] + i * 13);
+			}
+			byte[] mask = new byte[size * size / 8];
+			for (int i = 0; i < mask.Length; i++)
+			{
+				mask[i] = (byte)(h[(i + 7) % h.Length] ^ i);
+			}
+			return new CursorImage { Width = size, Height = size, HotX = h[0] % size, HotY = h[1] % size, Color = color, Mask = mask };
+		}
+
+		// Windows' own pointer: monochrome, no colour bitmap.
+		private static CursorImage Builtin(CursorRole role, int size)
+		{
+			byte[] h = SHA256.HashData(Encoding.UTF8.GetBytes("builtin|" + role + "|" + size));
+			byte[] mask = new byte[size * size * 2 / 8];
+			for (int i = 0; i < mask.Length; i++)
+			{
+				mask[i] = (byte)(h[i % h.Length] + i * 3);
+			}
+			return new CursorImage { Width = size, Height = size, HotX = h[0] % size, HotY = h[1] % size, Mask = mask };
+		}
+
+		public bool ReloadFromRegistry(uint fWinIni, out int error)
+		{
+			Reloads++;
+			LastFlags = fWinIni;
+			if (RefuseReload)
+			{
+				error = 1459;
+				return false;
+			}
+			foreach (CursorRole role in AlchemyCursorArt.Roles)
+			{
+				if (!ReloadSkips.Contains(role))
+				{
+					Now[role] = FromRegistry(role);
+				}
+			}
+			error = 0;
+			return !AlwaysFalse && (fWinIni & PointerReloader.SpifUpdateIniFile) == 0;
+		}
+
+		public CursorImage? Current(CursorRole role)
+		{
+			return Now.TryGetValue(role, out CursorImage? img) ? img : null;
+		}
+
+		public CursorImage? LoadFile(string path, int size, out string why)
+		{
+			if (BadFiles.Contains(path))
+			{
+				why = "does not load";
+				return null;
+			}
+			why = "";
+			return Image(path, size);
+		}
+
+		public bool SetFromFile(CursorRole role, string path, int size, out int error)
+		{
+			Sets++;
+			if (SetFails || BadFiles.Contains(path))
+			{
+				error = 5;
+				return false;
+			}
+			Now[role] = Image(path, size);
+			error = 0;
+			return true;
+		}
+
+		// The roles that do not show what the registry names ("" when the screen matches the registry).
+		public string Differs()
+		{
+			return string.Join(",", AlchemyCursorArt.Roles.Where(r => !FromRegistry(r).SameAs(Current(r))));
 		}
 	}
 
@@ -1799,6 +1981,7 @@ internal static class CursorDiagnostics
 		Set("GestureVisualization", RegistryValueKind.DWord, "31");
 		w.Schemes["Alchemy (Dark)"] = new RegValue("Alchemy (Dark)", RegistryValueKind.ExpandString, "%SystemRoot%\\Cursors\\Alchemy\\alchemy-dark-normal.cur,,,,,,,,,,,,,,%SystemRoot%\\Cursors\\Alchemy\\alchemy-dark-link.cur,,");
 		w.Schemes["Alchemy Mono"] = new RegValue("Alchemy Mono", RegistryValueKind.ExpandString, "C:\\Windows\\Cursors\\Alchemy Mono\\arrow.cur");
+		w.Screen.SignIn();
 		return w;
 	}
 
@@ -1818,6 +2001,7 @@ internal static class CursorDiagnostics
 		{
 			w.Legacy[role] = role is "UpArrow" or "Pin" or "Person" ? "C:\\WINDOWS\\cursors\\aero_" + role.ToLowerInvariant() + ".cur" : "C:\\WINDOWS\\Cursors\\alchemy-" + role.ToLowerInvariant() + ".cur";
 		}
+		w.Screen.SignIn();
 		return w;
 	}
 
@@ -1877,12 +2061,13 @@ internal static class CursorDiagnostics
 				&& w.Reg["CursorBaseSize"].Data == "48"
 				&& scheme != null && scheme.Data.Split(',').Length == 17 && scheme.Data.Split(',')[2] == DarkPath("dark", "working.ani")
 				&& w.Schemes.ContainsKey("Alchemy (Dark)") && w.Schemes.ContainsKey("Alchemy Mono")
-				&& w.Refreshes == 1 && w.State.Phase == PointerScheme.PhaseIdle && w.State.Original?.Source == "captured";
+				&& w.Refreshes == 1 && w.State.Phase == PointerScheme.PhaseIdle && w.State.Original?.Source == "captured"
+				&& !on.ShowsAfterSignIn && w.LastReload?.Loaded == true && w.Screen.Differs() == "";
 			PointerResult off = e.Apply(PointerTarget.Windows);
 			bool restored = off.Success && Sig(w.Reg) == reg0 && Sig(w.Schemes) == sch0 && w.Reg.Keys.Contains("pin", StringComparer.Ordinal)
 				&& !w.Reg.ContainsKey("Person") && w.State.Original == null && w.State.Applied == null && w.State.Phase == PointerScheme.PhaseIdle
-				&& w.Cleanups.LastOrDefault() == "";
-			Check("engine-a-off-dark-off-exact", applied && restored, $"applied={applied} restored={restored}; {on.Message} / {off.Message}; reg={Sig(w.Reg)}");
+				&& w.Cleanups.LastOrDefault() == "" && !off.ShowsAfterSignIn && off.Message == "Your own Windows pointers are on." && w.Screen.Differs() == "";
+			Check("engine-a-off-dark-off-exact", applied && restored, $"applied={applied} restored={restored}; {on.Message} / {off.Message}; screen differs={w.Screen.Differs()}; reg={Sig(w.Reg)}");
 		}
 
 		// b. Off -> Win81 -> Dark -> Light -> Auto(dark) -> theme flip -> Auto(light) -> Win81 -> Off
@@ -1914,7 +2099,7 @@ internal static class CursorDiagnostics
 				{
 					captured = st.Original?.CapturedUtc ?? default;
 				}
-				bool ok = r.Success && w.Reg["Arrow"].Data == arrow && sig == first && st.Original?.CapturedUtc == captured;
+				bool ok = r.Success && !r.ShowsAfterSignIn && w.Reg["Arrow"].Data == arrow && sig == first && st.Original?.CapturedUtc == captured && w.Screen.Differs() == "";
 				once &= ok;
 				steps.Add($"{name}:{(ok ? "ok" : "FAIL " + r.Message + " arrow=" + w.Reg["Arrow"].Data)}");
 				if (name == "auto-light")
@@ -2113,21 +2298,27 @@ internal static class CursorDiagnostics
 			Check("engine-i-idempotent", dark && win81 && off, $"dark={dark} win81={win81} off={off}");
 		}
 
-		// k. Windows refuses to load the pointers: the change is not saved as applied and the next run finishes it; a
-		// restore is complete in the registry and is committed.
+		// k. Nothing reaches the screen (Windows refuses the reload and setting each pointer fails too): the registry holds
+		// the whole set, so the change is committed and says it shows after the next sign-in. Nothing is left pending, so
+		// no start or reconcile applies it again in a loop and a shell profile switch is not rolled back. A restore
+		// likewise.
 		{
 			FakePointerWorld w = NewWorld();
 			string reg0 = Sig(w.Reg);
 			w.RefreshFails = true;
 			PointerResult r = new PointerEngine(w).Apply(T(Dark));
-			bool pending = !r.Success && w.State.Phase == PointerScheme.PhaseApplying && w.State.Applied == null && w.Reg["Arrow"].Data == DarkPath("dark", "arrow.cur");
-			w.RefreshFails = false;
-			PointerResult rec = new PointerEngine(w).Recover(() => T(Dark));
-			bool finished = rec.Success && w.State.Phase == PointerScheme.PhaseIdle && w.State.Applied?.Palette == "dark";
-			w.RefreshFails = true;
+			PointerStateFile st = w.State;
+			PointerReloadResult? rl = w.LastReload;
+			bool committed = r.Success && r.ShowsAfterSignIn && r.Message == "Alchemy dark pointers are set; Windows shows them after the next sign-in."
+				&& st.Phase == PointerScheme.PhaseIdle && st.Applied?.Palette == "dark" && T(Dark).Is(st.Applied) && st.Original?.Source == "captured"
+				&& w.Reg["Arrow"].Data == DarkPath("dark", "arrow.cur") && rl != null && !rl.Loaded && rl.NotShown.Count == 17;
+			w.ResetCounters();
+			PointerResult again = new PointerEngine(w).Apply(T(Dark));
+			bool noLoop = again.Success && !again.Changed && w.Ops == 0;
 			PointerResult off = new PointerEngine(w).Apply(PointerTarget.Windows);
-			bool restored = off.Success && Sig(w.Reg) == reg0 && w.State.Phase == PointerScheme.PhaseIdle && w.State.Original == null;
-			Check("engine-k-refresh-refused", pending && finished && restored, $"pending={pending} finished={finished} restoreCommitted={restored} ({r.Message} / {off.Message})");
+			bool restored = off.Success && off.ShowsAfterSignIn && off.Message == "Your own Windows pointers are back; Windows shows them after the next sign-in."
+				&& Sig(w.Reg) == reg0 && w.State.Phase == PointerScheme.PhaseIdle && w.State.Original == null;
+			Check("engine-k-nothing-on-screen-commits-without-loop", committed && noLoop && restored, $"committed={committed} noLoop={noLoop} restored={restored} ({r.Message} / {off.Message}; {rl?.Describe()})");
 		}
 
 		// l. The restore point is lost while the Windows 8.1 set is on: it is never taken as the user's own.
@@ -2170,6 +2361,218 @@ internal static class CursorDiagnostics
 			}
 			Check("engine-l-win81-never-the-users-own", bad.Count == 0, bad.Count == 0 ? "lost state with Windows 8.1 on -> system default; launcher Windows 8.1 files never merged as drift" : string.Join(" ; ", bad));
 		}
+	}
+
+	// Putting the pointers on screen (PointerReloader) against the fake screen, through the engine.
+	private static void ReloadChecks()
+	{
+		// a. Never SPIF_UPDATEINIFILE. The fake is win32k: with it the pointers are reloaded and the call still returns
+		// FALSE with no error code (every live change since 247dba8 "failed" this way); without it, TRUE.
+		{
+			FakePointerWorld probe = NewWorld();
+			probe.Reg["Arrow"] = new RegValue("Arrow", RegistryValueKind.ExpandString, "D:\\Pointers\\changed.cur");
+			bool old = !probe.Screen.ReloadFromRegistry(PointerReloader.SpifUpdateIniFile | PointerReloader.SpifSendChange, out int oldError) && oldError == 0 && probe.Screen.Differs() == "";
+			bool now = probe.Screen.ReloadFromRegistry(PointerReloader.ReloadFlags, out int nowError) && nowError == 0;
+			bool flags = PointerReloader.ReloadFlags == 0 && (PointerReloader.ReloadFlags & PointerReloader.SpifUpdateIniFile) == 0;
+			FakePointerWorld w = NewWorld();
+			PointerResult r = new PointerEngine(w).Apply(T(Win81));
+			PointerReloadResult? rl = w.LastReload;
+			bool engine = r.Success && !r.ShowsAfterSignIn && w.Screen.LastFlags == PointerReloader.ReloadFlags && rl != null && rl.SpiReturned && rl.Loaded
+				&& rl.Checked == 15 && rl.Fallback.Count == 0 && rl.Unchecked.Count == 2 && w.Screen.Sets == 0 && w.Screen.Differs() == ""
+				&& w.State.Phase == PointerScheme.PhaseIdle && w.State.Applied?.Kind == nameof(PointerKind.Win81);
+			Check("reload-a-flags-without-updateinifile", flags && old && now && engine, $"flags={PointerReloader.ReloadFlags} flags3=FALSE/0+reloaded:{old} flags0=TRUE:{now} engine={engine} ({rl?.Describe()})");
+		}
+
+		// b. The live failure: the reload works but returns FALSE without an error code. The screen decides, so the change
+		// is committed, nothing is set by hand and nothing is left pending; a restore likewise.
+		{
+			FakePointerWorld w = NewWorld();
+			w.Screen.AlwaysFalse = true;
+			PointerResult r = new PointerEngine(w).Apply(T(Win81));
+			PointerReloadResult? rl = w.LastReload;
+			bool on = r.Success && !r.ShowsAfterSignIn && r.Message == "Windows 8.1 pointers on." && rl != null && !rl.SpiReturned && rl.SpiError == 0 && rl.Loaded
+				&& rl.Fallback.Count == 0 && w.Screen.Sets == 0 && w.State.Phase == PointerScheme.PhaseIdle && w.State.Applied?.Kind == nameof(PointerKind.Win81) && w.Screen.Differs() == "";
+			PointerResult off = new PointerEngine(w).Apply(PointerTarget.Windows);
+			bool back = off.Success && !off.ShowsAfterSignIn && off.Message == "Your own Windows pointers are on." && w.Screen.Sets == 0 && w.Screen.Differs() == "";
+			Check("reload-b-false-without-error-checked-on-screen", on && back, $"apply={on} restore={back} ({rl?.Describe()} / {off.Message})");
+		}
+
+		// c. Windows refuses the reload with an error: every pointer that differs is set from the file the registry names.
+		// The Windows 8.1 set keeps Windows' own precision and text-select pointers, which no file can set, so that change
+		// says it shows completely after the next sign-in (and is still committed).
+		{
+			FakePointerWorld w = NewWorld();
+			w.Screen.RefuseReload = true;
+			PointerResult r = new PointerEngine(w).Apply(T(Dark));
+			PointerReloadResult? rl = w.LastReload;
+			bool dark = r.Success && !r.ShowsAfterSignIn && rl != null && !rl.SpiReturned && rl.SpiError == 1459 && rl.Loaded && rl.Fallback.Count == 17 && w.Screen.Differs() == "";
+			PointerResult r81 = new PointerEngine(w).Apply(T(Win81));
+			PointerReloadResult? rl81 = w.LastReload;
+			bool win81 = r81.Success && r81.ShowsAfterSignIn && r81.Message == "Windows 8.1 pointers are set; Windows shows them after the next sign-in."
+				&& rl81 != null && !rl81.Loaded && rl81.Fallback.Count == 15 && rl81.NotShown.Count == 0
+				&& w.State.Phase == PointerScheme.PhaseIdle && w.State.Applied?.Kind == nameof(PointerKind.Win81) && w.Screen.Differs() == "Crosshair,IBeam";
+			Check("reload-c-refused-sets-each-pointer", dark && win81, $"dark={dark} win81={win81} ({rl?.Describe()} / {rl81?.Describe()})");
+		}
+
+		// d. A reload that leaves some pointers as they were: exactly those are set directly.
+		{
+			FakePointerWorld w = NewWorld();
+			w.Screen.ReloadSkips.Add(CursorRole.Wait);
+			w.Screen.ReloadSkips.Add(CursorRole.Hand);
+			PointerResult r = new PointerEngine(w).Apply(T(Light));
+			PointerReloadResult? rl = w.LastReload;
+			bool ok = r.Success && !r.ShowsAfterSignIn && rl != null && rl.SpiReturned && rl.Loaded && string.Join(",", rl.Fallback) == "Wait,Hand" && w.Screen.Sets == 2 && w.Screen.Differs() == "";
+			Check("reload-d-partial-reload-fixed-per-role", ok, rl?.Describe() ?? "no reload");
+		}
+
+		// e. A file that does not load is named and left to Windows (its own pointer); the rest is checked and committed.
+		{
+			FakePointerWorld w = NewWorld();
+			string no = w.ResolveWin81()[CursorRole.No];
+			w.Screen.BadFiles.Add(no);
+			PointerResult r = new PointerEngine(w).Apply(T(Win81));
+			PointerReloadResult? rl = w.LastReload;
+			bool ok = r.Success && !r.ShowsAfterSignIn && rl != null && rl.Loaded && rl.BadFiles.Count == 1 && rl.BadFiles[0].StartsWith("No (does not load", StringComparison.Ordinal)
+				&& rl.Checked == 14 && rl.Fallback.Count == 0 && w.State.Applied?.Kind == nameof(PointerKind.Win81) && w.Reg["No"].Data == no && w.Screen.Differs() == "";
+			Check("reload-e-bad-file-named", ok, rl?.Describe() ?? "no reload");
+		}
+
+		// f. Nothing to fix: the reload returns FALSE without an error and changes nothing, but every pointer already
+		// looks exactly like its file (the Windows 8.1 pack and the Windows 11 aero set are pixel-identical at 32 px).
+		{
+			FakePointerWorld w = NewWorld();
+			w.Reg["Person"] = new RegValue("Person", RegistryValueKind.ExpandString, "%SystemRoot%\\cursors\\aero_person.cur");
+			w.Screen.SignIn();
+			foreach ((CursorRole role, string path) in w.ResolveWin81())
+			{
+				string own = PointerEngine.Find(w.Reg, role.ToString())?.Expanded() ?? "";
+				if (path.Length > 0 && own.Length > 0)
+				{
+					w.Screen.LooksLike[path] = own;
+				}
+			}
+			w.Screen.AlwaysFalse = true;
+			foreach (CursorRole role in AlchemyCursorArt.Roles)
+			{
+				w.Screen.ReloadSkips.Add(role);
+			}
+			PointerResult r = new PointerEngine(w).Apply(T(Win81));
+			PointerReloadResult? rl = w.LastReload;
+			bool ok = r.Success && !r.ShowsAfterSignIn && rl != null && rl.Loaded && rl.Checked == 15 && rl.Fallback.Count == 0 && w.Screen.Sets == 0 && w.State.Phase == PointerScheme.PhaseIdle;
+			Check("reload-f-identical-images-nothing-to-fix", ok, rl?.Describe() ?? "no reload");
+		}
+
+		// h. The reload changes the pointer size (a new size setting): the screen is compared at the new size, so nothing
+		// is set by hand at the old one.
+		{
+			FakePointerWorld w = NewWorld();
+			w.Screen.Size = 48;
+			PointerResult r = new PointerEngine(w).Apply(T(Dark));
+			PointerReloadResult? rl = w.LastReload;
+			bool ok = r.Success && !r.ShowsAfterSignIn && rl != null && rl.Loaded && rl.Checked == 17 && rl.Fallback.Count == 0 && w.Screen.Sets == 0
+				&& w.Screen.Now[CursorRole.Arrow].Width == 48 && w.Screen.Differs() == "";
+			Check("reload-h-size-change-compared-at-new-size", ok, (rl?.Describe() ?? "no reload") + " differs=" + w.Screen.Differs());
+		}
+
+		// i. The reload returns FALSE without an error and changes nothing at all. The pointers with a file are set
+		// directly, but the roles on Windows' own pointer (the Windows 8.1 set's precision and text-select pointers, the
+		// user's own empty roles) cannot be and still show the previous set: the change is committed and says it shows
+		// completely after the next sign-in instead of claiming it is on. A restore likewise.
+		{
+			FakePointerWorld w = NewWorld();
+			string reg0 = Sig(w.Reg);
+			PointerResult dark = new PointerEngine(w).Apply(T(Dark));
+			w.Screen.AlwaysFalse = true;
+			foreach (CursorRole role in AlchemyCursorArt.Roles)
+			{
+				w.Screen.ReloadSkips.Add(role);
+			}
+			PointerResult r81 = new PointerEngine(w).Apply(T(Win81));
+			PointerReloadResult? rl = w.LastReload;
+			string differs81 = w.Screen.Differs();
+			bool win81 = dark.Success && !dark.ShowsAfterSignIn && r81.Success && r81.ShowsAfterSignIn
+				&& r81.Message == "Windows 8.1 pointers are set; Windows shows them after the next sign-in."
+				&& rl != null && !rl.SpiReturned && rl.SpiError == 0 && rl.ReloadChangedNothing && !rl.Loaded && rl.Fallback.Count == 15 && rl.NotShown.Count == 0
+				&& w.State.Phase == PointerScheme.PhaseIdle && w.State.Applied?.Kind == nameof(PointerKind.Win81) && differs81 == "Crosshair,IBeam";
+			PointerResult off = new PointerEngine(w).Apply(PointerTarget.Windows);
+			PointerReloadResult? rlOff = w.LastReload;
+			bool restored = off.Success && off.ShowsAfterSignIn && off.Message == "Your own Windows pointers are back; Windows shows them after the next sign-in."
+				&& Sig(w.Reg) == reg0 && rlOff != null && rlOff.ReloadChangedNothing && !rlOff.Loaded && rlOff.NotShown.Count == 0
+				&& w.State.Phase == PointerScheme.PhaseIdle && w.State.Original == null;
+			Check("reload-i-silent-no-op-not-claimed-on-screen", win81 && restored, $"win81={win81} restore={restored} ({rl?.Describe()} / {rlOff?.Describe()}; differs after win81={differs81})");
+		}
+	}
+
+	// The real screen, read only: every system pointer of this session can be read, and the comparison tells the same
+	// file from a different pointer or size. SPI_SETCURSORS and SetSystemCursor are never called here.
+	private static void RealReloadChecks(string files)
+	{
+		List<string> bad = new List<string>();
+		int size = 32;
+		try
+		{
+			Win32CursorSystem sys = new Win32CursorSystem();
+			Dictionary<CursorRole, CursorImage?> now = AlchemyCursorArt.Roles.ToDictionary(r => r, r => sys.Current(r));
+			foreach (KeyValuePair<CursorRole, CursorImage?> kv in now)
+			{
+				if (kv.Value == null || kv.Value.Width <= 0 || kv.Value.Mask.Length == 0)
+				{
+					bad.Add("current " + kv.Key + " unreadable");
+				}
+			}
+			size = now[CursorRole.Arrow]?.Width ?? 32;
+			string folder = AlchemyCursorSet.FolderFor("dark", files);
+			foreach ((CursorRole role, string name) in AlchemyCursorSet.Files)
+			{
+				string path = Path.Combine(folder, name);
+				CursorImage? a = sys.LoadFile(path, size, out string why);
+				CursorImage? b = sys.LoadFile(path, size, out _);
+				if (a == null || b == null)
+				{
+					bad.Add($"{name}: {why}");
+					continue;
+				}
+				if (!a.SameAs(b) || a.Width != size)
+				{
+					bad.Add($"{name}: stable={a.SameAs(b)} width={a.Width}");
+				}
+			}
+			CursorImage? arrow = sys.LoadFile(Path.Combine(folder, "arrow.cur"), size, out _);
+			CursorImage? link = sys.LoadFile(Path.Combine(folder, "link.cur"), size, out _);
+			CursorImage? lightArrow = sys.LoadFile(Path.Combine(AlchemyCursorSet.FolderFor("light", files), "arrow.cur"), size, out _);
+			CursorImage? bigger = sys.LoadFile(Path.Combine(folder, "arrow.cur"), size + 16, out _);
+			if (arrow == null || arrow.SameAs(link) || arrow.SameAs(lightArrow) || arrow.SameAs(bigger))
+			{
+				bad.Add("different pointers or sizes compare equal");
+			}
+			CursorImage? missing = sys.LoadFile(Path.Combine(folder, "no-such-pointer.cur"), size, out string missingWhy);
+			if (missing != null || missingWhy != "missing")
+			{
+				bad.Add("missing file: " + missingWhy);
+			}
+			// Informational only (this process may see a redirected registry): which pointers of this session show the
+			// file the registry names.
+			Dictionary<string, RegValue> reg = new RealPointerWorld().ReadRegistry();
+			Dictionary<string, string> live = new Dictionary<string, string>();
+			foreach (CursorRole role in AlchemyCursorArt.Roles)
+			{
+				string path = PointerEngine.Find(reg, role.ToString())?.Expanded().Trim() ?? "";
+				CursorImage? cur = now[role];
+				if (path.Length == 0 || cur == null)
+				{
+					live[role.ToString()] = path.Length == 0 ? "windows-own" : "unreadable";
+					continue;
+				}
+				CursorImage? want = sys.LoadFile(path, cur.Width, out string w);
+				live[role.ToString()] = want == null ? "file does not load (" + w + ")" : (want.SameAs(cur) ? "shows its file" : "differs");
+			}
+			Metrics["LiveScreenVsRegistry"] = live;
+		}
+		catch (Exception ex)
+		{
+			bad.Add(ex.GetType().Name + ": " + ex.Message);
+		}
+		Check("reload-g-real-screen-read-and-compare", bad.Count == 0, bad.Count == 0 ? $"17 system pointers read at {size} px; 17 files load stably; another pointer, tone or size never compares equal" : string.Join(" ; ", bad.Take(10)));
 	}
 
 	// Runs the transition once cleanly for the expected result, then again with a crash at each mutating step (before

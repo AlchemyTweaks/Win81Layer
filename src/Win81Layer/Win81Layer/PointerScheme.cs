@@ -146,6 +146,10 @@ internal sealed class PointerResult
 	public string Palette { get; set; } = "";
 
 	public string Message { get; set; } = "";
+
+	// The change is saved (the registry holds it and the restore point is committed) but Windows did not put it on
+	// screen; it shows after the next sign-in. Message says so.
+	public bool ShowsAfterSignIn { get; set; }
 }
 
 internal sealed class PointerStatus
@@ -201,8 +205,9 @@ internal interface IPointerWorld
 
 	void WriteSchemeEntry(string name, RegValue? value);
 
-	// Asks Windows to load the pointers from the registry; false when Windows refused.
-	bool RefreshSystemCursors();
+	// Has Windows load the pointers the registry names and checks the screen. expected is role -> file as the registry
+	// names it, expanded ("" = Windows' own pointer). Loaded is false only when the screen could not be made to match.
+	PointerReloadResult RefreshSystemCursors(IReadOnlyDictionary<CursorRole, string> expected);
 
 	// Throws PointerReadException when a restore point exists but could not be read.
 	PointerStateFile LoadState();
@@ -340,7 +345,7 @@ internal sealed class PointerEngine
 		Dictionary<string, RegValue> cur = _w.ReadRegistry();
 		_w.WriteValues(OriginalWrites(orig, cur));
 		_w.WriteSchemeEntry(PointerScheme.AlchemySchemeName, SchemeOf(orig));
-		bool refreshed = _w.RefreshSystemCursors();
+		PointerReloadResult reload = _w.RefreshSystemCursors(ExpectedFiles(key => orig.Values.TryGetValue(key, out RegValue? v) ? v : null));
 		Dictionary<string, RegValue> back = _w.ReadRegistry();
 		string? mismatch = VerifyOriginal(orig, back);
 		if (mismatch != null)
@@ -362,12 +367,12 @@ internal sealed class PointerEngine
 			Logger.Log("Pointers: final state write failed; the next start finishes the restore.");
 		}
 		Cleanup(Array.Empty<string>());
-		if (!refreshed)
+		if (!reload.Loaded)
 		{
 			// The registry holds exactly the user's own pointers, so the restore is complete; Windows loads them at the
 			// next sign-in.
-			Logger.Log("Pointers: Windows did not reload the pointers after the restore; they show after the next sign-in.");
-			return Ok(target, changed: true, "Your own Windows pointers are back; Windows shows them after the next sign-in.");
+			Logger.Log("Pointers: your own pointers are back in the registry, but Windows did not show them; they show after the next sign-in.");
+			return Ok(target, changed: true, "Your own Windows pointers are back; Windows shows them after the next sign-in.", afterSignIn: true);
 		}
 		Logger.Log($"Pointers: your own pointers are back (source={orig.Source}).");
 		return Ok(target, changed: true, "Your own Windows pointers are on.");
@@ -418,19 +423,15 @@ internal sealed class PointerEngine
 			_w.WriteValues(PointerScheme.Keys.Select(k => (RegName(k), (RegValue?)desired[k])).ToList());
 			_w.WriteSchemeEntry(PointerScheme.AlchemySchemeName, schemeEntry);
 		}
-		bool refreshed = _w.RefreshSystemCursors();
+		PointerReloadResult reload = _w.RefreshSystemCursors(ExpectedFiles(key => desired[key]));
 		Dictionary<string, RegValue> back = _w.ReadRegistry();
 		if (!Matches(back, desired))
 		{
 			Logger.Log("Pointers: the registry did not read back as written; the change will be finished on the next start.");
 			return Fail(target, "The pointers could not be changed completely; this will be finished automatically.");
 		}
-		if (!refreshed)
-		{
-			// Not saved as applied: the change stays pending, so the next check or start tries it again.
-			Logger.Log("Pointers: Windows did not load the new pointers; the change will be tried again.");
-			return Fail(target, "Windows did not load the new pointers; this will be tried again automatically.");
-		}
+		// The registry is the source of truth and holds the whole set, so the change is committed even when Windows did
+		// not put it on screen: Windows loads it at the next sign-in, and nothing is retried in a loop meanwhile.
 		bool committed = _w.SaveState(new PointerStateFile
 		{
 			Phase = PointerScheme.PhaseIdle,
@@ -464,8 +465,24 @@ internal sealed class PointerEngine
 			}
 		}
 		Cleanup(keep);
+		if (!reload.Loaded)
+		{
+			Logger.Log($"Pointers: {Describe(target)} saved (generated={generated}, drift={drift}, recovered={interrupted}, original={orig.Source}), but Windows did not show them; they show after the next sign-in.");
+			return Ok(target, changed: true, Describe(target) + " are set; Windows shows them after the next sign-in.", afterSignIn: true);
+		}
 		Logger.Log($"Pointers: {Describe(target)} on (generated={generated}, drift={drift}, recovered={interrupted}, original={orig.Source}).");
 		return Ok(target, changed: true, Describe(target) + " on.");
+	}
+
+	// Role -> file as Windows reads it from the registry ("" = Windows' own pointer), for checking the screen.
+	private static IReadOnlyDictionary<CursorRole, string> ExpectedFiles(Func<string, RegValue?> value)
+	{
+		Dictionary<CursorRole, string> d = new Dictionary<CursorRole, string>();
+		foreach (CursorRole role in AlchemyCursorArt.Roles)
+		{
+			d[role] = value(role.ToString())?.Expanded() ?? "";
+		}
+		return d;
 	}
 
 	// ===================================================================== restore point
@@ -738,9 +755,9 @@ internal sealed class PointerEngine
 		};
 	}
 
-	private static PointerResult Ok(PointerTarget t, bool changed, string message)
+	private static PointerResult Ok(PointerTarget t, bool changed, string message, bool afterSignIn = false)
 	{
-		return new PointerResult { Success = true, Changed = changed, Kind = t.Kind, Palette = t.Palette, Message = message };
+		return new PointerResult { Success = true, Changed = changed, Kind = t.Kind, Palette = t.Palette, Message = message, ShowsAfterSignIn = afterSignIn };
 	}
 
 	private static PointerResult Fail(PointerTarget t, string message)
@@ -964,7 +981,8 @@ internal static class PointerScheme
 			_busyAlchemy = target.Kind == PointerKind.Alchemy;
 			Logger.Log($"Pointers: apply {PointerEngine.Describe(target)} ({reason})");
 			PointerResult r = new PointerEngine(new RealPointerWorld()).Apply(target);
-			_lastFailure = r.Success ? "" : r.Message;
+			// A change Windows shows only after the next sign-in keeps its note in the status until then.
+			_lastFailure = r.Success && !r.ShowsAfterSignIn ? "" : r.Message;
 			RefreshCache();
 			return r;
 		}
@@ -1506,15 +1524,14 @@ internal sealed class RealPointerWorld : IPointerWorld
 		key.SetValue(value.Name, data, kind);
 	}
 
-	public bool RefreshSystemCursors()
+	// SPI_SETCURSORS without SPIF_UPDATEINIFILE (see PointerReloader.ReloadFlags), then the screen is checked role by
+	// role and a role the reload left as it was gets its file with SetSystemCursor. Runs on the caller's worker thread.
+	public PointerReloadResult RefreshSystemCursors(IReadOnlyDictionary<CursorRole, string> expected)
 	{
 		Guard();
-		if (SystemParametersInfo(0x57u, 0u, nint.Zero, 3u))
-		{
-			return true;
-		}
-		Logger.Log("Pointers: SPI_SETCURSORS failed (error " + Marshal.GetLastWin32Error() + ").");
-		return false;
+		PointerReloadResult r = PointerReloader.Reload(new Win32CursorSystem(), expected);
+		Logger.Log("Pointers: reload: " + r.Describe());
+		return r;
 	}
 
 	public PointerStateFile LoadState()
@@ -1631,7 +1648,4 @@ internal sealed class RealPointerWorld : IPointerWorld
 		Guard();
 		AlchemyCursorSet.Cleanup(keep);
 	}
-
-	[DllImport("user32.dll", SetLastError = true)]
-	private static extern bool SystemParametersInfo(uint action, uint param, nint ptr, uint winIni);
 }

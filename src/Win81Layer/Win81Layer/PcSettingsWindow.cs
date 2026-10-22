@@ -2282,7 +2282,7 @@ public sealed class PcSettingsWindow : Window
 			return;
 		}
 		PointerStatus status = PointerScheme.Describe();
-		_pointerStatus.Text = (r != null && !r.Success && !status.Busy) ? r.Message : PointerScheme.StatusText(status);
+		_pointerStatus.Text = (r != null && (!r.Success || r.ShowsAfterSignIn) && !status.Busy) ? r.Message : PointerScheme.StatusText(status);
 	}
 
 	// Shows the status once a change started elsewhere (a season, the seasonal toggle) has finished.
