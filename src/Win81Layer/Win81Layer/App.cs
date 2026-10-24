@@ -715,6 +715,7 @@ public partial class App : System.Windows.Application
 		System.DateTime supStart = System.DateTime.UtcNow;
 		bool gaveUp = false;   // hard cap hit THIS session: stay stood-down (native shell up) until the machine reboots (a new supervisor process resets this)
 		try { Logger.Log($"=== Supervisor started (pid {Environment.ProcessId}) ==="); } catch { }
+		SupervisorForensicsStart();   // last-breath record, previous-instance verdict, session/DWM watch, shell exit codes
 		try { if (File.Exists(CleanExitMarkerPath)) { File.Delete(CleanExitMarkerPath); } } catch { }   // fresh boot Ã¢â€ â€™ run
 
 		while (true)
@@ -735,6 +736,7 @@ public partial class App : System.Windows.Application
 				}
 				if (SupervisorShellHealthy())
 				{
+					SupervisorEnsureShellWatch();   // no-op while the launched shell is watched; covers a --healed restart
 					System.Threading.Thread.Sleep(4000);   // healthy Ã¢â‚¬â€ keep watching
 					continue;
 				}
@@ -751,6 +753,14 @@ public partial class App : System.Windows.Application
 				}
 				if (!reallyDown)
 				{
+					continue;
+				}
+				// Windows is ending (or asked to end) the session: a shell that left for that reason is not a failure,
+				// and relaunching it mid-logoff would only fight the logoff. The hold expires by itself if the session
+				// goes on (cancelled shutdown, Restart Manager, a spurious notification).
+				if (SupervisorSessionHold())
+				{
+					System.Threading.Thread.Sleep(1000);
 					continue;
 				}
 				// A shell that was declared healthy but then died YOUNG (before proving stable) is an unhealthy boot too.
@@ -785,11 +795,12 @@ public partial class App : System.Windows.Application
 				int launchedPid = 0;
 				try
 				{
-					if (!InteractiveProcessLauncher.TryStartManagedShell(Environment.ProcessPath!, shellArgs, out launchedPid, out string launchError))
+					if (!InteractiveProcessLauncher.TryStartManagedShell(Environment.ProcessPath!, shellArgs, out launchedPid, out IntPtr shellHandle, out string launchError))
 					{
 						throw new InvalidOperationException(launchError);
 					}
 					_supManagedPid = launchedPid;
+					SupervisorWatchShell(shellHandle, launchedPid);   // exact exit time + exit code when this shell dies
 					Logger.Log($"Supervisor: launched interactive-user shell pid={launchedPid} ({shellArgs}); waiting for a healthy heartbeat...");
 				}
 				catch (Exception ex)
@@ -1279,6 +1290,18 @@ public partial class App : System.Windows.Application
 		if (e.Args.Contains("--supervisor"))
 		{
 			ShutdownMode = ShutdownMode.OnExplicitShutdown;
+			// WPF would call Shutdown() on every WM_QUERYENDSESSION (even one that is then cancelled); the guard answers
+			// the query itself so the supervisor's dispatcher survives a cancelled logoff. See WpfSessionGuard.
+			try
+			{
+				if (!WpfSessionGuard.TryInstall(this, out string guardDetail))
+				{
+					Logger.Log("[forensics:supervisor] WPF end-session guard unavailable: " + guardDetail);
+				}
+			}
+			catch
+			{
+			}
 			new Thread(RunSupervisor) { IsBackground = false, Name = "Supervisor" }.Start();
 			return;
 		}
@@ -1417,6 +1440,17 @@ public partial class App : System.Windows.Application
 			PersistenceDiagnostics.SuppressAutomaticPostBootVerification = true;
 			PerfProbe.Active = true;
 			PerfProbeDiagnostics.Begin(this, e.Args);
+			return;
+		}
+		if (e.Args.Contains("--exitforensicstest"))
+		{
+			// Offscreen QA of the exit forensics and the session-end resilience. Read-only: settings and state writes
+			// throw, the last-breath records go to a fixture folder inside the given folder, every window it creates is
+			// its own (offscreen, never activated), the only processes it starts are cmd.exe / PING.EXE children it ends by pid,
+			// and it never creates a taskbar, tray host, hook, supervisor or watchdog. Exits by itself.
+			SettingsStore.ReadOnlyDiagnostics = true;
+			PersistenceDiagnostics.SuppressAutomaticPostBootVerification = true;
+			ExitForensicsDiagnostics.Begin(this, e.Args);
 			return;
 		}
 		// A shell started BY the supervisor is "managed" Ã¢â‚¬â€ it must NOT spawn its own watchdog (the supervisor is the
@@ -2764,6 +2798,9 @@ public partial class App : System.Windows.Application
 		AppDomain.CurrentDomain.UnhandledException += delegate(object _, UnhandledExceptionEventArgs args)
 		{
 			Logger.Log($"Unhandled exception: {args.ExceptionObject}");
+			// Last breath + synchronous log flush: a terminating exception ends the process before the async logger runs.
+			string what = args.ExceptionObject is Exception uex ? uex.GetType().Name + ": " + uex.Message : "non-exception object";
+			ExitForensics.Critical("unhandled-exception", what + (args.IsTerminating ? " (terminating)" : " (non-terminating)"), args.IsTerminating ? ExitForensics.StateCrashing : ExitForensics.StateRunning, logLine: false);
 			if (!args.IsTerminating)
 			{
 				return;   // non-terminating (rare) — don't tear the shell down to native for a survivable fault
@@ -2778,6 +2815,7 @@ public partial class App : System.Windows.Application
 				try { NativeShell.ResumeShellHosts(); } catch { }
 				try { AppBar.ShowNativeTaskbar(); } catch { }
 			}
+			ExitForensics.NoteProcessExit(Environment.ExitCode, _sessionEnding ? ", session ending" : "");
 			try
 			{
 				Logger.Flush();   // persist any buffered log lines before the process dies
@@ -2793,9 +2831,12 @@ public partial class App : System.Windows.Application
 		};
 		TaskScheduler.UnobservedTaskException += delegate(object? _, UnobservedTaskExceptionEventArgs args)
 		{
-			Logger.Log($"Unobserved task exception: {args.Exception}");
+			Logger.Log($"Unobserved task exception (non-fatal, observed): {args.Exception}");
 			args.SetObserved();
 		};
+		// Exit forensics + session-end resilience (App.Forensics.cs): last-breath record, verdict on the previous shell,
+		// WPF end-session guard, session/DWM/display watch, console control events, supervisor exit watch.
+		ShellForensicsStart();
 		// COLD-BOOT FIX: kick an off-UI settings prime as early as possible so the taskbar's first re-apply and the
 		// Start screen build see the REAL saved settings (align=Center, custom wallpaper) instead of degraded defaults
 		// when the boot storm briefly locks settings.json. Fire-and-forget; the UI Load below stays fast, and the
@@ -3420,6 +3461,7 @@ public partial class App : System.Windows.Application
 		// composition, resumes the suspended native hosts and shows the native taskbar — the safe "give me Windows back".
 		_winHook.PanicRestore += delegate
 		{
+			_exitReason = "panic hotkey";
 			Logger.Log("Panic hotkey (Ctrl+Alt+Shift+Backspace): restoring native shell and exiting.");
 			((DispatcherObject)this).Dispatcher.BeginInvoke((Delegate)new Action(ExitApp), Array.Empty<object>());
 		};
@@ -4554,6 +4596,7 @@ public partial class App : System.Windows.Application
 		});
 		menu.Items.Add("Exit", null, delegate
 		{
+			_exitReason = "tray menu Exit";
 			((DispatcherObject)this).Dispatcher.BeginInvoke((Delegate)new Action(ExitApp), Array.Empty<object>());
 		});
 		if (_trayIcon != null) { _trayIcon.ContextMenuStrip = menu; }
@@ -5584,6 +5627,7 @@ public partial class App : System.Windows.Application
 						try
 						{
 							Logger.Log("Self-heal: shell ready - clean restart to load the real layout/pins/inventory.");
+							_exitReason = "self-heal restart (--healed)";
 							Process.Start(new ProcessStartInfo(exe, "--autostart --healed")
 							{
 								UseShellExecute = false,
@@ -5655,10 +5699,26 @@ public partial class App : System.Windows.Application
 		Shutdown();
 	}
 
+	// Reached only when WpfSessionGuard could not be installed (normally the guard answers WM_QUERYENDSESSION before WPF
+	// sees it, and the real end is handled on WM_ENDSESSION in OnWindowsEndSession). WPF calls Shutdown() as soon as
+	// this returns, on a mere query: exit fast, but withhold the clean-exit marker so that if the session survives
+	// (cancelled shutdown, Restart Manager) the supervisor brings the shell back instead of standing down for good.
 	protected override void OnSessionEnding(SessionEndingCancelEventArgs e)
 	{
+		if (CancelSessionEndingForTest)
+		{
+			Interlocked.Increment(ref SessionEndingCallsForTest);
+			e.Cancel = true;
+			return;
+		}
 		_sessionEnding = true;
-		try { Logger.Log("Windows session ending: fast cleanup path armed"); } catch { }
+		_wpfSessionShutdown = true;
+		if (_exitReason == null)
+		{
+			_exitReason = "WPF end-session fallback (" + e.ReasonSessionEnding + ")";
+		}
+		try { Logger.Log("Windows session ending (WPF fallback path, " + e.ReasonSessionEnding + "): fast cleanup armed, clean-exit marker withheld"); } catch { }
+		ExitForensics.Critical("wpf-session-ending", "WPF SessionEnding (" + e.ReasonSessionEnding + ") without the guard: WPF is shutting the shell down", ExitForensics.StateSessionEnding, logLine: false);
 		base.OnSessionEnding(e);
 	}
 
@@ -5678,19 +5738,33 @@ public partial class App : System.Windows.Application
 	{
 		if (!_isPrimary || Interlocked.Exchange(ref _cleanupStarted, 1) != 0)
 		{
+			if (!_isPrimary)
+			{
+				_cleanupDone.Set();
+			}
 			return;
 		}
+		string exitReason = _exitReason ?? (_sessionEnding ? "Windows session ending" : "application shutdown");
 		// Stop the native pin sync first: nothing may react to the native stores while the native shell comes back.
 		try { _pinSync?.Dispose(); } catch { }
 		// Guard the exit flush so a flush fault can NEVER skip the clean-exit marker + native restore below (that would
 		// turn a clean/panic exit into a supervisor relaunch loop with the native shell still hidden).
 		try { _startScreen?.CommitActiveGroupEditAndFlush(); } catch (Exception exFlush) { Logger.Log("exit flush failed (continuing clean exit): " + exFlush.Message); }
-		try
+		if (_wpfSessionShutdown)
 		{
-			File.WriteAllText(CleanExitMarkerPath, DateTime.Now.ToString("o"));
+			// WPF fallback: we are exiting on a WM_QUERYENDSESSION that may still be cancelled. No stand-down marker, so
+			// the supervisor (which holds relaunch while the session end is pending) restores the shell if it is.
+			try { Logger.Log("Clean-exit marker withheld (WPF session-end fallback): the supervisor restores the shell if the session goes on."); } catch { }
 		}
-		catch
+		else
 		{
+			try
+			{
+				File.WriteAllText(CleanExitMarkerPath, DateTime.Now.ToString("o"));
+			}
+			catch
+			{
+			}
 		}
 		try { _shellClock?.Dispose(); } catch { }
 		try { _idleMaintenance?.Dispose(); } catch { }
@@ -5711,6 +5785,10 @@ public partial class App : System.Windows.Application
 			try { _taskbar?.Deactivate(); } catch (Exception ex3) { Logger.Log("taskbar Deactivate failed: " + ex3.Message); }
 			try { AppBar.ShowNativeTaskbar(); } catch (Exception ex4) { Logger.Log("ShowNativeTaskbar failed: " + ex4.Message); }
 		}
+		// Last-breath "exiting" only now: it is a synchronous write-through file write, and the panic hotkey / tray Exit
+		// must get the native shell back first. (On the session-end path the restore is skipped, so this stays early
+		// inside the WM_ENDSESSION budget.)
+		ExitForensics.WriteBreath(ExitForensics.StateExiting, exitReason, _sessionEnding ? "session ending" : "");
 		TrayHostService.Stop();   // destroy our Shell_TrayWnd + broadcast TaskbarCreated so explorer reclaims the tray
 		_winHook?.Dispose();
 		_snapWatcher?.Dispose();
@@ -5732,6 +5810,8 @@ public partial class App : System.Windows.Application
 			_trayIcon.Visible = false;
 			_trayIcon.Dispose();
 		}
+		ExitForensics.WriteBreath(ExitForensics.StateExited, exitReason, _sessionEnding ? "session ending" : "");
+		_cleanupDone.Set();
 	}
 
 	[CompilerGenerated]

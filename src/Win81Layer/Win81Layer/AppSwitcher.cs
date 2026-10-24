@@ -33,23 +33,6 @@ public sealed class AppSwitcher : Window
 		public int Bottom;
 	}
 
-	private struct DWM_THUMBNAIL_PROPERTIES
-	{
-		public int dwFlags;
-
-		public RECT rcDestination;
-
-		public RECT rcSource;
-
-		public byte opacity;
-
-		[MarshalAs(UnmanagedType.Bool)]
-		public bool fVisible;
-
-		[MarshalAs(UnmanagedType.Bool)]
-		public bool fSourceClientAreaOnly;
-	}
-
 	private const double PanelWidth = 200.0;
 
 	private const double ThumbWidth = 180.0;
@@ -1254,26 +1237,20 @@ public sealed class AppSwitcher : Window
 		{
 			try
 			{
-				if (!(box.ActualWidth < 1.0) && !(box.ActualHeight < 1.0) && DwmRegisterThumbnail(_hwnd, srcHwnd, out var thumb) == 0)
+				if (!(box.ActualWidth < 1.0) && !(box.ActualHeight < 1.0))
 				{
-					_thumbs.Add(thumb);
+					// Guarded (DwmThumbs): a window closed just before this rebuild (RebuildSoon) is skipped instead of
+					// registered mid-teardown, and DWM failures are seen and cleaned up.
 					System.Windows.Point tl = box.TransformToVisual(this).Transform(new System.Windows.Point(0.0, 0.0));
-					RECT rc = new RECT
+					nint thumb = DwmThumbs.TryRegister(_hwnd, srcHwnd,
+						(int)Math.Round(tl.X * _sx),
+						(int)Math.Round(tl.Y * _sy),
+						(int)Math.Round((tl.X + box.ActualWidth) * _sx),
+						(int)Math.Round((tl.Y + box.ActualHeight) * _sy));
+					if (thumb != IntPtr.Zero)
 					{
-						Left = (int)Math.Round(tl.X * _sx),
-						Top = (int)Math.Round(tl.Y * _sy),
-						Right = (int)Math.Round((tl.X + box.ActualWidth) * _sx),
-						Bottom = (int)Math.Round((tl.Y + box.ActualHeight) * _sy)
-					};
-					DWM_THUMBNAIL_PROPERTIES props = new DWM_THUMBNAIL_PROPERTIES
-					{
-						dwFlags = 29,
-						rcDestination = rc,
-						opacity = byte.MaxValue,
-						fVisible = true,
-						fSourceClientAreaOnly = false
-					};
-					DwmUpdateThumbnailProperties(thumb, ref props);
+						_thumbs.Add(thumb);
+					}
 				}
 			}
 			catch
@@ -1286,13 +1263,7 @@ public sealed class AppSwitcher : Window
 	{
 		foreach (nint t in _thumbs)
 		{
-			try
-			{
-				DwmUnregisterThumbnail(t);
-			}
-			catch
-			{
-			}
+			DwmThumbs.Unregister(t);
 		}
 		_thumbs.Clear();
 	}
@@ -1699,15 +1670,6 @@ public sealed class AppSwitcher : Window
 		e.Cancel = true;
 		HideSwitcher();
 	}
-
-	[DllImport("dwmapi.dll")]
-	private static extern int DwmRegisterThumbnail(nint dest, nint src, out nint thumb);
-
-	[DllImport("dwmapi.dll")]
-	private static extern int DwmUnregisterThumbnail(nint thumb);
-
-	[DllImport("dwmapi.dll")]
-	private static extern int DwmUpdateThumbnailProperties(nint thumb, ref DWM_THUMBNAIL_PROPERTIES props);
 
 	[DllImport("dwmapi.dll")]
 	private static extern int DwmSetWindowAttribute(nint hwnd, int attribute, ref int value, int valueSize);

@@ -20,6 +20,10 @@ public static class Logger
 	internal static bool ReadOnlyDiagnosticsSupported => true;
 	private static readonly object Gate = new object();
 
+	// Serializes take-chunk-and-write, so a synchronous flush on a caller thread can never reorder lines with the
+	// background flusher (both take the oldest pending text and append it in order).
+	private static readonly object FileGate = new object();
+
 	private static readonly StringBuilder Pending = new StringBuilder();
 
 	public static readonly string LogPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Win81Layer", "log.txt");
@@ -103,6 +107,27 @@ public static class Logger
 		}
 	}
 
+	// Synchronous best-effort flush for a moment that may be the process's last (a session event, an unhandled
+	// exception), WITHOUT switching the logger into its stopping mode: the process may well keep running. Bounded.
+	public static void FlushSync()
+	{
+		if (SettingsStore.ReadOnlyDiagnostics) return;
+		try
+		{
+			for (int i = 0; i < 3; i++)
+			{
+				if (!FlushOnce() || !PendingNonEmpty())
+				{
+					return;
+				}
+				Thread.Sleep(15);
+			}
+		}
+		catch
+		{
+		}
+	}
+
 	private static void FlushLoop()
 	{
 		while (true)
@@ -137,39 +162,42 @@ public static class Logger
 	private static bool FlushOnce()
 	{
 		if (SettingsStore.ReadOnlyDiagnostics) return false;
-		string chunk;
-		lock (Gate)
+		lock (FileGate)
 		{
-			if (Pending.Length == 0)
-			{
-				return false;
-			}
-			chunk = Pending.ToString();
-			Pending.Clear();
-		}
-		try
-		{
-			Directory.CreateDirectory(Path.GetDirectoryName(LogPath));
-			using FileStream fs = new FileStream(LogPath, FileMode.Append, FileAccess.Write, FileShare.ReadWrite);
-			using StreamWriter sw = new StreamWriter(fs);
-			sw.Write(chunk);
-			sw.Flush();
-		}
-		catch
-		{
-			// Disk busy/locked — put the chunk back at the FRONT so ordering is preserved, but stay bounded so a long
-			// outage can't balloon memory. Next tick retries.
+			string chunk;
 			lock (Gate)
 			{
-				int room = MaxPendingChars - Pending.Length;
-				if (room > 0)
+				if (Pending.Length == 0)
 				{
-					string keep = (chunk.Length <= room) ? chunk : chunk.Substring(chunk.Length - room);
-					Pending.Insert(0, keep);
+					return false;
+				}
+				chunk = Pending.ToString();
+				Pending.Clear();
+			}
+			try
+			{
+				Directory.CreateDirectory(Path.GetDirectoryName(LogPath));
+				using FileStream fs = new FileStream(LogPath, FileMode.Append, FileAccess.Write, FileShare.ReadWrite);
+				using StreamWriter sw = new StreamWriter(fs);
+				sw.Write(chunk);
+				sw.Flush();
+			}
+			catch
+			{
+				// Disk busy/locked — put the chunk back at the FRONT so ordering is preserved, but stay bounded so a long
+				// outage can't balloon memory. Next tick retries.
+				lock (Gate)
+				{
+					int room = MaxPendingChars - Pending.Length;
+					if (room > 0)
+					{
+						string keep = (chunk.Length <= room) ? chunk : chunk.Substring(chunk.Length - room);
+						Pending.Insert(0, keep);
+					}
 				}
 			}
+			return true;
 		}
-		return true;
 	}
 
 	private static void TryRotate()

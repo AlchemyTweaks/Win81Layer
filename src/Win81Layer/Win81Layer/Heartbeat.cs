@@ -147,6 +147,27 @@ internal static class Heartbeat
 		}
 	}
 
+	// The pid of the live shell that owns the section, or 0. Lets the supervisor put an exit watch on a shell it did not
+	// launch itself (a --healed self-restart changes the pid).
+	internal static int ReadSectionPid(string? sectionName = null)
+	{
+		try
+		{
+			using MemoryMappedFile mmf = MemoryMappedFile.OpenExisting(sectionName ?? SectionName, MemoryMappedFileRights.Read);
+			using MemoryMappedViewAccessor v = mmf.CreateViewAccessor(0, 32, MemoryMappedFileAccess.Read);
+			if (v.ReadUInt32(OffMagic) != Magic || v.ReadInt32(OffVersion) != Version)
+			{
+				return 0;
+			}
+			int pid = v.ReadInt32(OffPid);
+			return pid > 0 && ProcessAlive(pid) ? pid : 0;
+		}
+		catch
+		{
+			return 0;
+		}
+	}
+
 	internal static long ReadFile(string path)
 	{
 		try

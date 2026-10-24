@@ -37,13 +37,34 @@ internal static class AcrylicGlass
 
     private const int ACCENT_DISABLED = 0;
 
-    // Disable any accent/blur region on the window (idempotent, safe on a window that never had one).
+    // HWNDs already cleared. Nothing in the launcher ever enables an accent any more, so one clear per window removes
+    // anything an older build left; repeating it on every theme refresh and taskbar re-apply only sent the undocumented
+    // SetWindowCompositionAttribute to DWM again and again. A reused handle value belongs to a window of ours that
+    // never had an accent either, so skipping it is harmless; the set is bounded.
+    private static readonly System.Collections.Generic.HashSet<nint> Cleared = new System.Collections.Generic.HashSet<nint>();
+
+    internal static int Calls;
+
+    // Disable any accent/blur region on the window (once per HWND, safe on a window that never had one).
     public static void Clear(nint hwnd)
     {
         if (hwnd == IntPtr.Zero)
         {
             return;
         }
+        lock (Cleared)
+        {
+            if (!Cleared.Add(hwnd))
+            {
+                return;
+            }
+            if (Cleared.Count > 512)
+            {
+                Cleared.Clear();
+                Cleared.Add(hwnd);
+            }
+        }
+        Calls++;
         try
         {
             ACCENT_POLICY accent = default(ACCENT_POLICY);

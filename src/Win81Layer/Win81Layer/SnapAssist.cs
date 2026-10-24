@@ -15,23 +15,6 @@ namespace Win81Layer;
 
 public sealed class SnapAssist : Window
 {
-	private struct DWM_TP
-	{
-		public int dwFlags;
-
-		public SnapRect rc;
-
-		public SnapRect rcSource;
-
-		public byte opacity;
-
-		[MarshalAs(UnmanagedType.Bool)]
-		public bool fVisible;
-
-		[MarshalAs(UnmanagedType.Bool)]
-		public bool fSourceOnly;
-	}
-
 	private readonly WrapPanel _list;
 
 	private readonly List<nint> _thumbs = new List<nint>();
@@ -303,25 +286,15 @@ public sealed class SnapAssist : Window
 		{
 			try
 			{
-				if (DwmRegisterThumbnail(_hwnd, srcHwnd, out var thumb) == 0)
+				System.Windows.Point tl = box.TransformToVisual(this).Transform(new System.Windows.Point(0.0, 0.0));
+				nint thumb = DwmThumbs.TryRegister(_hwnd, srcHwnd,
+					(int)Math.Round(tl.X * _sx),
+					(int)Math.Round(tl.Y * _sy),
+					(int)Math.Round((tl.X + box.ActualWidth) * _sx),
+					(int)Math.Round((tl.Y + box.ActualHeight) * _sy));
+				if (thumb != IntPtr.Zero)
 				{
 					_thumbs.Add(thumb);
-					System.Windows.Point tl = box.TransformToVisual(this).Transform(new System.Windows.Point(0.0, 0.0));
-					SnapRect rc = new SnapRect
-					{
-						Left = (int)Math.Round(tl.X * _sx),
-						Top = (int)Math.Round(tl.Y * _sy),
-						Right = (int)Math.Round((tl.X + box.ActualWidth) * _sx),
-						Bottom = (int)Math.Round((tl.Y + box.ActualHeight) * _sy)
-					};
-					DWM_TP props = new DWM_TP
-					{
-						dwFlags = 29,
-						rc = rc,
-						opacity = byte.MaxValue,
-						fVisible = true
-					};
-					DwmUpdateThumbnailProperties(thumb, ref props);
 				}
 			}
 			catch
@@ -334,13 +307,7 @@ public sealed class SnapAssist : Window
 	{
 		foreach (nint t in _thumbs)
 		{
-			try
-			{
-				DwmUnregisterThumbnail(t);
-			}
-			catch
-			{
-			}
+			DwmThumbs.Unregister(t);
 		}
 		_thumbs.Clear();
 	}
@@ -428,15 +395,6 @@ public sealed class SnapAssist : Window
 		e.Cancel = true;
 		HideAssist();
 	}
-
-	[DllImport("dwmapi.dll")]
-	private static extern int DwmRegisterThumbnail(nint dest, nint src, out nint thumb);
-
-	[DllImport("dwmapi.dll")]
-	private static extern int DwmUnregisterThumbnail(nint thumb);
-
-	[DllImport("dwmapi.dll")]
-	private static extern int DwmUpdateThumbnailProperties(nint thumb, ref DWM_TP props);
 
 	[DllImport("user32.dll")]
 	private static extern bool GetWindowRect(nint hwnd, out SnapRect r);

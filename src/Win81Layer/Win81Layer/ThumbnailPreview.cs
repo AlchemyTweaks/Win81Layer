@@ -27,23 +27,6 @@ public partial class ThumbnailPreview : Window, IComponentConnector
 		public int Bottom;
 	}
 
-	private struct DWM_THUMBNAIL_PROPERTIES
-	{
-		public int dwFlags;
-
-		public RECT rcDestination;
-
-		public RECT rcSource;
-
-		public byte opacity;
-
-		[MarshalAs(UnmanagedType.Bool)]
-		public bool fVisible;
-
-		[MarshalAs(UnmanagedType.Bool)]
-		public bool fSourceClientAreaOnly;
-	}
-
 	private readonly List<nint> _thumbs = new List<nint>();
 
 	private readonly List<(Border Box, nint Hwnd)> _boxes = new List<(Border, nint)>();
@@ -326,26 +309,15 @@ public partial class ThumbnailPreview : Window, IComponentConnector
 		{
 			try
 			{
-				if (DwmRegisterThumbnail(_hwnd, srcHwnd, out var thumb) == 0)
+				System.Windows.Point tl = box.TransformToVisual(this).Transform(new System.Windows.Point(0.0, 0.0));
+				nint thumb = DwmThumbs.TryRegister(_hwnd, srcHwnd,
+					(int)Math.Round(tl.X * dpiX),
+					(int)Math.Round(tl.Y * dpiY),
+					(int)Math.Round((tl.X + box.ActualWidth) * dpiX),
+					(int)Math.Round((tl.Y + box.ActualHeight) * dpiY));
+				if (thumb != IntPtr.Zero)
 				{
 					_thumbs.Add(thumb);
-					System.Windows.Point tl = box.TransformToVisual(this).Transform(new System.Windows.Point(0.0, 0.0));
-					RECT rc = new RECT
-					{
-						Left = (int)Math.Round(tl.X * dpiX),
-						Top = (int)Math.Round(tl.Y * dpiY),
-						Right = (int)Math.Round((tl.X + box.ActualWidth) * dpiX),
-						Bottom = (int)Math.Round((tl.Y + box.ActualHeight) * dpiY)
-					};
-					DWM_THUMBNAIL_PROPERTIES props = new DWM_THUMBNAIL_PROPERTIES
-					{
-						dwFlags = 29,
-						rcDestination = rc,
-						opacity = byte.MaxValue,
-						fVisible = true,
-						fSourceClientAreaOnly = false
-					};
-					DwmUpdateThumbnailProperties(thumb, ref props);
 				}
 			}
 			catch
@@ -358,13 +330,7 @@ public partial class ThumbnailPreview : Window, IComponentConnector
 	{
 		foreach (nint t in _thumbs)
 		{
-			try
-			{
-				DwmUnregisterThumbnail(t);
-			}
-			catch
-			{
-			}
+			DwmThumbs.Unregister(t);
 		}
 		_thumbs.Clear();
 	}
@@ -448,15 +414,6 @@ public partial class ThumbnailPreview : Window, IComponentConnector
 		t.Triggers.Add(hover);
 		return t;
 	}
-
-	[DllImport("dwmapi.dll")]
-	private static extern int DwmRegisterThumbnail(nint dest, nint src, out nint thumb);
-
-	[DllImport("dwmapi.dll")]
-	private static extern int DwmUnregisterThumbnail(nint thumb);
-
-	[DllImport("dwmapi.dll")]
-	private static extern int DwmUpdateThumbnailProperties(nint thumb, ref DWM_THUMBNAIL_PROPERTIES props);
 
 	[DllImport("user32.dll")]
 	private static extern bool GetWindowRect(nint hwnd, out RECT r);

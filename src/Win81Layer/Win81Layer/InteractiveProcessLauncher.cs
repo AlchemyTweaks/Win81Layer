@@ -13,6 +13,7 @@ namespace Win81Layer;
 internal static class InteractiveProcessLauncher
 {
 	private const uint ProcessQueryLimitedInformation = 0x1000;
+	private const uint Synchronize = 0x00100000;
 	private const uint TokenAssignPrimary = 0x0001;
 	private const uint TokenDuplicate = 0x0002;
 	private const uint TokenQuery = 0x0008;
@@ -22,7 +23,21 @@ internal static class InteractiveProcessLauncher
 
 	public static bool TryStartManagedShell(string executable, string arguments, out int processId, out string error)
 	{
+		bool started = TryStartManagedShell(executable, arguments, out processId, out IntPtr processHandle, out error);
+		if (processHandle != IntPtr.Zero)
+		{
+			CloseHandle(processHandle);
+		}
+		return started;
+	}
+
+	// processHandle (SYNCHRONIZE + query rights, owned by the caller, may be zero) lets the supervisor read the shell's
+	// exact exit time and exit code when it dies: the handle keeps the process object, so the pid cannot be reused
+	// under it.
+	public static bool TryStartManagedShell(string executable, string arguments, out int processId, out IntPtr processHandle, out string error)
+	{
 		processId = 0;
+		processHandle = IntPtr.Zero;
 		error = string.Empty;
 		if (!IsElevated())
 		{
@@ -35,6 +50,11 @@ internal static class InteractiveProcessLauncher
 					WorkingDirectory = AppContext.BaseDirectory
 				});
 				processId = child?.Id ?? 0;
+				if (child != null)
+				{
+					// Opened while `child` still holds its own handle, so this is the same process even if it exits now.
+					processHandle = OpenProcess(Synchronize | ProcessQueryLimitedInformation, false, (uint)processId);
+				}
 				return child != null;
 			}
 			catch (Exception ex)
@@ -48,7 +68,7 @@ internal static class InteractiveProcessLauncher
 		// instead of falling back to an elevated UI process.
 		for (int attempt = 0; attempt < 40; attempt++)
 		{
-			if (TryStartWithExplorerToken(executable, arguments, out processId, out error))
+			if (TryStartWithExplorerToken(executable, arguments, out processId, out processHandle, out error))
 			{
 				return true;
 			}
@@ -57,9 +77,10 @@ internal static class InteractiveProcessLauncher
 		return false;
 	}
 
-	private static bool TryStartWithExplorerToken(string executable, string arguments, out int processId, out string error)
+	private static bool TryStartWithExplorerToken(string executable, string arguments, out int processId, out IntPtr shellProcessHandle, out string error)
 	{
 		processId = 0;
+		shellProcessHandle = IntPtr.Zero;
 		error = "An interactive Explorer token is not available yet.";
 		int sessionId = Process.GetCurrentProcess().SessionId;
 		foreach (Process explorer in Process.GetProcessesByName("explorer"))
@@ -119,7 +140,7 @@ internal static class InteractiveProcessLauncher
 				}
 				processId = (int)info.dwProcessId;
 				CloseHandle(info.hThread);
-				CloseHandle(info.hProcess);
+				shellProcessHandle = info.hProcess;   // handed to the caller (the supervisor's exit watch)
 				return true;
 			}
 			catch (Exception ex)
