@@ -439,6 +439,13 @@ public sealed partial class Win7StartMenu
         ArmHoverGuard();
     }
 
+    // The pinned list was changed outside this menu (native pin sync): an open main view is rebuilt in place, a hidden
+    // menu picks the change up on its next open (every open rebuilds the main view).
+    internal void RefreshAfterExternalPinChange()
+    {
+        RefreshAfterListChange();
+    }
+
     // A program the user removed from the recent list comes back after it is launched from this menu.
     private void UnhideOnLaunch(string path)
     {

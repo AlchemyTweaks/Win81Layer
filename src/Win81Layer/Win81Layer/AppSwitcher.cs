@@ -132,7 +132,8 @@ public sealed class AppSwitcher : Window
 
 	private SolidColorBrush? _startGlyphBrush;
 
-	public Action<string?, string>? PinToStartRequested;
+	// (exe path, window title, the window's app id or null).
+	public Action<string?, string, string?>? PinToStartRequested;
 
 	// Raised when the user clicks the bottom Start button; the owner (App) wires this to open the Start screen.
 	public Action? StartRequested;
@@ -1350,7 +1351,15 @@ public sealed class AppSwitcher : Window
 		}));
 		menu.Items.Add(TaskbarContextMenu.Leaf("Pin to Start", delegate
 		{
-			PinToStartRequested?.Invoke(WindowList.GetExePath(hwnd), WindowList.GetTitle(hwnd));
+			string? appId = null;
+			try
+			{
+				appId = AppInventory.GetWindowAppId(hwnd);
+			}
+			catch
+			{
+			}
+			PinToStartRequested?.Invoke(WindowList.GetExePath(hwnd), WindowList.GetTitle(hwnd), appId);
 			HideSwitcher();
 		}));
 		menu.Items.Add(TaskbarContextMenu.Sep());

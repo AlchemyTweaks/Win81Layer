@@ -25,7 +25,9 @@ internal static class FileContextMenu
 
 	private static readonly Dictionary<int, ContextMenu> CachedMenus = new Dictionary<int, ContextMenu>();
 
-	internal static Action<string>? PinToStart;
+	// (path, app id): the app id is the window's or pin's AppUserModelID when the caller knows it (null otherwise), so
+	// an app whose app-list id is not a path (Chrome, Discord) is still found for the Windows 7 menu.
+	internal static Action<string, string?>? PinToStart;
 
 	internal static Action<string>? PinToTaskbar;
 
@@ -49,7 +51,7 @@ internal static class FileContextMenu
 		TaskbarContextMenu.PrepareForInstantOpen(menu);
 	}
 
-	internal static void AppendExtras(ContextMenu menu, string path)
+	internal static void AppendExtras(ContextMenu menu, string path, string? appId = null)
 	{
 		if (string.IsNullOrEmpty(path))
 		{
@@ -63,7 +65,7 @@ internal static class FileContextMenu
 		{
 			menu.Items.Add(TaskbarContextMenu.Leaf("Pin to Start", 57665, delegate
 			{
-				PinToStart(path);
+				PinToStart(path, appId);
 			}));
 		}
 		menu.Items.Add(TaskbarContextMenu.Leaf("Properties", 59718, delegate
@@ -75,13 +77,16 @@ internal static class FileContextMenu
 	internal static ContextMenu Build(string path, bool isDir, Action? openOverride = null)
 	{
 		bool isExe = !isDir && path.EndsWith(".exe", StringComparison.OrdinalIgnoreCase);
+		// A shortcut to a program pins like the program (the launcher resolves its target, args and "Start in").
+		bool isLnk = !isDir && path.EndsWith(".lnk", StringComparison.OrdinalIgnoreCase);
 		int key = (isDir ? 1 : 0)
 			| (isExe ? 2 : 0)
 			| (PinToStart != null ? 4 : 0)
-			| (PinToTaskbar != null ? 8 : 0);
+			| (PinToTaskbar != null ? 8 : 0)
+			| (isLnk ? 16 : 0);
 		if (!CachedMenus.TryGetValue(key, out ContextMenu? menu) || menu == null || menu.IsOpen)
 		{
-			menu = CreateMenu(isDir, isExe, PinToStart != null, PinToTaskbar != null);
+			menu = CreateMenu(isDir, isExe, isLnk, PinToStart != null, PinToTaskbar != null);
 			if (!menu.IsOpen)
 			{
 				CachedMenus[key] = menu;
@@ -121,7 +126,7 @@ internal static class FileContextMenu
 		return sub;
 	}
 
-	private static ContextMenu CreateMenu(bool isDir, bool isExe, bool hasPinToStart, bool hasPinToTaskbar)
+	private static ContextMenu CreateMenu(bool isDir, bool isExe, bool isLnk, bool hasPinToStart, bool hasPinToTaskbar)
 	{
 		ResourceDictionary res = Application.Current.Resources;
 		ContextMenu menu = new ContextMenu
@@ -208,14 +213,14 @@ internal static class FileContextMenu
 			FileShell.CreateShortcut(target.Path);
 		}));
 		menu.Items.Add(BuildSendToSub(capture));
-		if ((isDir || isExe) && hasPinToStart)
+		if ((isDir || isExe || isLnk) && hasPinToStart)
 		{
 			menu.Items.Add(TaskbarContextMenu.LeafCaptured("Pin to Start", 57665, capture, delegate(MenuTarget target)
 			{
-				PinToStart?.Invoke(target.Path);
+				PinToStart?.Invoke(target.Path, null);
 			}));
 		}
-		if (isExe && hasPinToTaskbar)
+		if ((isExe || isLnk) && hasPinToTaskbar)
 		{
 			menu.Items.Add(TaskbarContextMenu.LeafCaptured("Pin to taskbar", 57665, capture, delegate(MenuTarget target)
 			{

@@ -14,6 +14,8 @@ public sealed class PinnedTile : PinItem
 
 	public string? AumidExplicit { get; init; }
 
+	public string? WorkingDir { get; init; }
+
 	public string Key => (ExePath ?? LaunchPath).ToLowerInvariant();
 
 	public string? Aumid

@@ -2963,6 +2963,7 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 					_appsView = CollectionViewSource.GetDefaultView(_apps);
 					ApplyAppsSort(_appsSort, rebuild: false);
 					_groups = new ObservableCollection<GroupVm>(Profile.Load(_apps, preProfileJson));
+					_profileLoadedForPinSync = true;
 					EnsureDesktopTile();
 					if (!SettingsStore.LoadWasDegraded)
 					{
@@ -6899,7 +6900,9 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 		thread.Start();
 	}
 
-	public void PinAppByPath(string? exePath, string fallbackName)
+	// Pins to this board (the Metro Start screen). Returns the entry it pinned; showToast false lets a caller that pins
+	// here in place of the Windows 7 menu say so itself.
+	public AppEntry? PinAppByPath(string? exePath, string fallbackName, bool showToast = true)
 	{
 		if (!string.IsNullOrEmpty(exePath))
 		{
@@ -6921,8 +6924,83 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 				RaiseAppsReloaded();
 			}
 			PinEntryToStart(entry);
-			ToastService.Show(entry.Icon, "Start", "Pinned", entry.Name + " was pinned to Start.");
+			if (showToast)
+			{
+				ToastService.Show(entry.Icon, "Start", "Pinned", entry.Name + " was pinned to Start.");
+			}
+			return entry;
 		}
+		return null;
+	}
+
+	// ---- Native pin sync (UI thread only). Used by NativePinSync to mirror a native "Pin to Start" into this board.
+
+	private bool _profileLoadedForPinSync;
+
+	// The inventory is loaded and the board came from a healthy profile read, so an automatic change is neither lost
+	// (the board is replaced right after the inventory event) nor saved over a fallback layout.
+	internal bool PinSyncReady => _profileLoadedForPinSync && _apps.Count > 0 && !Profile.LoadWasDegraded;
+
+	// The inventory entry for an AppsFolder id ("shell:AppsFolder\<id>" or a matching AppId); null when not installed.
+	internal AppEntry? FindAppForPinSync(string appsFolderId)
+	{
+		if (string.IsNullOrWhiteSpace(appsFolderId))
+		{
+			return null;
+		}
+		string launchPath = "shell:AppsFolder\\" + appsFolderId;
+		return _apps.FirstOrDefault((AppEntry a) => string.Equals(a.LaunchPath, launchPath, StringComparison.OrdinalIgnoreCase))
+			?? _apps.FirstOrDefault((AppEntry a) => !string.IsNullOrEmpty(a.AppId) && string.Equals(a.AppId, appsFolderId, StringComparison.OrdinalIgnoreCase));
+	}
+
+	// Top-level app tiles only: folders, their members and live tiles are never touched by the sync.
+	private IEnumerable<(GroupVm Group, TileVm Tile)> PinSyncTiles()
+	{
+		foreach (GroupVm g in _groups)
+		{
+			foreach (TileVm t in g.Tiles)
+			{
+				if (!t.IsFolder && t.Live == LiveKind.None)
+				{
+					yield return (g, t);
+				}
+			}
+		}
+	}
+
+	internal bool HasStartTileForPinSync(string launchPath)
+	{
+		return PinSyncTiles().Any(x => NativePinSync.SameLaunchTarget(x.Tile.Entry.LaunchPath, launchPath));
+	}
+
+	// Pins without the toast (the user did not act in this window). False when a tile for it already exists.
+	internal bool PinToStartForPinSync(AppEntry entry)
+	{
+		if (HasStartTileForPinSync(entry.LaunchPath))
+		{
+			return false;
+		}
+		PinEntryToStart(entry);
+		return true;
+	}
+
+	internal int UnpinFromStartForPinSync(string launchPath)
+	{
+		List<(GroupVm Group, TileVm Tile)> hits = PinSyncTiles().Where(x => NativePinSync.SameLaunchTarget(x.Tile.Entry.LaunchPath, launchPath)).ToList();
+		if (hits.Count == 0)
+		{
+			return 0;
+		}
+		foreach ((GroupVm g, TileVm t) in hits)
+		{
+			g.Tiles.Remove(t);
+			if (g.Tiles.Count == 0)
+			{
+				_groups.Remove(g);
+			}
+		}
+		Profile.Save(_groups);
+		return hits.Count;
 	}
 
 	private void UnpinEntryFromStart(AppEntry entry)

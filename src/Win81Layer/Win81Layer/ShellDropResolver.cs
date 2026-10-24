@@ -122,6 +122,112 @@ internal static class ShellDropResolver
 		return null;
 	}
 
+	// BHID_LinkTargetItem: the item a shortcut points at, resolved by the shell (an ID-list target included).
+	private static Guid BHID_LinkTargetItem = new Guid("3981E228-F559-11D3-8E3A-00C04F6837D5");
+
+	// A shortcut TaskbarPins.FromDroppedPath cannot pin because it has no program file target: an ID-list shortcut to an
+	// AppsFolder app (a Store app dragged to the desktop). Resolved through the shell's link target item to the app's
+	// AppUserModelID, the same pin shape as a drop of that app. Null for shortcuts to files, folders, web pages and
+	// anything else that is not an app.
+	internal static PinnedApp ResolveShortcutApp(string lnkPath)
+	{
+		object linkObj = null;
+		object targetObj = null;
+		IntPtr targetPtr = IntPtr.Zero;
+		try
+		{
+			if (string.IsNullOrWhiteSpace(lnkPath) || !File.Exists(lnkPath))
+			{
+				return null;
+			}
+			Guid iid = IID_IShellItem2;
+			if (SHCreateItemFromParsingName(lnkPath, IntPtr.Zero, ref iid, out linkObj) != 0 || !(linkObj is IShellItem2 link))
+			{
+				return null;
+			}
+			Guid bhid = BHID_LinkTargetItem;
+			Guid iidTarget = IID_IShellItem2;
+			link.BindToHandler(IntPtr.Zero, ref bhid, ref iidTarget, out targetPtr);
+			if (targetPtr == IntPtr.Zero)
+			{
+				return null;
+			}
+			targetObj = Marshal.GetObjectForIUnknown(targetPtr);
+			if (!(targetObj is IShellItem2 target) || !string.IsNullOrEmpty(Name(target, SIGDN_FILESYSPATH)))
+			{
+				return null;   // a file or folder target: FromDroppedPath already decided about it
+			}
+			string aumid = GetString(target, PKEY_AppUserModel_ID);
+			if (string.IsNullOrWhiteSpace(aumid))
+			{
+				return null;
+			}
+			string name = Name(target, SIGDN_NORMALDISPLAY);
+			return new PinnedApp
+			{
+				Name = (string.IsNullOrWhiteSpace(name) ? aumid : name),
+				LaunchPath = "shell:AppsFolder\\" + aumid,
+				Aumid = aumid
+			};
+		}
+		catch (Exception ex)
+		{
+			Logger.Log("ShellDropResolver.ResolveShortcutApp: " + ex.Message);
+			return null;
+		}
+		finally
+		{
+			if (targetPtr != IntPtr.Zero)
+			{
+				Marshal.Release(targetPtr);
+			}
+			ReleaseCom(targetObj);
+			ReleaseCom(linkObj);
+		}
+	}
+
+	// Display name of an installed app by AppsFolder id (an AUMID); null when the shell does not know the id.
+	internal static string AppsFolderDisplayName(string appsFolderId)
+	{
+		object o = null;
+		try
+		{
+			if (string.IsNullOrWhiteSpace(appsFolderId))
+			{
+				return null;
+			}
+			Guid iid = IID_IShellItem2;
+			if (SHCreateItemFromParsingName("shell:AppsFolder\\" + appsFolderId.Trim(), IntPtr.Zero, ref iid, out o) != 0 || !(o is IShellItem2 si))
+			{
+				return null;
+			}
+			string name = Name(si, SIGDN_NORMALDISPLAY);
+			return string.IsNullOrWhiteSpace(name) || string.Equals(name.Trim(), appsFolderId.Trim(), StringComparison.OrdinalIgnoreCase) ? null : name;
+		}
+		catch
+		{
+			return null;
+		}
+		finally
+		{
+			ReleaseCom(o);
+		}
+	}
+
+	private static void ReleaseCom(object o)
+	{
+		if (o != null && Marshal.IsComObject(o))
+		{
+			try
+			{
+				Marshal.FinalReleaseComObject(o);
+			}
+			catch
+			{
+			}
+		}
+	}
+
 	private static void ResolveIdList(System.Windows.IDataObject data, List<PinnedApp> outp)
 	{
 		byte[] bytes = null;

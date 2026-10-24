@@ -1878,7 +1878,7 @@ public sealed class SearchPane : Window
 				menu.Items.Add(TaskbarContextMenu.Leaf("Pin to Start", 57665, delegate
 				{
 					HidePane();
-					FileContextMenu.PinToStart(path);
+					FileContextMenu.PinToStart(path, a.AppId);
 				}));
 			}
 			if (isExe && FileContextMenu.PinToTaskbar != null)

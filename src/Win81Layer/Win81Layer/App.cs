@@ -273,6 +273,8 @@ public partial class App : System.Windows.Application
 
 	private Win7StartMenu? _win7Start;   // lazily built; only used when AppSettings.Win7StartMenuEnabled
 
+	private NativePinSyncService? _pinSync;   // native taskbar/Start pins -> launcher (primary shell only)
+
 	private int _lastWin7Press;   // press time (GetTickCount clock) of the last accepted Win7 Start toggle
 
 	private bool _hasWin7Press;
@@ -1393,6 +1395,17 @@ public partial class App : System.Windows.Application
 			SettingsStore.ReadOnlyDiagnostics = true;
 			PersistenceDiagnostics.SuppressAutomaticPostBootVerification = true;
 			CursorDiagnostics.Begin(this, e.Args);
+			return;
+		}
+		if (e.Args.Contains("--pinsynctest"))
+		{
+			// Offscreen QA of the native pin sync. Read-only: settings and state writes throw, the native stores are only
+			// read, every change is replayed against a fixture registry key (volatile, deleted afterwards), fixture
+			// shortcuts and fixture start2.bin files in the given folder, an in-memory launcher and an in-memory
+			// snapshot. It never creates a taskbar, tray host, hook, supervisor or watchdog and exits by itself.
+			SettingsStore.ReadOnlyDiagnostics = true;
+			PersistenceDiagnostics.SuppressAutomaticPostBootVerification = true;
+			NativePinSyncDiagnostics.Begin(this, e.Args);
 			return;
 		}
 		if (e.Args.Contains("--perfprobe"))
@@ -3058,11 +3071,11 @@ public partial class App : System.Windows.Application
 			{
 				_appSwitcher.ShowSwitcher();
 			};
-			_appSwitcher.PinToStartRequested = delegate(string? exe, string name)
+			_appSwitcher.PinToStartRequested = delegate(string? exe, string name, string? appId)
 			{
 				((DispatcherObject)this).Dispatcher.BeginInvoke((Delegate)(Action)delegate
 				{
-					_startScreen?.PinAppByPath(exe, name);
+					PinToActiveStart(exe, name, appId);
 				}, Array.Empty<object>());
 			};
 			_appSwitcher.StartRequested = delegate
@@ -3074,11 +3087,11 @@ public partial class App : System.Windows.Application
 		{
 			Logger.Log("AppSwitcher init failed, keeping Task View: " + ex3.Message);
 		}
-		FileContextMenu.PinToStart = delegate(string path)
+		FileContextMenu.PinToStart = delegate(string path, string? appId)
 		{
 			((DispatcherObject)this).Dispatcher.BeginInvoke((Delegate)(Action)delegate
 			{
-				_startScreen?.PinAppByPath(path, string.Empty);
+				PinToActiveStart(path, string.Empty, appId);
 			}, Array.Empty<object>());
 		};
 		FileContextMenu.PinToTaskbar = delegate(string path)
@@ -3088,14 +3101,24 @@ public partial class App : System.Windows.Application
 				try
 				{
 					List<PinnedApp> list = TaskbarPins.Load();
-					if (!list.Any((PinnedApp p) => string.Equals(p.ExePath, path, StringComparison.OrdinalIgnoreCase) || string.Equals(p.LaunchPath, path, StringComparison.OrdinalIgnoreCase)))
-					{
-						list.Add(new PinnedApp
+					// A shortcut pins as its program (target, args, icon, "Start in"), the same shape as a drop on the bar;
+					// a shortcut to a Store/AppsFolder app (no program file) pins as that app, like a drop of it.
+					PinnedApp pin = path.EndsWith(".lnk", StringComparison.OrdinalIgnoreCase)
+						? (TaskbarPins.FromDroppedPath(path) ?? ShellDropResolver.ResolveShortcutApp(path))
+						: new PinnedApp
 						{
 							Name = Path.GetFileNameWithoutExtension(path),
 							LaunchPath = path,
 							ExePath = path
-						});
+						};
+					if (pin == null)
+					{
+						Logger.Log("pin-to-taskbar " + path + ": the shortcut does not point to a program or an app");
+						ToastService.Show(null, "Taskbar", "Can't pin to the taskbar", Path.GetFileNameWithoutExtension(path) + " doesn't open a program or an app, so it can't be pinned to the taskbar.");
+					}
+					else if (!list.Any((PinnedApp p) => string.Equals(p.ExePath, path, StringComparison.OrdinalIgnoreCase) || string.Equals(p.LaunchPath, path, StringComparison.OrdinalIgnoreCase) || NativePinSync.LauncherKeys(p).Overlaps(NativePinSync.LauncherKeys(pin))))
+					{
+						list.Add(pin);
 						TaskbarPins.Save(list);
 						TaskbarWindow.ReloadPins();
 					}
@@ -3227,6 +3250,18 @@ public partial class App : System.Windows.Application
 		}, (DispatcherPriority)2, Array.Empty<object>());
 		ScheduleDominanceBackstop();   // re-assert dominant composition + native suppression if an early degraded read applied native
 		AppLauncher.PrewarmIdentities();   // warm the packaged-app AUMID cache off-thread so the first app launch is instant
+		// Native "Pin to taskbar" / "Pin to Start" made in Explorer's own menus -> our taskbar and Start. Started late,
+		// once the taskbar and Start are up; reads run off the UI thread and the watchers cost nothing while idle.
+		DispatcherTimer pinSyncDelay = new DispatcherTimer(DispatcherPriority.ApplicationIdle)
+		{
+			Interval = TimeSpan.FromSeconds(8.0)
+		};
+		pinSyncDelay.Tick += delegate
+		{
+			pinSyncDelay.Stop();
+			StartNativePinSync();
+		};
+		pinSyncDelay.Start();
 		// One coalesced shell clock (see ShellClock): heartbeat on every tick, the bars' refresh and fast checks, the
 		// supervisor tick, idle maintenance and the native-host backstop, at a cadence that backs off when the user is
 		// idle and nearly stops while the session is locked or the display is off.
@@ -5026,6 +5061,117 @@ public partial class App : System.Windows.Application
 		}
 	}
 
+	// "Pin to Start" from the launcher's own menus (file menu, search pane, taskbar button extras, app switcher) goes to
+	// the Start the user uses. With the Windows 7 style on, the app joins that menu's pinned list. That menu shows
+	// app-list entries only, so the entry is found by launch path, app id (the window's or pin's, or the shortcut's),
+	// program file, or the Start-menu shortcut that starts the program (NativePinSync.FindStartEntry): Chrome, Discord and
+	// other apps with their own app id are found from an exe path too. Anything outside the app list (a folder, a
+	// document, a portable program) can only go to the Start screen board, and the toast says so. With the Metro style
+	// everything goes to the board, as before. UI thread.
+	private void PinToActiveStart(string? path, string name, string? appId = null)
+	{
+		StartScreen? start = _startScreen;
+		if (string.IsNullOrEmpty(path) || start == null)
+		{
+			return;
+		}
+		bool win7 = false;
+		try
+		{
+			win7 = SettingsStore.FastSnapshot.Win7StartMenuEnabled;
+			if (win7)
+			{
+				List<string?> ids = new List<string?> { appId };
+				string? program = path.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ? path : null;
+				if (path.EndsWith(".lnk", StringComparison.OrdinalIgnoreCase))
+				{
+					// A shortcut is matched by its program when it carries no arguments of its own, and by its app id.
+					PinnedApp? viaLink = TaskbarPins.FromDroppedPath(path);
+					if (viaLink != null)
+					{
+						program = string.IsNullOrEmpty(viaLink.Args) ? viaLink.LaunchPath : null;
+					}
+					else
+					{
+						ids.Add(ShellDropResolver.ResolveShortcutApp(path)?.Aumid);
+					}
+					ids.Add(JumpListApi.GetAppId(path));
+				}
+				AppEntry? entry = NativePinSync.FindStartEntry(start.AllApps, path, ids, program, StartMenuShortcutTarget);
+				if (entry != null)
+				{
+					string launchPath = entry.LaunchPath;
+					bool saved = SettingsStore.TryUpdate(delegate(AppSettings x)
+					{
+						x.Win7StartMenuPins ??= new List<string>();
+						x.Win7StartMenuPins.RemoveAll((string p) => string.Equals(p, launchPath, StringComparison.OrdinalIgnoreCase));
+						x.Win7StartMenuPins.Add(launchPath);
+					});
+					if (saved)
+					{
+						_win7Start?.RefreshAfterExternalPinChange();
+						ToastService.Show(entry.Icon, "Start", "Pinned", entry.Name + " was pinned to Start.");
+						Logger.Log("Pin to Start: '" + entry.Name + "' -> Windows 7 menu (" + launchPath + ")");
+					}
+					else
+					{
+						Logger.Log("Pin to Start: '" + entry.Name + "' not saved (the settings could not be read)");
+						ToastService.Show(entry.Icon, "Start", "Not pinned", entry.Name + " couldn't be pinned to Start right now. Try again in a moment.");
+					}
+					return;
+				}
+			}
+		}
+		catch (Exception ex)
+		{
+			Logger.Log("Pin to Start (Windows 7 menu) failed: " + ex.Message);
+		}
+		if (!win7)
+		{
+			start.PinAppByPath(path, name);
+			return;
+		}
+		// Not in the app list, so the Windows 7 menu cannot show it: it goes to the Start screen board, and the toast says
+		// so instead of "pinned to Start".
+		AppEntry? tile = start.PinAppByPath(path, name, showToast: false);
+		string label = tile?.Name ?? (string.IsNullOrWhiteSpace(name) ? Path.GetFileNameWithoutExtension(path) : name);
+		Logger.Log("Pin to Start: '" + path + "' is not in the app list the Windows 7 menu shows; pinned to the Start screen board");
+		ToastService.Show(tile?.Icon, "Start", "Pinned to the Start screen", label + " isn't in the app list, so the Windows 7 Start menu can't show it. It was pinned to the Start screen.");
+	}
+
+	// Target of the Start-menu shortcut an app-list entry came from (by display name), parsed from the file without COM.
+	private static string? StartMenuShortcutTarget(string displayName)
+	{
+		if (!StartMenuIndex.Get().TryGetValue(displayName, out StartMenuIndex.Info? info) || string.IsNullOrEmpty(info.LnkPath))
+		{
+			return null;
+		}
+		return ShellLink.GetTargetPath(File.ReadAllBytes(info.LnkPath));
+	}
+
+	// Native pin sync (see NativePinSync): the primary shell only, never in safe mode or a diagnostics run.
+	private void StartNativePinSync()
+	{
+		if (!_isPrimary || _safeMode || _pinSync != null || SettingsStore.ReadOnlyDiagnostics || PerfProbe.Active || Interlocked.CompareExchange(ref _cleanupStarted, 0, 0) != 0)
+		{
+			return;
+		}
+		try
+		{
+			NativePinSyncService service = new NativePinSyncService(
+				new NativePinSource(),
+				new LauncherPinSyncTarget(Dispatcher, () => _startScreen, () => _win7Start),
+				new DurablePinSnapshotStore());
+			_pinSync = service;
+			service.Start();
+			Logger.Log($"Pin sync: started (taskbar watch={(service.TaskbarWatched ? "on" : "off")}, Start watch={(service.StartWatched ? "on" : "off")})");
+		}
+		catch (Exception ex)
+		{
+			Logger.Log("Pin sync: start failed, sync off for this session: " + ex.Message);
+		}
+	}
+
 	// The Win7 menu is built once and reused. A menu that was really closed (it should never be; Alt+F4 only dismisses)
 	// is rebuilt on the next use.
 	private Win7StartMenu EnsureWin7Start()
@@ -5534,6 +5680,8 @@ public partial class App : System.Windows.Application
 		{
 			return;
 		}
+		// Stop the native pin sync first: nothing may react to the native stores while the native shell comes back.
+		try { _pinSync?.Dispose(); } catch { }
 		// Guard the exit flush so a flush fault can NEVER skip the clean-exit marker + native restore below (that would
 		// turn a clean/panic exit into a supervisor relaunch loop with the native shell still hidden).
 		try { _startScreen?.CommitActiveGroupEditAndFlush(); } catch (Exception exFlush) { Logger.Log("exit flush failed (continuing clean exit): " + exFlush.Message); }

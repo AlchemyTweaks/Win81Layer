@@ -17,4 +17,10 @@ public sealed class PinnedApp
 	public string? Aumid { get; set; }
 
 	public string GroupName { get; set; } = "";
+
+	// The shortcut's own "Start in" folder, for pins taken from a .lnk whose program needs it (e.g. a script host run
+	// with a relative script path). Null means the exe's folder, as before; omitted from the JSON when null so existing
+	// pin files keep their exact shape.
+	[System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+	public string? WorkingDir { get; set; }
 }

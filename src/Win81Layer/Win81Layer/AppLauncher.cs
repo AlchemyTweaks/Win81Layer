@@ -181,6 +181,36 @@ public static class AppLauncher
 		bool asAdmin,
 		out string? error)
 	{
+		return TryLaunch(launchPath, args, explicitAumid, asAdmin, null, out error);
+	}
+
+	// The folder a file-backed launch starts in: the pin's own "Start in" folder when it is set and exists (a .lnk
+	// pin whose program needs it), otherwise the target's folder, as before. Null for non-file launch paths.
+	internal static string? ChooseWorkingDirectory(string launchPath, string? explicitWorkingDirectory)
+	{
+		if (!string.IsNullOrWhiteSpace(explicitWorkingDirectory) && Path.IsPathFullyQualified(explicitWorkingDirectory) && Directory.Exists(explicitWorkingDirectory))
+		{
+			return explicitWorkingDirectory;
+		}
+		if (LooksLikeFilePath(launchPath))
+		{
+			string? directory = Path.GetDirectoryName(launchPath);
+			if (!string.IsNullOrWhiteSpace(directory) && Directory.Exists(directory))
+			{
+				return directory;
+			}
+		}
+		return null;
+	}
+
+	public static bool TryLaunch(
+		string launchPath,
+		string? args,
+		string? explicitAumid,
+		bool asAdmin,
+		string? workingDirectoryOverride,
+		out string? error)
+	{
 		error = null;
 		try
 		{
@@ -269,15 +299,7 @@ public static class AppLauncher
 				return true;
 			}
 			bool directExecutable = !asAdmin && IsDirectExecutable(launchPath);
-			string? workingDirectory = null;
-			if (LooksLikeFilePath(launchPath))
-			{
-				string? directory = Path.GetDirectoryName(launchPath);
-				if (!string.IsNullOrWhiteSpace(directory) && Directory.Exists(directory))
-				{
-					workingDirectory = directory;
-				}
-			}
+			string? workingDirectory = ChooseWorkingDirectory(launchPath, workingDirectoryOverride);
 			string? directError = null;
 			if (directExecutable && TryCreateProcess(launchPath, args, workingDirectory, out directError))
 			{
@@ -421,6 +443,19 @@ public static class AppLauncher
 		};
 		t.SetApartmentState(System.Threading.ApartmentState.STA);
 		t.Start();
+	}
+
+	// Display name of an installed packaged app by AUMID (null when it is not installed). Off the UI thread only: the
+	// first call may enumerate AppsFolder. The identity cache is kept for the session, so an app installed after it
+	// was filled is asked of the shell directly.
+	internal static string? PackagedDisplayName(string? aumid)
+	{
+		if (string.IsNullOrWhiteSpace(aumid))
+		{
+			return null;
+		}
+		(string Name, string Aumid) hit = PackagedIdentities().FirstOrDefault(x => string.Equals(x.Aumid, aumid, StringComparison.OrdinalIgnoreCase));
+		return string.IsNullOrWhiteSpace(hit.Name) ? ShellDropResolver.AppsFolderDisplayName(aumid) : hit.Name;
 	}
 
 	private static List<(string Name, string Aumid)> PackagedIdentities()
