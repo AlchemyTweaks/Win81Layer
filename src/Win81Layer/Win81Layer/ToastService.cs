@@ -107,9 +107,10 @@ public static class ToastService
 			{
 				sy = 1.0;
 			}
-			t.Left = (double)wa.Right / sx - t.ActualWidth - 4.0;
-			t.Top = top / sy;
-			top += t.ActualHeight * sy - 8.0;
+			// the card's height without a reflow margin, so a glide in progress does not push the others
+			double cardHeight = t.Content is FrameworkElement card ? card.ActualHeight + 2.0 : t.ActualHeight;
+			t.PlaceAt((double)wa.Right / sx - ToastWindow.ToastWidth - 4.0, top / sy);
+			top += cardHeight * sy - 8.0;
 		}
 	}
 }

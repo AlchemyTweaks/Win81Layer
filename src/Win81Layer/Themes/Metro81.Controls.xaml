@@ -45,6 +45,10 @@
   <SolidColorBrush x:Key="Metro81.MenuHover" Color="#DEDEDE" />
   <SolidColorBrush x:Key="Metro81.HighlightSurface" Color="#000000" />
   <SolidColorBrush x:Key="Metro81.HighlightInk" Color="#FFFFFF" />
+  <!-- The shortcut column of a menu (light #616161, dark #AAAAAA via ShellTheme; Dark rest has its own) and the menu
+       border (2 in light, the authentic 8.1 Content Menu; 1 in dark and Dark rest). -->
+  <SolidColorBrush x:Key="Metro81.MenuGesture" Color="#616161" />
+  <Thickness x:Key="Metro81.MenuBorderThickness">2</Thickness>
   <!-- Dark-surface scrollbar set (flyouts, Action Center, app switcher, search/charms panes, Start board). -->
   <SolidColorBrush x:Key="Metro81.ScrollTrackBrushDark" Color="#1A1A1A" />
   <SolidColorBrush x:Key="Metro81.ScrollThumbBrushDark" Color="#8A8A8A" />
@@ -315,7 +319,7 @@
     </Setter>
   </Style>
   <Style x:Key="Metro81.ComboBoxItem" TargetType="ComboBoxItem" BasedOn="{StaticResource Metro81.Control}">
-    <Setter Property="Padding" Value="10,6" /><Setter Property="MinHeight" Value="32" />
+    <Setter Property="FontSize" Value="14" /><Setter Property="Padding" Value="10,5" /><Setter Property="MinHeight" Value="30" />
     <Setter Property="Template">
       <Setter.Value>
         <ControlTemplate TargetType="ComboBoxItem">
@@ -348,7 +352,7 @@
                                   Content="{TemplateBinding SelectionBoxItem}" ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}" ContentStringFormat="{TemplateBinding SelectionBoxItemStringFormat}" />
                 <ToggleButton x:Name="DropDown" Grid.ColumnSpan="2" Focusable="False" IsChecked="{Binding IsDropDownOpen, RelativeSource={RelativeSource TemplatedParent}, Mode=TwoWay}" ClickMode="Press">
                   <ToggleButton.Template>
-                    <ControlTemplate TargetType="ToggleButton"><Border Background="Transparent"><Path Data="M 0,0 L 5,5 L 10,0 L 10,4 L 5,9 L 0,4 Z" Fill="{DynamicResource Metro81.Ink}" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,10,0" /></Border></ControlTemplate>
+                    <ControlTemplate TargetType="ToggleButton"><Border Background="Transparent" UseLayoutRounding="True"><Path Data="{x:Static local:MenuGlyphs.ChevronDown}" Width="10" Height="6" Stretch="None" Stroke="{DynamicResource Metro81.Ink}" StrokeThickness="1.5" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,10,0" /></Border></ControlTemplate>
                   </ToggleButton.Template>
                 </ToggleButton>
                 <TextBox x:Name="PART_EditableTextBox" Style="{x:Null}" Margin="{TemplateBinding Padding}" Visibility="Hidden" Background="Transparent" Foreground="{TemplateBinding Foreground}" CaretBrush="{DynamicResource Metro81.Ink}" BorderThickness="0" VerticalContentAlignment="Center" IsReadOnly="{TemplateBinding IsReadOnly}">
@@ -379,25 +383,25 @@
     <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="ToolTip"><Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" Padding="{TemplateBinding Padding}"><ContentPresenter /></Border></ControlTemplate></Setter.Value></Setter>
   </Style>
   <Style x:Key="Metro81.MenuSeparator" TargetType="Separator">
-    <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Separator"><Border Height="1" Background="{DynamicResource Metro81.Separator}" Margin="10,4" /></ControlTemplate></Setter.Value></Setter>
+    <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Separator"><Border Height="1" Background="{DynamicResource Metro81.Separator}" Margin="8,3" SnapsToDevicePixels="True" /></ControlTemplate></Setter.Value></Setter>
   </Style>
   <Style x:Key="Metro81.MenuItem" TargetType="MenuItem" BasedOn="{StaticResource Metro81.Control}">
     <Style.Resources><Style TargetType="Separator" BasedOn="{StaticResource Metro81.MenuSeparator}" /></Style.Resources>
-    <Setter Property="Padding" Value="12,6" /><Setter Property="MinHeight" Value="36" />
+    <Setter Property="FontSize" Value="14" /><Setter Property="Padding" Value="10,5" /><Setter Property="MinHeight" Value="32" />
     <Setter Property="ItemContainerStyleSelector" Value="{StaticResource Metro81.MenuItemSelector}" />
     <Setter Property="Template">
       <Setter.Value>
         <ControlTemplate TargetType="MenuItem">
-          <Border x:Name="Chrome" Background="{DynamicResource Metro81.MenuSurface}" Padding="{TemplateBinding Padding}">
+          <Border x:Name="Chrome" Background="{DynamicResource Metro81.MenuSurface}" Padding="{TemplateBinding Padding}" UseLayoutRounding="True">
             <Grid>
-              <Grid.ColumnDefinitions><ColumnDefinition Width="24" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="16" /></Grid.ColumnDefinitions>
+              <Grid.ColumnDefinitions><ColumnDefinition Width="24" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" SharedSizeGroup="M81Gesture" /><ColumnDefinition Width="16" /></Grid.ColumnDefinitions>
               <ContentPresenter x:Name="Icon" ContentSource="Icon" VerticalAlignment="Center" />
-              <Path x:Name="Tick" Visibility="Collapsed" Data="M 1,6 L 5,10 L 13,0" Stroke="{TemplateBinding Foreground}" StrokeThickness="2.5" VerticalAlignment="Center" />
+              <Path x:Name="Tick" Visibility="Collapsed" Data="{x:Static local:MenuGlyphs.Tick}" Width="12" Height="10" Stretch="None" Stroke="{TemplateBinding Foreground}" StrokeThickness="1.5" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" HorizontalAlignment="Left" VerticalAlignment="Center" />
               <ContentPresenter Grid.Column="1" ContentSource="Header" VerticalAlignment="Center" RecognizesAccessKey="True" />
-              <TextBlock Grid.Column="2" Margin="24,0,8,0" Text="{TemplateBinding InputGestureText}" VerticalAlignment="Center" />
-              <Path x:Name="Arrow" Grid.Column="3" Visibility="Collapsed" Data="M 0,0 L 5,5 L 0,10" Stroke="{TemplateBinding Foreground}" StrokeThickness="2" VerticalAlignment="Center" HorizontalAlignment="Right" />
+              <TextBlock x:Name="Gesture" Grid.Column="2" Margin="16,0,0,0" FontSize="12" Foreground="{DynamicResource Metro81.MenuGesture}" Text="{TemplateBinding InputGestureText}" VerticalAlignment="Center" />
+              <Path x:Name="Arrow" Grid.Column="3" Visibility="Collapsed" Data="{x:Static local:MenuGlyphs.Chevron}" Width="6" Height="10" Stretch="None" Stroke="{TemplateBinding Foreground}" StrokeThickness="1.5" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" VerticalAlignment="Center" HorizontalAlignment="Right" />
               <Popup x:Name="PART_Popup" IsOpen="{Binding IsSubmenuOpen, RelativeSource={RelativeSource TemplatedParent}}" Placement="Right" Focusable="False" AllowsTransparency="True" PopupAnimation="None">
-                <Border Background="{DynamicResource Metro81.MenuSurface}" BorderBrush="{DynamicResource Metro81.MenuBorder}" BorderThickness="2"><ScrollViewer CanContentScroll="True" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"><ItemsPresenter KeyboardNavigation.DirectionalNavigation="Cycle" /></ScrollViewer></Border>
+                <Border Background="{DynamicResource Metro81.MenuSurface}" BorderBrush="{DynamicResource Metro81.MenuBorder}" BorderThickness="{DynamicResource Metro81.MenuBorderThickness}" Padding="0,3" Grid.IsSharedSizeScope="True" UseLayoutRounding="True"><ScrollViewer CanContentScroll="True" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"><ItemsPresenter KeyboardNavigation.DirectionalNavigation="Cycle" /></ScrollViewer></Border>
               </Popup>
             </Grid>
           </Border>
@@ -407,9 +411,9 @@
             <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Chrome" Property="Background" Value="{DynamicResource Metro81.HoverSurface}" /></Trigger>
             <MultiTrigger>
               <MultiTrigger.Conditions><Condition Property="IsHighlighted" Value="True" /><Condition Property="IsMouseOver" Value="False" /></MultiTrigger.Conditions>
-              <Setter TargetName="Chrome" Property="Background" Value="{DynamicResource Metro81.HighlightSurface}" /><Setter Property="Foreground" Value="{DynamicResource Metro81.HighlightInk}" />
+              <Setter TargetName="Chrome" Property="Background" Value="{DynamicResource Metro81.HighlightSurface}" /><Setter Property="Foreground" Value="{DynamicResource Metro81.HighlightInk}" /><Setter TargetName="Gesture" Property="Foreground" Value="{DynamicResource Metro81.HighlightGesture}" />
             </MultiTrigger>
-            <Trigger Property="IsEnabled" Value="False"><Setter Property="Foreground" Value="{DynamicResource Metro81.DisabledInk}" /><Setter TargetName="Chrome" Property="Background" Value="{DynamicResource Metro81.MenuSurface}" /></Trigger>
+            <Trigger Property="IsEnabled" Value="False"><Setter Property="Foreground" Value="{DynamicResource Metro81.DisabledInk}" /><Setter TargetName="Gesture" Property="Foreground" Value="{DynamicResource Metro81.DisabledInk}" /><Setter TargetName="Chrome" Property="Background" Value="{DynamicResource Metro81.MenuSurface}" /></Trigger>
           </ControlTemplate.Triggers>
         </ControlTemplate>
       </Setter.Value>
@@ -420,9 +424,9 @@
       <Style TargetType="MenuItem" BasedOn="{StaticResource Metro81.MenuItem}" />
       <Style TargetType="Separator" BasedOn="{StaticResource Metro81.MenuSeparator}" />
     </Style.Resources>
-    <Setter Property="HasDropShadow" Value="False" /><Setter Property="MinWidth" Value="160" />
+    <Setter Property="HasDropShadow" Value="False" /><Setter Property="MinWidth" Value="160" /><Setter Property="FontSize" Value="14" /><Setter Property="UseLayoutRounding" Value="True" />
     <Setter Property="ItemContainerStyleSelector" Value="{StaticResource Metro81.MenuItemSelector}" />
-    <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="ContextMenu"><Border Background="{DynamicResource Metro81.MenuSurface}" BorderBrush="{DynamicResource Metro81.MenuBorder}" BorderThickness="2"><ScrollViewer CanContentScroll="True" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"><ItemsPresenter KeyboardNavigation.DirectionalNavigation="Cycle" /></ScrollViewer></Border></ControlTemplate></Setter.Value></Setter>
+    <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="ContextMenu"><Border Background="{DynamicResource Metro81.MenuSurface}" BorderBrush="{DynamicResource Metro81.MenuBorder}" BorderThickness="{DynamicResource Metro81.MenuBorderThickness}" Padding="0,3" Grid.IsSharedSizeScope="True" UseLayoutRounding="True"><ScrollViewer CanContentScroll="True" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"><ItemsPresenter KeyboardNavigation.DirectionalNavigation="Cycle" /></ScrollViewer></Border></ControlTemplate></Setter.Value></Setter>
   </Style>
   <Style x:Key="Metro81.ScrollPage" TargetType="RepeatButton">
     <Setter Property="OverridesDefaultStyle" Value="True" />

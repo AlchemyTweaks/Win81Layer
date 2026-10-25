@@ -12,7 +12,7 @@ namespace Win81Layer;
 
 public sealed class ToastWindow : Window
 {
-	public const double ToastWidth = 360.0;
+	public const double ToastWidth = 320.0;
 
 	private readonly DispatcherTimer _life;
 
@@ -35,7 +35,7 @@ public sealed class ToastWindow : Window
 		base.ShowActivated = false;
 		base.AllowsTransparency = true;
 		base.Background = Brushes.Transparent;
-		base.Width = 360.0;
+		base.Width = ToastWidth;
 		base.SizeToContent = SizeToContent.Height;
 		base.UseLayoutRounding = true;
 		Grid grid = new Grid
@@ -44,7 +44,7 @@ public sealed class ToastWindow : Window
 			{
 				new ColumnDefinition
 				{
-					Width = new GridLength((icon != null) ? 58 : 16)
+					Width = new GridLength((icon != null) ? 52 : 14)
 				},
 				new ColumnDefinition(),
 				new ColumnDefinition
@@ -59,11 +59,11 @@ public sealed class ToastWindow : Window
 			{
 				// Dark rest: a dark app icon is lifted or outlined so it does not vanish on the dark card
 				Source = rest ? DarkRestIcons.Visible(icon) : icon,
-				Width = 32.0,
-				Height = 32.0,
+				Width = 28.0,
+				Height = 28.0,
 				HorizontalAlignment = HorizontalAlignment.Center,
 				VerticalAlignment = VerticalAlignment.Top,
-				Margin = new Thickness(0.0, 14.0, 0.0, 0.0)
+				Margin = new Thickness(0.0, 12.0, 0.0, 0.0)
 			};
 			RenderOptions.SetBitmapScalingMode((DependencyObject)(object)img, BitmapScalingMode.HighQuality);
 			Grid.SetColumn(img, 0);
@@ -71,7 +71,7 @@ public sealed class ToastWindow : Window
 		}
 		StackPanel texts = new StackPanel
 		{
-			Margin = new Thickness(0.0, 11.0, 8.0, 11.0),
+			Margin = new Thickness(0.0, 10.0, 8.0, 10.0),
 			VerticalAlignment = VerticalAlignment.Center
 		};
 		if (!string.IsNullOrEmpty(appName))
@@ -90,7 +90,7 @@ public sealed class ToastWindow : Window
 			Text = title,
 			Foreground = rest ? DarkRestPalette.ToastTitle : new SolidColorBrush(Color.FromRgb(26, 26, 26)),
 			FontFamily = new FontFamily("Segoe UI Semibold"),
-			FontSize = 14.0,
+			FontSize = 13.0,
 			TextTrimming = TextTrimming.CharacterEllipsis,
 			Margin = new Thickness(0.0, 1.0, 0.0, 0.0)
 		});
@@ -101,10 +101,10 @@ public sealed class ToastWindow : Window
 				Text = message,
 				Foreground = rest ? DarkRestPalette.ToastMessage : new SolidColorBrush(Color.FromRgb(58, 58, 58)),
 				FontFamily = new FontFamily("Segoe UI"),
-				FontSize = 13.0,
+				FontSize = 12.0,
 				TextWrapping = TextWrapping.Wrap,
 				Margin = new Thickness(0.0, 1.0, 0.0, 0.0),
-				MaxHeight = 42.0,
+				MaxHeight = 34.0,
 				TextTrimming = TextTrimming.CharacterEllipsis
 			});
 		}
@@ -114,9 +114,9 @@ public sealed class ToastWindow : Window
 		{
 			Content = "\ue711",
 			FontFamily = new FontFamily("Segoe MDL2 Assets"),
-			FontSize = 13.0,
-			Width = 42.0,
-			Height = 42.0,
+			FontSize = 12.0,
+			Width = 36.0,
+			Height = 36.0,
 			VerticalAlignment = VerticalAlignment.Top,
 			HorizontalAlignment = HorizontalAlignment.Right,
 			Foreground = rest ? DarkRestPalette.ToastClose : new SolidColorBrush(Color.FromRgb(58, 58, 58)),
@@ -139,7 +139,7 @@ public sealed class ToastWindow : Window
 				Text = timestamp,
 				Foreground = rest ? DarkRestPalette.ToastTime : new SolidColorBrush(Color.FromRgb(154, 154, 154)),
 				FontFamily = new FontFamily("Segoe UI"),
-				FontSize = 11.0,
+				FontSize = 12.0,
 				HorizontalAlignment = HorizontalAlignment.Right,
 				VerticalAlignment = VerticalAlignment.Bottom,
 				Margin = new Thickness(0.0, 0.0, 10.0, 6.0)
@@ -186,7 +186,7 @@ public sealed class ToastWindow : Window
 		};
 		_life.Tick += delegate
 		{
-			Dismiss();
+			DismissTimeout();
 		};
 		base.MouseEnter += delegate
 		{
@@ -201,36 +201,162 @@ public sealed class ToastWindow : Window
 		};
 	}
 
+	private TranslateTransform Slide()
+	{
+		UIElement card = (UIElement)base.Content;
+		if (card.RenderTransform is TranslateTransform t && !t.IsFrozen)
+		{
+			return t;
+		}
+		TranslateTransform created = new TranslateTransform();
+		card.RenderTransform = created;
+		return created;
+	}
+
+	// In: the whole card travels in from the screen edge (320 DIP) over 300 ms SOFT DECELERATE, without a fade (the 8.1
+	// identity; the first frame moves less than a pixel). Calm motion: 24 DIP over 250 ms with a 120 ms fade.
 	public void ShowToast()
 	{
 		Show();
-		TranslateTransform t = new TranslateTransform(360.0, 0.0);
-		((UIElement)base.Content).RenderTransform = t;
-		t.BeginAnimation(TranslateTransform.XProperty, new DoubleAnimation(360.0, 0.0, Motion.Dur(Motion.Cat.EdgeEnter))
+		TranslateTransform t = Slide();
+		UIElement card = (UIElement)base.Content;
+		t.X = 0.0;
+		card.Opacity = 1.0;
+		if (Motion.Enabled)
 		{
-			EasingFunction = Motion.Ease(Motion.Cat.EdgeEnter)
-		});
+			double travel = Motion.Distance(ToastWidth);
+			if (Math.Abs(travel) > 0.01)
+			{
+				t.BeginAnimation(TranslateTransform.XProperty, Motion.Anim(travel, 0.0, Motion.Move(travel)), HandoffBehavior.SnapshotAndReplace);
+			}
+			if (Motion.Mode == MotionMode.Reduced)
+			{
+				card.BeginAnimation(UIElement.OpacityProperty, Motion.Anim(0.0, 1.0, Motion.Tok.FadeIn), HandoffBehavior.SnapshotAndReplace);
+			}
+		}
 		_life.Start();
 	}
 
+	// Close button or swipe: the card leaves to the edge (320 DIP) over 167 ms ACCELERATE; calm motion fades out.
 	public void Dismiss()
 	{
-		if (!_closing)
+		if (_closing)
 		{
-			_closing = true;
-			_life.Stop();
-			TranslateTransform t = (((UIElement)base.Content).RenderTransform as TranslateTransform) ?? new TranslateTransform();
-			((UIElement)base.Content).RenderTransform = t;
-			DoubleAnimation slide = new DoubleAnimation(360.0, Motion.Dur(Motion.Cat.EdgeExit))
-			{
-				EasingFunction = Motion.Ease(Motion.Cat.EdgeExit)
-			};
-			slide.Completed += delegate
-			{
-				Close();
-			};
-			t.BeginAnimation(TranslateTransform.XProperty, slide);
+			return;
 		}
+		_closing = true;
+		_life.Stop();
+		if (!Motion.Enabled)
+		{
+			Close();
+			return;
+		}
+		if (Motion.Mode == MotionMode.Reduced)
+		{
+			FadeAway(Motion.Tok.FadeOut, 0.0);
+			return;
+		}
+		DoubleAnimation slide = new DoubleAnimation(ToastWidth, Motion.Dur(Motion.Tok.ExitMoveLong))
+		{
+			EasingFunction = Motion.Ease(Motion.Tok.ExitMoveLong)
+		};
+		slide.Completed += delegate
+		{
+			Close();
+		};
+		Slide().BeginAnimation(TranslateTransform.XProperty, slide, HandoffBehavior.SnapshotAndReplace);
+	}
+
+	// Timeout: a 167 ms linear fade while moving 24 DIP toward the edge with ACCELERATE (calm motion: the fade only).
+	private void DismissTimeout()
+	{
+		if (_closing)
+		{
+			return;
+		}
+		_closing = true;
+		_life.Stop();
+		if (!Motion.Enabled)
+		{
+			Close();
+			return;
+		}
+		FadeAway(Motion.Tok.FadeOutLong, Motion.Mode == MotionMode.Reduced ? 0.0 : 24.0);
+	}
+
+	private void FadeAway(Motion.Tok fadeTok, double travel)
+	{
+		UIElement card = (UIElement)base.Content;
+		DoubleAnimation fade = new DoubleAnimation(0.0, Motion.Dur(fadeTok))
+		{
+			EasingFunction = Motion.Ease(fadeTok)
+		};
+		fade.Completed += delegate
+		{
+			Close();
+		};
+		card.BeginAnimation(UIElement.OpacityProperty, fade, HandoffBehavior.SnapshotAndReplace);
+		if (travel > 0.0)
+		{
+			Slide().BeginAnimation(TranslateTransform.XProperty, new DoubleAnimation(travel, Motion.Dur(fadeTok)) { EasingFunction = Motion.Accelerate }, HandoffBehavior.SnapshotAndReplace);
+		}
+	}
+
+	private bool _placed;
+
+	private int _reflowGeneration;
+
+	// Reflow (ToastService): the window is set at its new place once and the card glides from where it was (250 ms
+	// DECELERATE). While it glides the window also covers the old place (a transparent margin, which takes no clicks), so
+	// the card is never clipped; no window moves per frame. A reflow that lands mid-glide starts from where the card is
+	// drawn at that moment, and only the latest glide's end settles the window (a replaced clock still completes).
+	internal void PlaceAt(double left, double top)
+	{
+		int generation = ++_reflowGeneration;
+		FrameworkElement card = (FrameworkElement)base.Content;
+		TranslateTransform t = Slide();
+		Thickness rest = new Thickness(1.0);
+		// where the card is drawn now: the window top, the extra top margin of a downward glide, and the glide's offset
+		double visualTop = double.IsNaN(base.Top) ? top : base.Top + (card.Margin.Top - rest.Top) + t.Y;
+		if (!_placed || _closing || !Motion.Enabled || double.IsNaN(base.Top) || Math.Abs(visualTop - top) < 0.5)
+		{
+			_placed = true;
+			t.BeginAnimation(TranslateTransform.YProperty, null);
+			t.Y = 0.0;
+			card.Margin = rest;
+			base.Left = left;
+			base.Top = top;
+			return;
+		}
+		double dy = visualTop - top;   // > 0: the card moves up
+		base.Left = left;
+		if (dy > 0.0)
+		{
+			base.Top = top;
+			card.Margin = new Thickness(1.0, 1.0, 1.0, 1.0 + dy);
+		}
+		else
+		{
+			// moving down: the window stays at the card's current top until the glide ends
+			base.Top = visualTop;
+			card.Margin = new Thickness(1.0, 1.0 - dy, 1.0, 1.0);
+		}
+		DoubleAnimation y = Motion.Anim(dy, 0.0, Motion.Tok.MoveShort);
+		y.Completed += delegate
+		{
+			if (generation != _reflowGeneration)
+			{
+				return;
+			}
+			card.Margin = rest;
+			if (!_closing)
+			{
+				base.Top = top;
+			}
+		};
+		t.BeginAnimation(TranslateTransform.YProperty, null);
+		t.Y = 0.0;
+		t.BeginAnimation(TranslateTransform.YProperty, y, HandoffBehavior.SnapshotAndReplace);
 	}
 
 	public void QaRender(string outPath)

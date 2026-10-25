@@ -191,6 +191,8 @@ public static class ShellTheme
 		("Metro81.HighlightSurface", "#000000", "#FFFFFF"),
 		("Metro81.HighlightInk",     "#FFFFFF", "#000000"),
 		("Metro81.HighlightGesture", "#C8C8C8", "#3A3A3A"),
+		// the shortcut column of a menu: 6.2:1 / 6.1:1 on the menu, 4.6:1 / 4.5:1 on the hover row
+		("Metro81.MenuGesture",      "#616161", "#AAAAAA"),
 		// scrollbar set follows the theme (the always-dark identity surfaces use Metro81.ScrollBarDark explicitly)
 		("Metro81.ScrollTrackBrush",         "#DEDEDE", "#1A1A1A"),
 		("Metro81.ScrollThumbBrush",         "#000000", "#8A8A8A"),
@@ -236,7 +238,13 @@ public static class ShellTheme
 			}
 			catch { }
 		}
+		// the menu border: 2 in light (the authentic 8.1 Content Menu), 1 in dark (Dark rest writes its own 1)
+		target["Metro81.MenuBorderThickness"] = dark ? MenuBorderDark : MenuBorderLight;
 	}
+
+	private static readonly object MenuBorderLight = new Thickness(2.0);
+
+	private static readonly object MenuBorderDark = new Thickness(1.0);
 
 	// Removes the tokens WriteTokens put into target, so its lookups fall back to the application values again.
 	internal static void RemoveTokens(ResourceDictionary target)
@@ -245,6 +253,7 @@ public static class ShellTheme
 		{
 			try { target.Remove(key); } catch { }
 		}
+		try { target.Remove("Metro81.MenuBorderThickness"); } catch { }
 	}
 
 	// ---- code-behind brush accessors (for surfaces that build brushes in code, not via XAML resources) -------------

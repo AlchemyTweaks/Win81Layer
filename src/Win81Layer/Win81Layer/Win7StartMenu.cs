@@ -557,7 +557,7 @@ public sealed partial class Win7StartMenu : Window
         _root.BeginAnimation(OpacityProperty, fade);
     }
 
-    // Close: fade to 0 (CubicIn), then hide. The orb releases at the start of the fade (IsOpen is already false), the
+    // Close: a 100 ms linear fade to 0 (Motion token FadeOut), then hide. The orb releases at the start of the fade (IsOpen is already false), the
     // menu stops taking clicks, and a 400 ms one-shot finishes the hide if the fade never completes. A newer show or
     // close (another generation) makes both ends do nothing. Completed is raised inside the animation tick, before that
     // tick's frame is drawn, so both ends hide through the clean-frame path: the layered window keeps the last frame it
@@ -570,9 +570,9 @@ public sealed partial class Win7StartMenu : Window
         RaiseOpen(false);
         _root.IsHitTestVisible = false;
         double from = _root.Opacity;
-        DoubleAnimation fade = new DoubleAnimation(from, 0.0, Dur(Motion.Cat.ViewExit))
+        DoubleAnimation fade = new DoubleAnimation(from, 0.0, _qaDur.HasValue ? new Duration(_qaDur.Value) : Motion.Dur(Motion.Tok.FadeOut))
         {
-            EasingFunction = Motion.Ease(Motion.Cat.EdgeExit),
+            EasingFunction = Motion.Ease(Motion.Tok.FadeOut),
             FillBehavior = FillBehavior.HoldEnd
         };
         fade.Completed += delegate

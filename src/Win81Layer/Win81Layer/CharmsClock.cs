@@ -95,11 +95,9 @@ public partial class CharmsClock : Window, IComponentConnector
 		UpdateLayout();
 		base.Left = (double)b.Left / sx + 8.0;
 		base.Top = (double)b.Bottom / sy - base.ActualHeight - taskbarDiu - 8.0;
-		Root.Opacity = 0.0;
-		Root.BeginAnimation(UIElement.OpacityProperty, new DoubleAnimation(0.0, 1.0, Motion.Dur(Motion.Cat.Micro))
-		{
-			EasingFunction = Motion.Ease(Motion.Cat.Micro)
-		});
+		// fades in over 120 ms linear, starting with the bar
+		Root.Opacity = 1.0;
+		Root.BeginAnimation(UIElement.OpacityProperty, Motion.Anim(0.0, 1.0, Motion.Tok.FadeIn), HandoffBehavior.SnapshotAndReplace);
 	}
 
 	private static readonly System.Windows.Media.Brush RestSlab = ColorMath.Frozen(System.Windows.Media.Color.FromArgb(0xE6, 0x0A, 0x0A, 0x0A));
@@ -114,9 +112,10 @@ public partial class CharmsClock : Window, IComponentConnector
 	public void HideAnimated()
 	{
 		_tick.Stop();
-		DoubleAnimation fade = new DoubleAnimation(Root.Opacity, 0.0, Motion.Dur(Motion.Cat.Exit))
+		// fades out over 100 ms linear, so it is gone before the bar has left
+		DoubleAnimation fade = new DoubleAnimation(Root.Opacity, 0.0, Motion.Dur(Motion.Tok.FadeOut))
 		{
-			EasingFunction = Motion.Ease(Motion.Cat.Exit)
+			EasingFunction = Motion.Ease(Motion.Tok.FadeOut)
 		};
 		fade.Completed += delegate
 		{

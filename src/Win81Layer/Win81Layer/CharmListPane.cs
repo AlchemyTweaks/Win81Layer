@@ -138,10 +138,8 @@ public sealed class CharmListPane : Window
 		base.Top = (double)b.Top / sy;
 		base.Left = (double)b.Right / sx - base.Width;
 		WindowUtil.ForceForeground(this);
-		_slide.BeginAnimation(TranslateTransform.XProperty, new DoubleAnimation(0.0, Motion.Dur(Motion.Cat.EdgeEnter))
-		{
-			EasingFunction = Motion.Ease(Motion.Cat.EdgeEnter)
-		});
+		// in from the edge over 300 ms SOFT DECELERATE (calm motion: 24 DIP with a fade); interruptible
+		PaneMotion.Enter(_slide, _root, 346.0, fresh: _slide.X >= 346.0 - 0.5);
 	}
 
 	public void HidePane()
@@ -151,19 +149,16 @@ public sealed class CharmListPane : Window
 			return;
 		}
 		_hiding = true;
-		DoubleAnimation slide = new DoubleAnimation(346.0, Motion.Dur(Motion.Cat.EdgeExit))
-		{
-			EasingFunction = Motion.Ease(Motion.Cat.EdgeExit)
-		};
-		slide.Completed += delegate
+		// out over 167 ms ACCELERATE (calm motion: 24 DIP with a fade)
+		PaneMotion.Exit(_slide, _root, 346.0, delegate
 		{
 			if (_hiding)
 			{
 				Hide();
 				_hiding = false;
+				PaneMotion.Reset(_slide, _root, 346.0);
 			}
-		};
-		_slide.BeginAnimation(TranslateTransform.XProperty, slide);
+		});
 	}
 
 	private void Act(Action a)

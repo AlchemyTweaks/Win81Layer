@@ -294,13 +294,24 @@ public sealed partial class ActionCenter
 	private LinearGradientBrush _themeBackground = null!;
 	private SolidColorBrush _secondaryTextBrush = null!;
 	private SolidColorBrush _linkBrush = null!;
-	private const int AuthenticOpenMilliseconds = 210;
-	private const int AuthenticCloseMilliseconds = 150;
+	// The motion contract (Motion tokens): content glides 40 DIP in over 250 ms (MoveShort) with a 120 ms fade; the close
+	// fades over 100 ms while moving 24 DIP out with ACCELERATE; cards enter over 250 ms; clear-all leaves in 100 ms.
+	private const int AuthenticOpenMilliseconds = 250;
+	private const int AuthenticCloseMilliseconds = 100;
 	private const int TileHoverMilliseconds = 100;
 	private const int TileClickMilliseconds = 100;
-	private const int NotificationMilliseconds = 200;
-	private const int ClearAllMilliseconds = 150;
-	private const double PremiumTileIconSize = 34.0;
+	private const int NotificationMilliseconds = 250;
+	private const int ClearAllMilliseconds = 100;
+
+	private const double OpenTravel = 40.0;
+
+	private const double CloseTravel = 24.0;
+
+	private const double CardTravel = 24.0;
+
+	// Set by an open: the first notification list shown after it enters with the stagger; refreshes never animate.
+	private bool _cardsEntranceArmed;
+	private const double PremiumTileIconSize = 30.0;
 	private const string WifiSettingsTarget = "ms-settings:network-wifi";
 	private const string NetworkStatusTarget = "ms-settings:network-status";
 	private const string BluetoothSettingsTarget = "ms-settings:bluetooth";
@@ -358,21 +369,21 @@ public sealed partial class ActionCenter
 		_metroRoot.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 		_metroRoot.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
-		Grid header = new Grid { Margin = new Thickness(22.0, 18.0, 20.0, 6.0) };
+		Grid header = new Grid { Margin = new Thickness(20.0, 16.0, 18.0, 6.0) };
 		header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.0, GridUnitType.Star) });
 		header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 		_headerTitle = new TextBlock
 		{
 			Text = "Action center",
 			FontFamily = new System.Windows.Media.FontFamily("Segoe UI Light"),
-			FontSize = 38.0,
+			FontSize = 32.0,
 			Foreground = System.Windows.Media.Brushes.White,
 			VerticalAlignment = VerticalAlignment.Center,
 			TextWrapping = TextWrapping.NoWrap
 		};
 		header.Children.Add(_headerTitle);
 		_clearAllButton = LinkButton("Clear all");
-		_clearAllButton.FontSize = 14.0;
+		_clearAllButton.FontSize = 13.0;
 		_clearAllButton.Padding = new Thickness(9.0, 7.0, 0.0, 7.0);
 		_clearAllButton.HorizontalAlignment = HorizontalAlignment.Right;
 		_clearAllButton.VerticalAlignment = VerticalAlignment.Center;
@@ -386,9 +397,9 @@ public sealed partial class ActionCenter
 		{
 			Text = "Notifications",
 			FontFamily = new System.Windows.Media.FontFamily("Segoe UI Light"),
-			FontSize = 22.0,
+			FontSize = 20.0,
 			Foreground = System.Windows.Media.Brushes.White,
-			Margin = new Thickness(22.0, 8.0, 22.0, 7.0)
+			Margin = new Thickness(20.0, 6.0, 20.0, 6.0)
 		};
 		Grid.SetRow(_notificationsHeading, 1);
 		_metroRoot.Children.Add(_notificationsHeading);
@@ -408,35 +419,38 @@ public sealed partial class ActionCenter
 		_notificationScroll.AddHandler(Mouse.PreviewMouseDownEvent, new MouseButtonEventHandler(OnMetroNotificationPointerDown), handledEventsToo: true);
 		notificationHost.Children.Add(_notificationScroll);
 
+		// one quiet line (the subtitle stays for the error text, e.g. "Notifications are unavailable")
 		_notifEmpty = new TextBlock
 		{
 			Text = "No new notifications",
-			FontFamily = new System.Windows.Media.FontFamily("Segoe UI Light"),
-			FontSize = 23.0,
+			FontFamily = new System.Windows.Media.FontFamily("Segoe UI Semilight"),
+			FontSize = 14.0,
 			Foreground = System.Windows.Media.Brushes.White,
 			TextAlignment = TextAlignment.Left
 		};
 		_emptySubtitle = new TextBlock
 		{
-			Text = "You're all caught up!",
-			FontFamily = new System.Windows.Media.FontFamily("Segoe UI Light"),
-			FontSize = 16.0,
-			Margin = new Thickness(0.0, 2.0, 0.0, 0.0)
+			Text = string.Empty,
+			FontFamily = new System.Windows.Media.FontFamily("Segoe UI"),
+			FontSize = 12.0,
+			Margin = new Thickness(0.0, 2.0, 0.0, 0.0),
+			Visibility = Visibility.Collapsed
 		};
+		// directly under the "Notifications" heading (the Windows 10 pattern), not floating in the middle of the free space
 		StackPanel emptyText = new StackPanel
 		{
 			HorizontalAlignment = HorizontalAlignment.Left,
-			VerticalAlignment = VerticalAlignment.Center
+			VerticalAlignment = VerticalAlignment.Top
 		};
 		emptyText.Children.Add(_notifEmpty);
 		emptyText.Children.Add(_emptySubtitle);
-		_emptyState = new Grid { Margin = new Thickness(20.0, 0.0, 20.0, 0.0), IsHitTestVisible = false };
+		_emptyState = new Grid { Margin = new Thickness(2.0, 4.0, 2.0, 0.0), IsHitTestVisible = false };   // the line starts under the "Notifications" heading
 		_emptyState.Children.Add(emptyText);
 		notificationHost.Children.Add(_emptyState);
 		Grid.SetRow(notificationHost, 2);
 		_metroRoot.Children.Add(notificationHost);
 
-		_sliderHost = new StackPanel { Margin = new Thickness(20.0, 0.0, 20.0, 5.0) };
+		_sliderHost = new StackPanel { Margin = new Thickness(18.0, 0.0, 18.0, 4.0) };
 		BuildMetroSliders();
 		Grid.SetRow(_sliderHost, 3);
 		_metroRoot.Children.Add(_sliderHost);
@@ -464,7 +478,7 @@ public sealed partial class ActionCenter
 		{
 			Text = "Fewer settings",
 			FontFamily = new System.Windows.Media.FontFamily("Segoe UI"),
-			FontSize = 16.0,
+			FontSize = 14.0,
 			Foreground = System.Windows.Media.Brushes.White,
 			VerticalAlignment = VerticalAlignment.Center,
 			Margin = new Thickness(10.0, 0.0, 0.0, 0.0)
@@ -633,7 +647,7 @@ public sealed partial class ActionCenter
 			Text = label,
 			Foreground = System.Windows.Media.Brushes.White,
 			FontFamily = new System.Windows.Media.FontFamily("Segoe UI"),
-			FontSize = 14.0,
+			FontSize = 13.0,
 			Margin = new Thickness(0.0, 0.0, 0.0, 0.0)
 		};
 		sliderArea.Children.Add(title);
@@ -673,14 +687,15 @@ public sealed partial class ActionCenter
 		AddMetroTile("brightness", "Brightness", System.Windows.Media.Color.FromRgb(0, 126, 229), CycleMetroBrightness, MetroRouteContracts["brightness"], () => _brightnessAvailable ? $"{Math.Round(_brightness?.Value ?? 0.0)}%" : "Unavailable", null, () => _brightnessAvailable, laptopOnly: true);
 		AddMetroTile("airplane", "Airplane mode", System.Windows.Media.Color.FromRgb(207, 32, 86), ToggleAirplane, MetroRouteContracts["airplane"], () => _airplaneStatus, () => _airplaneOn, () => NetCaps.RadiosPresent, laptopOnly: false);
 		AddMetroTile("quiet", "Quiet hours", System.Windows.Media.Color.FromRgb(0, 174, 184), () => RunSync(ToggleQuiet), MetroRouteContracts["quiet"], () => _quiet ? "On" : "Off", () => _quiet);
-		AddMetroTile("theme", "Theme", System.Windows.Media.Color.FromRgb(199, 35, 130), OpenMetroPersonalize, MetroRouteContracts["theme"], () => "Personalize");
-		AddMetroTile("maps", "Maps", System.Windows.Media.Color.FromRgb(45, 183, 44), OpenMetroMaps, MetroRouteContracts["maps"], () => "Google Maps");
+		// tiles without a state show no status line (it used to repeat the command: "Personalize", "Google Maps", ...)
+		AddMetroTile("theme", "Theme", System.Windows.Media.Color.FromRgb(199, 35, 130), OpenMetroPersonalize, MetroRouteContracts["theme"], () => string.Empty);
+		AddMetroTile("maps", "Maps", System.Windows.Media.Color.FromRgb(45, 183, 44), OpenMetroMaps, MetroRouteContracts["maps"], () => string.Empty);
 		AddMetroTile("project", "Project", System.Windows.Media.Color.FromRgb(0, 126, 229), OpenProject, MetroRouteContracts["project"], () => _projectConnected ? "Connected" : "Disconnected", () => _projectConnected);
-		AddMetroTile("connect", "Connect", System.Windows.Media.Color.FromRgb(100, 48, 210), OpenConnect, MetroRouteContracts["connect"], () => "Open panel");
+		AddMetroTile("connect", "Connect", System.Windows.Media.Color.FromRgb(100, 48, 210), OpenConnect, MetroRouteContracts["connect"], () => string.Empty);
 		AddMetroTile("battery", "Battery saver", System.Windows.Media.Color.FromRgb(0, 155, 170), () => OpenExternal("Battery saver", BatterySaverSettingsTarget, PowerSleepSettingsTarget), MetroRouteContracts["battery"], () => _batteryStatus, () => _batterySaver, () => _isLaptop, laptopOnly: true);
 		AddMetroTile("settings", "All settings", System.Windows.Media.Color.FromRgb(0, 126, 229), () => OpenExternal("All settings", SettingsHomeTarget), MetroRouteContracts["settings"], () => string.Empty);
 		AddMetroTile("power", "Power", System.Windows.Media.Color.FromRgb(0, 126, 229), () => RunSync(ShowPowerMenu), MetroRouteContracts["power"], () => string.Empty);
-		AddMetroTile("nightlight", "Night light", System.Windows.Media.Color.FromRgb(58, 95, 196), () => OpenExternal("Night light", NightLightSettingsTarget, DisplaySettingsTarget), MetroRouteContracts["nightlight"], () => "Open settings", null, () => _isLaptop && IsNightLightSupported(), laptopOnly: true);
+		AddMetroTile("nightlight", "Night light", System.Windows.Media.Color.FromRgb(58, 95, 196), () => OpenExternal("Night light", NightLightSettingsTarget, DisplaySettingsTarget), MetroRouteContracts["nightlight"], () => string.Empty, null, () => _isLaptop && IsNightLightSupported(), laptopOnly: true);
 		ArrangeMetroTiles(animateHeight: false);
 		RefreshMetroTileStates(animate: false);
 	}
@@ -699,29 +714,32 @@ public sealed partial class ActionCenter
 		SolidColorBrush fill = new SolidColorBrush(color);
 		ScaleTransform scale = new ScaleTransform(1.0, 1.0);
 		FrameworkElement icon = CreateMetroIcon(id, PremiumTileIconSize);
+		// Label and state are both 12 px (the floor), so the weight carries the hierarchy: the name SemiBold, the state
+		// Regular. The state is opaque white: a translucent ink only lowers its contrast on the saturated tiles.
 		TextBlock labelText = new TextBlock
 		{
 			Text = label,
 			Foreground = System.Windows.Media.Brushes.White,
 			FontFamily = new System.Windows.Media.FontFamily("Segoe UI"),
-			FontSize = 13.2,
+			FontSize = 12.0,
+			FontWeight = FontWeights.SemiBold,
 			TextWrapping = TextWrapping.Wrap,
 			LineHeight = 15.0,
-			Margin = new Thickness(0.0, 4.0, 0.0, 0.0)
+			Margin = new Thickness(0.0, 3.0, 0.0, 0.0)
 		};
 		TextBlock statusText = new TextBlock
 		{
 			Text = string.Empty,
-			Foreground = new SolidColorBrush(System.Windows.Media.Color.FromArgb(230, 255, 255, 255)),
+			Foreground = System.Windows.Media.Brushes.White,
 			FontFamily = new System.Windows.Media.FontFamily("Segoe UI"),
-			FontSize = 10.2,
+			FontSize = 12.0,
 			TextTrimming = TextTrimming.CharacterEllipsis,
 			Margin = new Thickness(0.0, 0.0, 0.0, 0.0)
 		};
 		StackPanel text = new StackPanel { VerticalAlignment = VerticalAlignment.Bottom };
 		text.Children.Add(labelText);
 		text.Children.Add(statusText);
-		Grid content = new Grid { Margin = new Thickness(7.0, 7.0, 6.0, 6.0) };
+		Grid content = new Grid { Margin = new Thickness(6.0, 6.0, 5.0, 5.0) };
 		content.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1.0, GridUnitType.Star) });
 		content.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 		icon.HorizontalAlignment = HorizontalAlignment.Left;
@@ -861,18 +879,31 @@ public sealed partial class ActionCenter
 		double expandedHeight = _visibleTileRows * _tileHeight;
 		double maxForScreen = Math.Max(_tileHeight, base.Height > 0.0 ? base.Height * 0.41 : expandedHeight);
 		double target = _expanded ? Math.Min(expandedHeight, maxForScreen) : _tileHeight;
+		double old = _tileViewport.ActualHeight > 0.0 ? _tileViewport.ActualHeight : _tileViewport.Height;
+		// "More / Fewer settings": the tile block's height glides from where it is (Motion.Move by distance, SOFT
+		// DECELERATE for rows of 76/84 DIP) and the notification list and the sliders follow it through layout; rows that
+		// appear fade in. This one click is the exception to the no-layout-per-frame rule: a layout-free FLIP cannot do it
+		// honestly here, because the notification list and the tile viewport both clip to their final size at once (rows
+		// vanished on collapse and the sliders were drawn over the cards). 250-300 ms of layout per click, nothing at idle.
 		_tileViewport.BeginAnimation(FrameworkElement.HeightProperty, null);
-		if (!animate || _qaRendering || Motion.Mode == MotionMode.Off)
+		_tileViewport.Height = target;
+		double delta = target - old;
+		if (!animate || _qaRendering || !Motion.Enabled || double.IsNaN(old) || Math.Abs(delta) < 0.5)
 		{
-			_tileViewport.Height = target;
 			return;
 		}
-		DoubleAnimation height = new DoubleAnimation(_tileViewport.ActualHeight > 0.0 ? _tileViewport.ActualHeight : _tileViewport.Height, target, MetroDuration(165))
+		Motion.Tok tok = Motion.Move(Math.Abs(delta));
+		_tileViewport.BeginAnimation(FrameworkElement.HeightProperty, Motion.Anim(old, target, tok), HandoffBehavior.SnapshotAndReplace);
+		if (delta > 0.0)
 		{
-			EasingFunction = Motion.Ease(Motion.Cat.Navigation)
-		};
-		height.Completed += delegate { _tileViewport.Height = target; _tileViewport.BeginAnimation(FrameworkElement.HeightProperty, null); };
-		_tileViewport.BeginAnimation(FrameworkElement.HeightProperty, height, HandoffBehavior.SnapshotAndReplace);
+			foreach (MetroTile tile in _metroTiles)
+			{
+				if (tile.Root.Visibility == Visibility.Visible && Grid.GetRow(tile.Root) >= 1)
+				{
+					tile.Root.BeginAnimation(UIElement.OpacityProperty, Motion.Anim(0.0, 1.0, Motion.Tok.FadeIn), HandoffBehavior.SnapshotAndReplace);
+				}
+			}
+		}
 	}
 
 	private void RefreshMetroTileStates(bool animate)
@@ -1035,9 +1066,12 @@ public sealed partial class ActionCenter
 		RefreshMetroTileStates(animate: false);
 		_metroRoot.BeginAnimation(UIElement.OpacityProperty, null);
 		_slide.BeginAnimation(TranslateTransform.XProperty, null);
-		_slide.X = _offScreen;
-		_metroRoot.Opacity = Motion.Mode == MotionMode.Off ? 1.0 : 0.94;
-		_metroRoot.CacheMode = Motion.Mode == MotionMode.Off ? null : new BitmapCache();
+		// The window appears at its final position (its background is the panel): only the content glides in, 40 DIP from
+		// the docked edge, while it fades in. No BitmapCache.
+		_metroRoot.CacheMode = null;
+		_slide.X = Motion.Enabled ? Motion.Distance(OpenTravel) * (_dockLeft ? -1.0 : 1.0) : 0.0;
+		_metroRoot.Opacity = Motion.Enabled ? 0.0 : 1.0;
+		_cardsEntranceArmed = true;
 		// Show()+ForceForeground can bounce activation (WA_INACTIVE, then WA_ACTIVE again) while the foreground is handed over
 		// from another process; Start, which makes the same two calls from the same taskbar route, logs that bounce on ~1 in 8
 		// opens. Deactivated is raised synchronously inside these calls, so _showing tells its handler the bounce is ours.
@@ -1074,24 +1108,22 @@ public sealed partial class ActionCenter
 		double tookMs = System.Diagnostics.Stopwatch.GetElapsedTime(_shownStamp).TotalMilliseconds;
 		// took= stays a whole number (existing log miners parse it); precise= carries the sub-millisecond value.
 		Logger.Log($"Action Center: show via {(_screen == null ? "Win+A" : "taskbar")} active={base.IsActive} fg={ForegroundDescription()} took={(long)tookMs}ms precise={tookMs.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture)}ms");
-		if (Motion.Mode == MotionMode.Off)
+		if (!Motion.Enabled)
 		{
 			_slide.X = 0.0;
-			_metroRoot.CacheMode = null;
+			_metroRoot.Opacity = 1.0;
 		}
 		else
 		{
-			DoubleAnimation slide = new DoubleAnimation(_offScreen, 0.0, MetroDuration(AuthenticOpenMilliseconds)) { EasingFunction = Motion.Ease(Motion.Cat.EdgeEnter), FillBehavior = FillBehavior.Stop };
-			DoubleAnimation fade = new DoubleAnimation(0.94, 1.0, MetroDuration(AuthenticOpenMilliseconds)) { EasingFunction = Motion.Ease(Motion.Cat.EdgeEnter), FillBehavior = FillBehavior.Stop };
-			slide.Completed += delegate
+			// one-shot clocks over the exact final base values (0 and 1): 250 ms DECELERATE glide, 120 ms linear fade
+			double fromX = _slide.X;
+			_slide.X = 0.0;
+			_metroRoot.Opacity = 1.0;
+			if (Math.Abs(fromX) > 0.01)
 			{
-				if (generation != _animationGeneration || _dismissing) return;
-				_slide.X = 0.0;
-				_metroRoot.Opacity = 1.0;
-				_metroRoot.CacheMode = null;
-			};
-			_slide.BeginAnimation(TranslateTransform.XProperty, slide, HandoffBehavior.SnapshotAndReplace);
-			_metroRoot.BeginAnimation(UIElement.OpacityProperty, fade, HandoffBehavior.SnapshotAndReplace);
+				_slide.BeginAnimation(TranslateTransform.XProperty, Motion.Anim(fromX, 0.0, Motion.Tok.MoveShort), HandoffBehavior.SnapshotAndReplace);
+			}
+			_metroRoot.BeginAnimation(UIElement.OpacityProperty, Motion.Anim(0.0, 1.0, Motion.Tok.FadeIn), HandoffBehavior.SnapshotAndReplace);
 		}
 		StartMetroRefresh();
 	}
@@ -1131,10 +1163,12 @@ public sealed partial class ActionCenter
 			HardHide();
 			return;
 		}
-		_metroRoot.CacheMode = new BitmapCache();
-		DoubleAnimation slide = new DoubleAnimation(_offScreen, MetroDuration(AuthenticCloseMilliseconds)) { EasingFunction = Motion.Ease(Motion.Cat.EdgeExit) };
-		DoubleAnimation fade = new DoubleAnimation(0.94, MetroDuration(AuthenticCloseMilliseconds)) { EasingFunction = Motion.Ease(Motion.Cat.EdgeExit) };
-		slide.Completed += delegate
+		// a 100 ms linear fade while the content moves 24 DIP toward the docked edge with ACCELERATE; then HardHide
+		_metroRoot.CacheMode = null;
+		double closeTo = Motion.Distance(CloseTravel) * (_dockLeft ? -1.0 : 1.0);
+		DoubleAnimation fade = new DoubleAnimation(0.0, Motion.Dur(Motion.Tok.FadeOut)) { EasingFunction = Motion.Ease(Motion.Tok.FadeOut) };
+		DoubleAnimation slide = new DoubleAnimation(closeTo, Motion.Dur(Motion.Tok.ExitMove)) { EasingFunction = Motion.Ease(Motion.Tok.ExitMove) };
+		fade.Completed += delegate
 		{
 			if (generation != _animationGeneration || !_dismissing) return;
 			HardHide();
@@ -1311,6 +1345,9 @@ public sealed partial class ActionCenter
 		_notifs.Children.Clear();
 		_notificationCount = rows?.Count ?? 0;
 		SyncClearAll(_notificationCount > 0);
+		// only the first list after an open enters (with the stagger); a refresh replaces the cards in place
+		bool animateCards = _cardsEntranceArmed && !_qaRendering && base.IsVisible && Motion.Enabled;
+		_cardsEntranceArmed = false;
 		if (rows == null || rows.Count == 0)
 		{
 			ShowMetroEmpty("You're all caught up!");
@@ -1323,20 +1360,46 @@ public sealed partial class ActionCenter
 		{
 			Border card = CreateMetroNotificationCard(row.id, row.app, row.title, row.body, row.aumid, row.icon);
 			_notifs.Children.Add(card);
-			if (!_qaRendering && base.IsVisible)
+			if (animateCards)
 			{
-				TranslateTransform translate = new TranslateTransform(22.0, 0.0);
+				// base values are the final ones; the one-shot clocks hold the start values through their delay. The first
+				// card starts 40 ms after the panel, then 16 ms per card for the first five (later cards start with the
+				// fifth). Calm motion fades the cards in place, together.
+				TranslateTransform translate = new TranslateTransform(0.0, 0.0);
 				card.RenderTransform = translate;
-				card.Opacity = 0.0;
-				TimeSpan delay = TimeSpan.FromMilliseconds(Math.Min(index, 5) * 18.0 * Motion.Factor);
-				DoubleAnimation x = new DoubleAnimation(22.0, 0.0, MetroDuration(NotificationMilliseconds)) { EasingFunction = Motion.Ease(Motion.Cat.ViewEnter), BeginTime = delay };
-				DoubleAnimation opacity = new DoubleAnimation(0.0, 1.0, MetroDuration(NotificationMilliseconds)) { EasingFunction = Motion.Ease(Motion.Cat.ViewEnter), BeginTime = delay };
-				x.Completed += delegate { card.Opacity = 1.0; translate.X = 0.0; };
-				translate.BeginAnimation(TranslateTransform.XProperty, x);
-				card.BeginAnimation(UIElement.OpacityProperty, opacity);
+				card.Opacity = 1.0;
+				double delayMs = Motion.AllowStagger ? 40.0 + Math.Min(index, Motion.StaggerMax - 1) * Motion.StaggerMs : 0.0;
+				double travel = Motion.AllowStagger ? Motion.Distance(CardTravel) : 0.0;
+				card.BeginAnimation(UIElement.OpacityProperty, CardFade(delayMs));
+				if (Math.Abs(travel) > 0.01)
+				{
+					translate.BeginAnimation(TranslateTransform.XProperty, CardMove(travel, delayMs));
+				}
 			}
 			index++;
 		}
+	}
+
+	// A card's fade with its stagger delay: holds 0 through the delay, then a 120 ms linear fade (one-shot).
+	private static AnimationTimeline CardFade(double delayMs)
+	{
+		TimeSpan delay = TimeSpan.FromMilliseconds(Motion.Mode == MotionMode.Fast ? delayMs * 0.8 : delayMs);
+		DoubleAnimationUsingKeyFrames fade = new DoubleAnimationUsingKeyFrames { FillBehavior = FillBehavior.Stop };
+		fade.KeyFrames.Add(new DiscreteDoubleKeyFrame(0.0, KeyTime.FromTimeSpan(TimeSpan.Zero)));
+		fade.KeyFrames.Add(new DiscreteDoubleKeyFrame(0.0, KeyTime.FromTimeSpan(delay)));
+		fade.KeyFrames.Add(new LinearDoubleKeyFrame(1.0, KeyTime.FromTimeSpan(delay + Motion.Time(Motion.Tok.FadeIn))));
+		return fade;
+	}
+
+	// A card's glide with its stagger delay: holds the start offset through the delay, then 250 ms DECELERATE (one-shot).
+	private static AnimationTimeline CardMove(double travel, double delayMs)
+	{
+		TimeSpan delay = TimeSpan.FromMilliseconds(Motion.Mode == MotionMode.Fast ? delayMs * 0.8 : delayMs);
+		DoubleAnimationUsingKeyFrames move = new DoubleAnimationUsingKeyFrames { FillBehavior = FillBehavior.Stop };
+		move.KeyFrames.Add(new DiscreteDoubleKeyFrame(travel, KeyTime.FromTimeSpan(TimeSpan.Zero)));
+		move.KeyFrames.Add(new DiscreteDoubleKeyFrame(travel, KeyTime.FromTimeSpan(delay)));
+		move.KeyFrames.Add(new EasingDoubleKeyFrame(0.0, KeyTime.FromTimeSpan(delay + Motion.Time(Motion.Tok.MoveShort)), Motion.Decelerate));
+		return move;
 	}
 
 	// Dark rest: the body text of a notification card (8.3:1 on the card, 7.2:1 on its hover fill).
@@ -1380,15 +1443,20 @@ public sealed partial class ActionCenter
 			Grid.SetColumn(image, 1);
 			grid.Children.Add(image);
 		}
-		StackPanel text = new StackPanel { Margin = new Thickness(11.0, 9.0, 32.0, 9.0), VerticalAlignment = VerticalAlignment.Center };
+		// 8 + 7 DIP of padding plus the 3 DIP under the app name keep a three-line card at its 68 DIP
+		StackPanel text = new StackPanel { Margin = new Thickness(11.0, 8.0, 32.0, 7.0), VerticalAlignment = VerticalAlignment.Center };
 		if (!string.IsNullOrWhiteSpace(app))
 		{
+			// the app name: Regular 12 in normal case, in the secondary ink (it was 10 px Semibold capitals), set apart
+			// from the title and body below it by 3 DIP, as a header line
 			text.Children.Add(new TextBlock
 			{
-				Text = app.ToUpperInvariant(),
-				Foreground = _linkBrush,
-				FontFamily = new System.Windows.Media.FontFamily("Segoe UI Semibold"),
-				FontSize = 10.0
+				Text = app,
+				Foreground = rest ? RestCardBodyInk : _secondaryTextBrush,
+				FontFamily = new System.Windows.Media.FontFamily("Segoe UI"),
+				FontSize = 12.0,
+				Margin = new Thickness(0.0, 0.0, 0.0, 3.0),
+				TextTrimming = TextTrimming.CharacterEllipsis
 			});
 		}
 		if (!string.IsNullOrWhiteSpace(title))
@@ -1456,6 +1524,9 @@ public sealed partial class ActionCenter
 		_notificationCount = 0;
 		_notifs.Children.Clear();
 		_emptySubtitle.Text = subtitle;
+		// the normal empty state is the one line; an error ("Notification access is disabled", "Notifications are
+		// unavailable") keeps its reason under it
+		_emptySubtitle.Visibility = string.IsNullOrEmpty(subtitle) || subtitle == "You're all caught up!" ? Visibility.Collapsed : Visibility.Visible;
 		_emptyState.Visibility = Visibility.Visible;
 		_notificationScroll.Visibility = Visibility.Collapsed;
 		SyncClearAll(enabled: false);
@@ -1466,6 +1537,8 @@ public sealed partial class ActionCenter
 	private void SyncClearAll(bool enabled)
 	{
 		_clearAllButton.IsEnabled = enabled;
+		// nothing to clear: the link is not shown at all (Hidden keeps the header's height)
+		_clearAllButton.Visibility = enabled ? Visibility.Visible : Visibility.Hidden;
 		if (_restPalette && !enabled)
 		{
 			_clearAllButton.Opacity = 1.0;
@@ -1490,8 +1563,8 @@ public sealed partial class ActionCenter
 		TranslateTransform translate = card.RenderTransform as TranslateTransform ?? new TranslateTransform();
 		card.RenderTransform = translate;
 		TaskCompletionSource completion = new TaskCompletionSource();
-		DoubleAnimation opacity = new DoubleAnimation(0.0, MetroDuration(130));
-		DoubleAnimation x = new DoubleAnimation(18.0, MetroDuration(130)) { EasingFunction = Motion.Ease(Motion.Cat.ViewExit) };
+		DoubleAnimation opacity = new DoubleAnimation(0.0, Motion.Dur(Motion.Tok.FadeOut)) { EasingFunction = Motion.Ease(Motion.Tok.FadeOut) };
+		DoubleAnimation x = new DoubleAnimation(Motion.Distance(18.0), Motion.Dur(Motion.Tok.ExitMove)) { EasingFunction = Motion.Ease(Motion.Tok.ExitMove) };
 		opacity.Completed += delegate { completion.TrySetResult(); };
 		card.BeginAnimation(UIElement.OpacityProperty, opacity);
 		translate.BeginAnimation(TranslateTransform.XProperty, x);
@@ -1515,8 +1588,8 @@ public sealed partial class ActionCenter
 			TranslateTransform translate = _notifs.RenderTransform as TranslateTransform ?? new TranslateTransform();
 			_notifs.RenderTransform = translate;
 			TaskCompletionSource completion = new TaskCompletionSource();
-			DoubleAnimation opacity = new DoubleAnimation(0.0, MetroDuration(ClearAllMilliseconds));
-			DoubleAnimation y = new DoubleAnimation(-8.0, MetroDuration(ClearAllMilliseconds)) { EasingFunction = Motion.Ease(Motion.Cat.ViewExit) };
+			DoubleAnimation opacity = new DoubleAnimation(0.0, MetroDuration(ClearAllMilliseconds)) { EasingFunction = Motion.Ease(Motion.Tok.FadeOut) };
+			DoubleAnimation y = new DoubleAnimation(-Motion.Distance(8.0), MetroDuration(ClearAllMilliseconds)) { EasingFunction = Motion.Ease(Motion.Tok.ExitMove) };
 			opacity.Completed += delegate { completion.TrySetResult(); };
 			_notifs.BeginAnimation(UIElement.OpacityProperty, opacity);
 			translate.BeginAnimation(TranslateTransform.YProperty, y);
@@ -1547,11 +1620,13 @@ public sealed partial class ActionCenter
 
 	private void ConfigureMetroLayout(double width, double height)
 	{
-		bool compact = width < 420.0 || height < 740.0;
-		_tileHeight = compact ? 84.0 : 96.0;
-		_headerTitle.FontSize = compact ? 31.0 : 38.0;
-		_notificationsHeading.FontSize = compact ? 19.0 : 22.0;
-		_sliderHost.Margin = compact ? new Thickness(16.0, 0.0, 16.0, 3.0) : new Thickness(20.0, 0.0, 20.0, 5.0);
+		bool compact = width < 380.0 || height < 720.0;
+		_tileHeight = compact ? 76.0 : 84.0;
+		_headerTitle.FontSize = compact ? 28.0 : 32.0;
+		// Segoe UI Light only from 20 px: the compact heading (18 px) is Semilight
+		_notificationsHeading.FontSize = compact ? 18.0 : 20.0;
+		_notificationsHeading.FontFamily = new System.Windows.Media.FontFamily(compact ? "Segoe UI Semilight" : "Segoe UI Light");
+		_sliderHost.Margin = compact ? new Thickness(16.0, 0.0, 16.0, 3.0) : new Thickness(18.0, 0.0, 18.0, 4.0);
 		_brightnessRow.Visibility = _brightnessAvailable ? Visibility.Visible : Visibility.Collapsed;
 		ArrangeMetroTiles(animateHeight: false);
 	}

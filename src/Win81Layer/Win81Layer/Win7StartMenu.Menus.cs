@@ -413,6 +413,8 @@ public sealed partial class Win7StartMenu
     // Win7 style explicitly (a MenuItem-typed container style would throw on separators).
     private void PrepareChildMenu(ContextMenu cm)
     {
+        // authentic Win7 child menus: they only gain the 83 ms fade (no slide)
+        MenuMotion.SetKind(cm, MenuMotion.MotionKind.Fade);
         Win7Palette.CopyPopupKeys(_paletteDict, cm.Resources);
         ApplyMenuStyles(cm);
     }

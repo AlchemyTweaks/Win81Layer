@@ -929,6 +929,24 @@ public sealed class PcSettingsWindow : Window
 	[DllImport("user32.dll", CharSet = CharSet.Unicode)]
 	private static extern int GetClassName(nint h, StringBuilder sb, int max);
 
+	// Opens one category (for example "Launcher") from outside: the tray menu's "Launcher settings..." and the taskbar
+	// menu's Properties. Unknown names are ignored.
+	internal void OpenCategory(string name)
+	{
+		if (string.IsNullOrWhiteSpace(name) || !Categories.Any(c => string.Equals(c.Name, name, StringComparison.Ordinal)))
+		{
+			return;
+		}
+		try
+		{
+			Nav(name);
+		}
+		catch (Exception ex)
+		{
+			Logger.Log("PC settings: open category failed: " + ex.Message);
+		}
+	}
+
 	private void Nav(string name)
 	{
 		if (name == "Ease of Access")

@@ -45,6 +45,9 @@ public static class TaskbarContextMenu
 
 	internal static Style ItemStyle => (Style)Application.Current.Resources["Win81MenuItem"];
 
+	// Set by App: opens PC settings > Launcher (the taskbar section) for the taskbar menu's Properties row.
+	internal static Action? OpenTaskbarProperties;
+
 	internal static Style SepStyle => (Style)Application.Current.Resources["Win81Separator"];
 
 	public static ContextMenu Build(TaskbarWindow owner)
@@ -64,11 +67,12 @@ public static class TaskbarContextMenu
 			Check("Links", tbSet.Contains(linksPath), delegate(bool on) { SetToolbar(linksPath, on); }),
 			Check("Desktop", tbSet.Contains(desktopPath), delegate(bool on) { SetToolbar(desktopPath, on); }),
 			Leaf("New toolbar…", delegate { PickNewToolbar(); }));
-		MenuItem search = Sub("Search", 57626, Leaf("Open search", delegate
+		// one plain row (it used to be a submenu with a single "Open search" item)
+		MenuItem search = Leaf("Search", 57626, delegate
 		{
 			TaskbarWindow.RaiseSearch();
-		}));
-		MenuItem combine = Sub("Taskbar buttons", CombineRadio("Always combine", "Always", s.TaskbarCombine == "Always"), CombineRadio("Combine when full", "WhenFull", s.TaskbarCombine == "WhenFull"), CombineRadio("Never combine", "Never", s.TaskbarCombine == "Never"));
+		});
+		MenuItem combine = Sub("Combine taskbar buttons", CombineRadio("Always combine", "Always", s.TaskbarCombine == "Always"), CombineRadio("Combine when full", "WhenFull", s.TaskbarCombine == "WhenFull"), CombineRadio("Never combine", "Never", s.TaskbarCombine == "Never"));
 		MenuItem cascade = Leaf("Cascade windows", delegate
 		{
 			ShellCmd("CascadeWindows");
@@ -96,7 +100,7 @@ public static class TaskbarContextMenu
 			SettingsStore.Save(appSettings);
 		});
 		lockItem.Icon = MenuGlyph(57846);
-		MenuItem autoHide = Check("Automatically hide the taskbar", s.TaskbarAutoHide, delegate(bool on)
+		MenuItem autoHide = Check("Auto-hide the taskbar", s.TaskbarAutoHide, delegate(bool on)
 		{
 			AppSettings appSettings = SettingsStore.Load();
 			appSettings.TaskbarAutoHide = on;
@@ -128,11 +132,11 @@ public static class TaskbarContextMenu
 		MenuItem displays = Sub("Multiple displays", Radio("Same buttons on all displays", s.TaskbarSameOnAllDisplays, delegate
 		{
 			SetSameAll(on: true);
-		}), Radio("Per display (Win8.1)", !s.TaskbarSameOnAllDisplays, delegate
+		}), Radio("Per display", !s.TaskbarSameOnAllDisplays, delegate
 		{
 			SetSameAll(on: false);
 		}));
-		MenuItem colour = Sub("Taskbar colour", 59280, ColorRadio("Automatic (desktop)", s.TaskbarColorMode != "Start", "Wallpaper"), ColorRadio("Match Start screen", s.TaskbarColorMode == "Start", "Start"), Sep(), Check("Transparent", s.TaskbarTransparent || s.TaskbarColorMode == "Transparent", delegate(bool on)
+		MenuItem colour = Sub("Taskbar color", 59280, Tip(ColorRadio("Automatic", s.TaskbarColorMode != "Start", "Wallpaper"), "From the desktop wallpaper"), ColorRadio("Match Start screen", s.TaskbarColorMode == "Start", "Start"), Sep(), Check("Transparent", s.TaskbarTransparent || s.TaskbarColorMode == "Transparent", delegate(bool on)
 		{
 			AppSettings appSettings = SettingsStore.Load();
 			appSettings.TaskbarTransparent = on;
@@ -143,10 +147,19 @@ public static class TaskbarContextMenu
 			SettingsStore.Save(appSettings);
 			TaskbarWindow.RaiseTaskbarColorChanged();
 		}));
-		MenuItem systools = SystemToolsSub();
+		// Task Manager already has its own row in this menu; the Windows taskbar settings page stays reachable at the end
+		MenuItem systools = SystemToolsSub(includeTaskManager: false, includeWindowsTaskbar: true);
+		// Properties opens the launcher's own taskbar settings (PC settings > Launcher), not the hidden native taskbar's
 		MenuItem properties = Leaf("Properties", 59718, delegate
 		{
-			OpenUri("ms-settings:taskbar");
+			if (OpenTaskbarProperties != null)
+			{
+				OpenTaskbarProperties();
+			}
+			else
+			{
+				OpenUri("ms-settings:taskbar");
+			}
 		});
 		ctx.Items.Add(toolbars);
 		ctx.Items.Add(search);
@@ -177,11 +190,7 @@ public static class TaskbarContextMenu
 		{
 			MakeRadioGroup(group);
 		}
-		ctx.Items.Add(Sep());
-		ctx.Items.Add(Leaf("Close menu", 59579, delegate
-		{
-			ctx.IsOpen = false;
-		}));
+		// No "Close menu" row: Esc or a click outside closes the menu, and the toggles stay sticky.
 		return ctx;
 	}
 
@@ -639,8 +648,8 @@ public static class TaskbarContextMenu
 			child = new System.Windows.Controls.Image
 			{
 				Source = SettingsGlyph.Gear(rest ? DarkRestPalette.InkColor : Colors.White),
-				Width = 14.0,
-				Height = 14.0,
+				Width = 12.0,
+				Height = 12.0,
 				HorizontalAlignment = HorizontalAlignment.Center,
 				VerticalAlignment = VerticalAlignment.Center
 			};
@@ -652,7 +661,7 @@ public static class TaskbarContextMenu
 			{
 				Text = ((char)codepoint).ToString(),
 				FontFamily = new FontFamily(sym ? "Segoe UI Symbol" : "Segoe MDL2 Assets"),
-				FontSize = (sym ? 11.0 : 10.0),
+				FontSize = (sym ? 10.0 : 9.0),
 				Foreground = rest ? DarkRestPalette.Ink : System.Windows.Media.Brushes.White,
 				HorizontalAlignment = HorizontalAlignment.Center,
 				VerticalAlignment = VerticalAlignment.Center
@@ -660,8 +669,8 @@ public static class TaskbarContextMenu
 		}
 		return new Border
 		{
-			Width = 18.0,
-			Height = 18.0,
+			Width = 16.0,
+			Height = 16.0,
 			Background = TileBrushFor(codepoint, rest),
 			SnapsToDevicePixels = true,
 			HorizontalAlignment = HorizontalAlignment.Center,
@@ -759,6 +768,27 @@ public static class TaskbarContextMenu
 			QueueCommand(onClick);
 		};
 		return mi;
+	}
+
+	// A caption row (the jump list's "Recent"): 12 px SemiBold in the shortcut ink, not focusable, no hover, 28 DIP tall
+	// (shorter than a command row) through its own template (Win81MenuCaption), so the 32 DIP floor of the command rows
+	// neither clips nor offsets it. It stays one MenuItem.
+	internal static MenuItem Caption(string header)
+	{
+		TextBlock text = new TextBlock
+		{
+			Text = header,
+			FontSize = 12.0,
+			FontWeight = FontWeights.SemiBold
+		};
+		text.SetResourceReference(TextBlock.ForegroundProperty, "M.Gesture");
+		return new MenuItem
+		{
+			Header = text,
+			Style = (Style)Application.Current.Resources["Win81MenuCaption"],
+			Focusable = false,
+			IsHitTestVisible = false
+		};
 	}
 
 	internal static MenuItem Disabled(string header)
@@ -984,6 +1014,13 @@ public static class TaskbarContextMenu
 		return mi;
 	}
 
+	// A parenthetical explanation belongs in a tooltip, not in the label.
+	private static MenuItem Tip(MenuItem item, string tip)
+	{
+		item.ToolTip = tip;
+		return item;
+	}
+
 	internal static MenuItem Sub(string header, params object[] children)
 	{
 		MenuItem mi = new MenuItem
@@ -1029,6 +1066,32 @@ public static class TaskbarContextMenu
 		{
 			ctx.Resources[pair.Key] = pair.Value;
 		}
+		// Thickness is not a Brush: the border (2 in light, the authentic 8.1 Content Menu; 1 in dark, Dark rest and
+		// glass) and the submenu offsets that line the first submenu row up with its parent row (one border seam).
+		// The values are boxed once: the dictionary compares by reference, so a fresh box on every open would
+		// re-resolve every DynamicResource and lay the prebuilt menus out again.
+		bool thick = BorderThicknessNow() >= 2.0;
+		ctx.Resources["M.BorderThickness"] = thick ? BoxedBorder2 : BoxedBorder1;
+		ctx.Resources["M.SubOffsetX"] = thick ? BoxedSubX2 : BoxedSubX1;
+		ctx.Resources["M.SubOffsetY"] = thick ? BoxedSubY2 : BoxedSubY1;
+	}
+
+	private static readonly object BoxedBorder1 = new Thickness(1.0);
+
+	private static readonly object BoxedBorder2 = new Thickness(2.0);
+
+	private static readonly object BoxedSubX1 = -1.0;
+
+	private static readonly object BoxedSubX2 = -2.0;
+
+	private static readonly object BoxedSubY1 = -5.0;
+
+	private static readonly object BoxedSubY2 = -6.0;
+
+	// The menu border width for the current look: 2 only for the light Content Menu.
+	internal static double BorderThicknessNow()
+	{
+		return (!DarkRest.Visuals && !ShellSkin.GlassOn && IsLightTheme()) ? 2.0 : 1.0;
 	}
 
 	internal static void PrepareForInstantOpen(ContextMenu menu)
@@ -1037,6 +1100,21 @@ public static class TaskbarContextMenu
 		menu.Measure(new Size(560.0, 1400.0));
 		menu.Arrange(new Rect(menu.DesiredSize));
 		menu.UpdateLayout();
+		// The shared right column (M81Right) settles after LayoutUpdated, which re-measures the rows in the next pass:
+		// a detached menu is then re-measured but still arranged in the first pass's narrower slot (and clipped to it),
+		// so arrange it again in a slot of the settled size.
+		for (int i = 0; i < 3; i++)
+		{
+			menu.Measure(new Size(560.0, 1400.0));
+			Size settled = menu.DesiredSize;
+			Rect slot = System.Windows.Controls.Primitives.LayoutInformation.GetLayoutSlot(menu);
+			if (Math.Abs(settled.Width - slot.Width) < 0.01 && Math.Abs(settled.Height - slot.Height) < 0.01)
+			{
+				break;
+			}
+			menu.Arrange(new Rect(settled));
+			menu.UpdateLayout();
+		}
 	}
 
 	internal static void InvalidateTheme()
@@ -1144,7 +1222,8 @@ public static class TaskbarContextMenu
 				AddHex("M.ToggleOff", "#767676");
 				AddHex("M.ToggleBorder", "#00000000");
 				AddHex("M.KbToggleBorder", "#00000000");
-				AddHex("M.Gesture", "#767676");
+				// the shortcut column (not an 8.1 key): 6.2:1 on the menu and 4.6:1 on the hover row
+				AddHex("M.Gesture", "#616161");
 			}
 			else
 			{
@@ -1165,7 +1244,8 @@ public static class TaskbarContextMenu
 				AddHex("M.ToggleOff", "#8A8A8A");
 				AddHex("M.ToggleBorder", "#00000000");
 				AddHex("M.KbToggleBorder", "#00000000");
-				AddHex("M.Gesture", "#8A8A8A");
+				// the shortcut column: 6.1:1 on the menu and 4.5:1 on the hover row
+				AddHex("M.Gesture", "#AAAAAA");
 			}
 
 			_themePaletteGlass = glass;
@@ -1341,10 +1421,56 @@ public static class TaskbarContextMenu
 
 	internal static MenuItem SystemToolsSub()
 	{
-		return Sub("System tools", 59663, Leaf81("Task Manager", "taskmgr.png", 57832, delegate
+		return SystemToolsSub(includeTaskManager: true, includeWindowsTaskbar: false);
+	}
+
+	// includeTaskManager: false in the taskbar menu, which has its own Task Manager row. includeWindowsTaskbar: the
+	// Windows taskbar settings page (the taskbar menu's old Properties target) at the end. includePerformance: the
+	// desktop menu's former "Performance tools" group, now the first group here.
+	internal static MenuItem SystemToolsSub(bool includeTaskManager, bool includeWindowsTaskbar, bool includePerformance = false)
+	{
+		MenuItem sub = SystemToolsCore();
+		if (includePerformance)
 		{
-			Launch("taskmgr.exe");
-		}), Leaf("Settings", 57621, delegate
+			int at = 0;
+			if (includeTaskManager)
+			{
+				sub.Items.Insert(at++, Leaf81("Task Manager", "taskmgr.png", 57832, delegate
+				{
+					Launch("taskmgr.exe");
+				}));
+			}
+			sub.Items.Insert(at++, Leaf81("Resource Monitor", "resmon.png", 57832, delegate
+			{
+				Launch("resmon.exe");
+			}));
+			sub.Items.Insert(at++, Leaf81("Performance Monitor", "perfmon.png", 57832, delegate
+			{
+				Launch("perfmon.exe");
+			}));
+			sub.Items.Insert(at, Sep());
+		}
+		else if (includeTaskManager)
+		{
+			sub.Items.Insert(0, Leaf81("Task Manager", "taskmgr.png", 57832, delegate
+			{
+				Launch("taskmgr.exe");
+			}));
+		}
+		if (includeWindowsTaskbar)
+		{
+			sub.Items.Add(Sep());
+			sub.Items.Add(Leaf("Windows taskbar settings", 57621, delegate
+			{
+				OpenUri("ms-settings:taskbar");
+			}));
+		}
+		return sub;
+	}
+
+	private static MenuItem SystemToolsCore()
+	{
+		return Sub("System tools", 59663, Leaf("Settings", 57621, delegate
 		{
 			OpenUri("ms-settings:");
 		}), Leaf81("Control Panel", "control.png", 57587, delegate
@@ -1354,16 +1480,5 @@ public static class TaskbarContextMenu
 		{
 			Launch("devmgmt.msc");
 		}), Leaf81("Terminal", "cmd.png", 59222, OpenTerminal), Leaf("Run", 59222, RunDialog), Sep(), LeafExe("Restart Explorer", "explorer.exe", 57673, ShellRestart.RestartExplorer), Leaf("Empty Recycle Bin", 59213, EmptyRecycleBin));
-	}
-
-	internal static MenuItem PerformanceToolsSub()
-	{
-		return Sub("Performance tools", 57832, Leaf81("Resource Monitor", "resmon.png", 57832, delegate
-		{
-			Launch("resmon.exe");
-		}), Leaf81("Performance Monitor", "perfmon.png", 57832, delegate
-		{
-			Launch("perfmon.exe");
-		}));
 	}
 }

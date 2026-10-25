@@ -450,10 +450,8 @@ public sealed class SettingsPane : Window
 		base.Top = (double)b.Top / sy;
 		base.Left = (double)b.Right / sx - base.Width;
 		WindowUtil.ForceForeground(this);
-		_slide.BeginAnimation(TranslateTransform.XProperty, new DoubleAnimation(0.0, Motion.Dur(Motion.Cat.EdgeEnter))
-		{
-			EasingFunction = Motion.Ease(Motion.Cat.EdgeEnter)
-		});
+		// in from the edge over 300 ms SOFT DECELERATE (calm motion: 24 DIP with a fade); interruptible
+		PaneMotion.Enter(_slide, _root, 346.0, fresh: _slide.X >= 346.0 - 0.5);
 		_liveTick = 0;
 		if (_liveTimer == null)
 		{
@@ -554,19 +552,16 @@ public sealed class SettingsPane : Window
 		{
 			_flyout.IsOpen = false;
 		}
-		DoubleAnimation slide = new DoubleAnimation(346.0, Motion.Dur(Motion.Cat.EdgeExit))
-		{
-			EasingFunction = Motion.Ease(Motion.Cat.EdgeExit)
-		};
-		slide.Completed += delegate
+		// out over 167 ms ACCELERATE (calm motion: 24 DIP with a fade)
+		PaneMotion.Exit(_slide, _root, 346.0, delegate
 		{
 			if (_hiding)
 			{
 				Hide();
 				_hiding = false;
+				PaneMotion.Reset(_slide, _root, 346.0);
 			}
-		};
-		_slide.BeginAnimation(TranslateTransform.XProperty, slide);
+		});
 	}
 
 	private void Act(Action a)
@@ -2015,7 +2010,8 @@ public sealed class SettingsPane : Window
 			BorderBrush = rest ? DarkRestPalette.Boundary : new SolidColorBrush(System.Windows.Media.Color.FromArgb(85, byte.MaxValue, byte.MaxValue, byte.MaxValue)),
 			BorderThickness = new Thickness(1.0),
 			Child = panel,
-			MinWidth = 180.0
+			MinWidth = 160.0,
+			UseLayoutRounding = true
 		};
 		panel.Children.Add(PowerItem("Sleep", delegate
 		{
@@ -2079,14 +2075,15 @@ public sealed class SettingsPane : Window
 			Content = text,
 			Foreground = System.Windows.Media.Brushes.White,
 			FontFamily = new System.Windows.Media.FontFamily("Segoe UI"),
-			FontSize = 15.0,
+			FontSize = 14.0,
 			HorizontalContentAlignment = System.Windows.HorizontalAlignment.Left,
 			Background = System.Windows.Media.Brushes.Transparent,
 			BorderThickness = new Thickness(0.0),
-			Padding = new Thickness(16.0, 10.0, 16.0, 10.0),
+			Padding = new Thickness(12.0, 6.0, 12.0, 6.0),
+			MinHeight = 32.0,
 			Cursor = System.Windows.Input.Cursors.Hand,
 			FocusVisualStyle = null,
-			Template = HoverButtonTemplate()
+			Template = PowerItemTemplate()
 		};
 		b.Click += delegate
 		{
@@ -2107,12 +2104,14 @@ public sealed class SettingsPane : Window
 		}
 		_flyout.PlacementTarget = anchor ?? _root;
 		_flyout.Placement = ((anchor == null) ? PlacementMode.Center : PlacementMode.Top);
-		_flyout.PopupAnimation = anim;
+		// the menu entrance (83 ms fade, 4 DIP away from the anchor) instead of WPF's 150 ms fade/slide (anim is ignored)
+		_flyout.PopupAnimation = PopupAnimation.None;
 		_flyout.HorizontalOffset = 0.0;
 		_flyout.VerticalOffset = ((anchor != null) ? (-6) : 0);
 		PrepareFlyout(content);
 		_flyout.Child = content;
 		_flyout.IsOpen = true;
+		MenuMotion.PlayPopupEntrance(content, _flyout.Placement);
 	}
 
 	[DllImport("powrprof.dll", SetLastError = true)]
@@ -2143,6 +2142,37 @@ public sealed class SettingsPane : Window
 				Logger.Log("Settings launch '" + cmd + "' failed: " + ex.Message);
 			}
 		});
+	}
+
+	// The power flyout's rows: the hover template that honours Padding and HorizontalContentAlignment (the shared
+	// HoverButtonTemplate centres its content and ignores the padding, which its other users rely on).
+	private static ControlTemplate PowerItemTemplate()
+	{
+		ControlTemplate t = new ControlTemplate(typeof(System.Windows.Controls.Button));
+		FrameworkElementFactory border = new FrameworkElementFactory(typeof(Border));
+		border.SetValue(Border.BackgroundProperty, System.Windows.Media.Brushes.Transparent);
+		border.SetValue(Border.PaddingProperty, new TemplateBindingExtension(System.Windows.Controls.Control.PaddingProperty));
+		border.Name = "bd";
+		FrameworkElementFactory cp = new FrameworkElementFactory(typeof(ContentPresenter));
+		cp.SetValue(FrameworkElement.HorizontalAlignmentProperty, new TemplateBindingExtension(System.Windows.Controls.Control.HorizontalContentAlignmentProperty));
+		cp.SetValue(FrameworkElement.VerticalAlignmentProperty, VerticalAlignment.Center);
+		border.AppendChild(cp);
+		t.VisualTree = border;
+		Trigger hover = new Trigger
+		{
+			Property = UIElement.IsMouseOverProperty,
+			Value = true
+		};
+		hover.Setters.Add(new Setter(Border.BackgroundProperty, new DynamicResourceExtension("Metro81.PaneHover18"), "bd"));
+		t.Triggers.Add(hover);
+		Trigger press = new Trigger
+		{
+			Property = System.Windows.Controls.Primitives.ButtonBase.IsPressedProperty,
+			Value = true
+		};
+		press.Setters.Add(new Setter(Border.BackgroundProperty, new SolidColorBrush(System.Windows.Media.Color.FromArgb(36, byte.MaxValue, byte.MaxValue, byte.MaxValue)), "bd"));
+		t.Triggers.Add(press);
+		return t;
 	}
 
 	private static ControlTemplate HoverButtonTemplate()

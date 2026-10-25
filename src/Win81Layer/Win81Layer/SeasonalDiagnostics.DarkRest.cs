@@ -690,9 +690,9 @@ internal static partial class SeasonalDiagnostics
 		RenderToast(P("toast"));
 		f.Osd.QaRenderCard(P("osd"));
 		f.Pc.QaRender(P("pcsettings"), "PC & devices", 1366.0, 768.0);
-		f.Taskbar.QaRenderClockCalendar(P("flyout-clock"), FlyoutSample, 340.0, 500.0);
-		f.Taskbar.QaRenderSoundFlyout(P("flyout-volume"), 420.0, 540.0);
-		f.Taskbar.QaRenderNetworkFlyout(P("flyout-network"), QaNetState, QaLocalNet, "203.0.113.42", 420.0, 500.0);
+		f.Taskbar.QaRenderClockCalendar(P("flyout-clock"), FlyoutSample, 304.0, 444.0);
+		f.Taskbar.QaRenderSoundFlyout(P("flyout-volume"), 376.0, 480.0);
+		f.Taskbar.QaRenderNetworkFlyout(P("flyout-network"), QaNetState, QaLocalNet, "203.0.113.42", 376.0, 444.0);
 		start.QaRenderSeason(P("start-apps"), 1920.0, 1080.0, withAmbient: true, allApps: true);
 		start.QaRenderPersonalize(P("personalize"));
 		f.Win7.QaRenderPreset(P("win7start"), TaskbarTheme.SourceAccent());
@@ -732,6 +732,8 @@ internal static partial class SeasonalDiagnostics
 		// Pin the real light/dark value first, so the Normal renders before and after use the same applied tokens.
 		bool realDark = ShellTheme.IsDark;
 		ShellTheme.ForceForTest(realDark);
+		List<string> dpiBad = new List<string>();
+		List<string> dpiGot = new List<string>();
 		RestFixtures f = new RestFixtures
 		{
 			Taskbar = new TaskbarWindow { Left = -4000.0, Top = -4000.0, Width = 1366.0, Height = 48.0 },
@@ -783,6 +785,7 @@ internal static partial class SeasonalDiagnostics
 			RestPcSettings(outDir, f.Pc);
 			RestCaption(real);
 			RenderContextMenu(Path.Combine(outDir, "contextmenu-rest.png"));
+			RenderContextMenuDpiSet(outDir, "rest", dpiBad, dpiGot);
 			RenderControls(Path.Combine(outDir, "controls-rest.png"), DarkRestPalette.PcPage);
 			RenderCaption(Path.Combine(outDir, "caption-rest.png"));
 			RenderTooltip(Path.Combine(outDir, "tooltip-rest.png"));
@@ -832,6 +835,26 @@ internal static partial class SeasonalDiagnostics
 		}
 		Metrics["NormalAfterRestDiffs"] = diffs;
 		Check("normal-unchanged-after-rest", diffs.All(d => d.Contains("=0/", StringComparison.Ordinal)), string.Join(" ", diffs));
+		// For the visual review (not compared): the code-built menu at 120 and 144 dpi in the real look, then the same
+		// Normal set with Windows in light mode ("*-normal-light.png") and its menu at 120 and 144 dpi.
+		RenderContextMenuDpiSet(outDir, realDark ? "dark" : "light", dpiBad, dpiGot);
+		try
+		{
+			ShellTheme.ForceForTest(!realDark);
+			RenderNormalSet(outDir, start, real, f, realDark ? "light" : "dark");
+			RenderContextMenuDpiSet(outDir, realDark ? "light" : "dark", dpiBad, dpiGot);
+		}
+		catch (Exception exLight)
+		{
+			dpiBad.Add("other-theme pass failed: " + exLight.Message);
+		}
+		finally
+		{
+			ShellTheme.ForceForTest(realDark);
+			TaskbarTheme.Invalidate();
+		}
+		Metrics["ContextMenuDpiRows"] = dpiGot;
+		Check("contextmenu-dpi-rows", dpiBad.Count == 0, dpiBad.Count == 0 ? string.Join(" ", dpiGot) : string.Join(" ; ", dpiBad));
 		f.Taskbar.Close();
 		f.Pc.Close();
 		f.Search.Close();
@@ -1013,7 +1036,7 @@ internal static partial class SeasonalDiagnostics
 	private static void RestFlyouts(string outDir, TaskbarWindow taskbar)
 	{
 		string clock = Path.Combine(outDir, "flyout-clock-rest.png");
-		taskbar.QaRenderClockCalendar(clock, FlyoutSample, 340.0, 500.0);
+		taskbar.QaRenderClockCalendar(clock, FlyoutSample, 304.0, 444.0);
 		// the rest tone rule, read back from the brushes the flyout theme wrote
 		List<string> bad = new List<string>();
 		List<string> got = new List<string>();
@@ -1041,7 +1064,7 @@ internal static partial class SeasonalDiagnostics
 		string volume = Path.Combine(outDir, "flyout-volume-rest.png");
 		RestVolumeRender(volume, taskbar);
 		string network = Path.Combine(outDir, "flyout-network-rest.png");
-		taskbar.QaRenderNetworkFlyout(network, QaNetState, QaLocalNet, "203.0.113.42", 420.0, 500.0);
+		taskbar.QaRenderNetworkFlyout(network, QaNetState, QaLocalNet, "203.0.113.42", 376.0, 444.0);
 		Want("TB.NetworkState", 0, "#FF141414");
 		Want("TB.SoundBorder", 0, "#FF4D4D4D");
 		Want("TB.NetworkLink", 0, "#FF9ABAC1");

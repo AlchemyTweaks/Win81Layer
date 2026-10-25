@@ -6232,13 +6232,14 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 				Placement = PlacementMode.Bottom,
 				StaysOpen = false,
 				AllowsTransparency = true,
-				PopupAnimation = PopupAnimation.Fade
+				PopupAnimation = PopupAnimation.None
 			};
 			popup.Child = BuildFolderFlyout(folder, delegate
 			{
 				popup.IsOpen = false;
 			});
 			popup.IsOpen = true;
+			MenuMotion.PlayPopupEntrance(popup.Child, PlacementMode.Bottom);
 		}
 	}
 

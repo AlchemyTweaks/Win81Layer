@@ -1001,10 +1001,8 @@ public sealed class SearchPane : Window
 		base.Top = (double)b.Top / sy;
 		base.Left = (double)b.Right / sx - base.Width;
 		WindowUtil.ForceForeground(this);
-		_slide.BeginAnimation(TranslateTransform.XProperty, new DoubleAnimation(0.0, Motion.Dur(Motion.Cat.EdgeEnter))
-		{
-			EasingFunction = Motion.Ease(Motion.Cat.EdgeEnter)
-		});
+		// in from the edge over 300 ms SOFT DECELERATE (calm motion: 24 DIP with a fade); interruptible
+		PaneMotion.Enter(_slide, _root, 320.0, fresh: _slide.X >= 320.0 - 0.5);
 		((DispatcherObject)this).Dispatcher.BeginInvoke((Delegate)(Action)delegate
 		{
 			Activate();                 // make this the active WPF input site (after ForceForeground won the cross-process race)
@@ -1034,19 +1032,16 @@ public sealed class SearchPane : Window
 		{
 			_scopePopup.IsOpen = false;
 		}
-		DoubleAnimation slide = new DoubleAnimation(320.0, Motion.Dur(Motion.Cat.EdgeExit))
-		{
-			EasingFunction = Motion.Ease(Motion.Cat.EdgeExit)
-		};
-		slide.Completed += delegate
+		// out over 167 ms ACCELERATE (calm motion: 24 DIP with a fade)
+		PaneMotion.Exit(_slide, _root, 320.0, delegate
 		{
 			if (_hiding)
 			{
 				Hide();
 				_hiding = false;
+				PaneMotion.Reset(_slide, _root, 320.0);
 			}
-		};
-		_slide.BeginAnimation(TranslateTransform.XProperty, slide);
+		});
 	}
 
 	private DispatcherTimer? _rebuildDebounce;
@@ -2041,7 +2036,7 @@ public sealed class SearchPane : Window
 				Placement = PlacementMode.Bottom,
 				StaysOpen = false,
 				AllowsTransparency = true,
-				PopupAnimation = PopupAnimation.Fade
+				PopupAnimation = PopupAnimation.None
 			};
 		}
 		if (_scopePopup.IsOpen)
@@ -2052,6 +2047,7 @@ public sealed class SearchPane : Window
 		_scopePopup.Child = BuildScopeMenu();
 		_scopePopup.PlacementTarget = anchor;
 		_scopePopup.IsOpen = true;
+		MenuMotion.PlayPopupEntrance(_scopePopup.Child, PlacementMode.Bottom);
 	}
 
 	// QA: the scope drop-down as it opens, drawn on the pane's background (nothing is opened).

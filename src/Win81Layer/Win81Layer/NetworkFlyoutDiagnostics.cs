@@ -18,6 +18,7 @@ public sealed class NetworkFlyoutQaMetrics
 	public int ActionTiles { get; set; }
 	public bool ActionIconsCentered { get; set; }
 	public bool ActionIconsVector { get; set; }
+	public bool ActionLabelsFit { get; set; }
 	public bool HeroIconsVector { get; set; }
 	public bool TrayIconsVector { get; set; }
 	public bool TrayStateIconsDistinct { get; set; }
@@ -100,30 +101,30 @@ internal static class NetworkFlyoutDiagnostics
 					new NetState81(NetKind.Wifi, "HomeNetwork", 5, Internet: true),
 					previewLocal,
 					"203.0.113.42",
-					420.0,
-					500.0,
+					376.0,
+					444.0,
 					commandScreenshot);
 				NetworkFlyoutQaMetrics limited = taskbar.QaRenderNetworkFlyout(
 					limitedScreenshot,
 					new NetState81(NetKind.Wifi, "HomeNetwork", 3, Internet: false),
 					previewLocal,
 					null,
-					380.0,
-					450.0);
+					344.0,
+					400.0);
 				NetworkFlyoutQaMetrics ethernet = taskbar.QaRenderNetworkFlyout(
 					ethernetScreenshot,
 					new NetState81(NetKind.Ethernet, "Ethernet", 0, Internet: true),
 					new NetInfo.LocalNet("Ethernet", "192.168.1.9", "192.168.1.1", "1.1.1.1", "Realtek PCIe 2.5GbE Family Controller", "2.5 Gbps"),
 					"203.0.113.42",
-					420.0,
-					500.0);
+					376.0,
+					444.0);
 				NetworkFlyoutQaMetrics offline = taskbar.QaRenderNetworkFlyout(
 					offlineScreenshot,
 					new NetState81(NetKind.Offline, "Not connected", 0, Internet: false),
 					new NetInfo.LocalNet("Offline", "N/A", "N/A", "N/A", "", "—"),
 					null,
-					380.0,
-					450.0);
+					344.0,
+					400.0);
 				NetworkIconSetQa iconSet = NetworkIconSetDiagnostics.Render(iconAtlasScreenshot);
 
 				Dictionary<string, string> stateAfter = HashMutableState();
@@ -137,10 +138,11 @@ internal static class NetworkFlyoutDiagnostics
 				FileInfo iconAtlasImage = new FileInfo(iconAtlasScreenshot);
 				var checks = new Dictionary<string, bool>
 				{
-					["full-layout-420x500"] = connected.WidthDiu == 420.0 && connected.HeightDiu == 500.0,
-					["compact-layouts-380x450"] = limited.WidthDiu == 380.0 && limited.HeightDiu == 450.0 && offline.WidthDiu == 380.0 && offline.HeightDiu == 450.0,
+					["full-layout-376x444"] = connected.WidthDiu == 376.0 && connected.HeightDiu == 444.0,
+					["compact-layouts-344x400"] = limited.WidthDiu == 344.0 && limited.HeightDiu == 400.0 && offline.WidthDiu == 344.0 && offline.HeightDiu == 400.0,
 					["three-functional-action-routes"] = connected.ActionTiles == 3 && limited.ActionTiles == 3 && offline.ActionTiles == 3,
 					["action-icons-use-centered-crisp-vectors"] = connected.ActionIconsCentered && connected.ActionIconsVector && limited.ActionIconsCentered && limited.ActionIconsVector && offline.ActionIconsCentered && offline.ActionIconsVector,
+					["action-tile-labels-whole-in-every-tier"] = connected.ActionLabelsFit && limited.ActionLabelsFit && offline.ActionLabelsFit,
 					["all-network-state-icons-are-modern-vectors"] = connected.HeroIconsVector && connected.TrayIconsVector && connected.TrayStateIconsDistinct,
 					["complete-wifi-ethernet-generic-cellular-state-matrix"] = iconSet.CompleteReferenceMatrix && iconSet.Variants >= 49,
 					["exact-32-16-12-pixel-variants"] = iconSet.Exact12_16_32Sizes && iconSet.RenderedSizes == iconSet.Variants * 3,

@@ -42,7 +42,7 @@ public sealed partial class ActionCenter : Window
 
 	private bool _menuOpen;
 
-	private const double PanelW = 440.0;
+	private const double PanelW = 392.0;
 
 	private StackPanel _notifs = null!;
 
@@ -389,7 +389,7 @@ public sealed partial class ActionCenter : Window
 		Rectangle b = TaskbarWorkArea.Current(screen);
 		_scale = ScaleFor(b);
 		double availableWidth = (double)b.Width / _scale;
-		double panelWidth = Math.Min(PanelW, Math.Max(360.0, availableWidth * 0.43));
+		double panelWidth = Math.Min(PanelW, Math.Max(344.0, availableWidth * 0.43));
 		panelWidth = Math.Min(panelWidth, availableWidth);
 		base.Width = panelWidth;
 		base.Height = (double)b.Height / _scale;
@@ -1027,6 +1027,8 @@ public sealed partial class ActionCenter : Window
 		// NOTE: ApplyTheme sets a MenuItem-only item-container style, so a raw Separator throws
 		// ("A style intended for type 'MenuItem' cannot be applied to type 'Separator'"). Use MenuItems only.
 		ctx.Items.Add(TaskbarContextMenu.Leaf("Sign out", delegate { PowerActions.SignOut(); }));
+		// Sleep, as in the other two power menus (Settings charm, Win7 Start)
+		ctx.Items.Add(TaskbarContextMenu.Leaf("Sleep", delegate { PowerActions.Sleep(); }));
 		ctx.Items.Add(TaskbarContextMenu.Leaf("Restart", delegate { PowerActions.Restart(); }));
 		ctx.Items.Add(TaskbarContextMenu.Leaf("Shut down", delegate { PowerActions.ShutDown(); }));
 		ctx.Items.Add(TaskbarContextMenu.Leaf("Advanced startup", delegate { PowerActions.AdvancedStartup(); }));

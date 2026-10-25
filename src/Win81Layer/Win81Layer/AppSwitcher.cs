@@ -370,13 +370,14 @@ public sealed class AppSwitcher : Window
 		UpdateLayout();
 		_awayTicks = 0;
 		_proximity.Start();
-		double hiddenX = HiddenOffset();
+		// The window is opaque and appears in place: the content glides 32 DIP from the left over 250 ms DECELERATE while
+		// it fades in over 120 ms (calm motion: 16 DIP). One-shot clocks over the exact final values.
+		double fromX = -Motion.Distance(32.0);
 		t.BeginAnimation(TranslateTransform.XProperty, null);
-		t.X = hiddenX;
-		DoubleAnimation slideIn = new DoubleAnimation(hiddenX, 0.0, Motion.Dur(Motion.Cat.SwitcherIn))
-		{
-			EasingFunction = Motion.Ease(Motion.Cat.SwitcherIn)
-		};
+		t.X = 0.0;
+		_slideRoot.BeginAnimation(UIElement.OpacityProperty, null);
+		_slideRoot.Opacity = 1.0;
+		DoubleAnimation slideIn = Motion.Anim(fromX, 0.0, Motion.Move(fromX));
 		slideIn.Completed += delegate
 		{
 			if (IsShown)
@@ -385,7 +386,11 @@ public sealed class AppSwitcher : Window
 				Register();
 			}
 		};
-		t.BeginAnimation(TranslateTransform.XProperty, slideIn);
+		if (Motion.Enabled)
+		{
+			_slideRoot.BeginAnimation(UIElement.OpacityProperty, Motion.Anim(0.0, 1.0, Motion.Tok.FadeIn), HandoffBehavior.SnapshotAndReplace);
+		}
+		t.BeginAnimation(TranslateTransform.XProperty, slideIn, HandoffBehavior.SnapshotAndReplace);
 		if (keyboard)
 		{
 			((DispatcherObject)this).Dispatcher.BeginInvoke((Delegate)(Action)delegate
@@ -421,18 +426,23 @@ public sealed class AppSwitcher : Window
 		TranslateTransform t = new TranslateTransform(0.0, 0.0);
 		_slideRoot.RenderTransform = t;
 		double hiddenX = HiddenOffset();
-		DoubleAnimation slide = new DoubleAnimation(0.0, hiddenX, Motion.Dur(Motion.Cat.SwitcherOut))
+		// a 100 ms linear fade while the content moves 16 DIP back to the left with ACCELERATE; then the hide parks it
+		DoubleAnimation fade = new DoubleAnimation(0.0, Motion.Dur(Motion.Tok.FadeOut))
 		{
-			EasingFunction = Motion.Ease(Motion.Cat.SwitcherOut)
+			EasingFunction = Motion.Ease(Motion.Tok.FadeOut)
 		};
-		slide.Completed += delegate
+		fade.Completed += delegate
 		{
 			CompleteHide(generation, t, hiddenX);
 		};
-		t.BeginAnimation(TranslateTransform.XProperty, slide);
+		_slideRoot.BeginAnimation(UIElement.OpacityProperty, fade, HandoffBehavior.SnapshotAndReplace);
+		t.BeginAnimation(TranslateTransform.XProperty, new DoubleAnimation(0.0, -Motion.Distance(16.0), Motion.Dur(Motion.Tok.ExitMove))
+		{
+			EasingFunction = Motion.Ease(Motion.Tok.ExitMove)
+		});
 		_hideFallback = new DispatcherTimer
 		{
-			Interval = Motion.Time(Motion.Cat.SwitcherOut) + TimeSpan.FromMilliseconds(80.0)
+			Interval = Motion.Time(Motion.Tok.FadeOut) + TimeSpan.FromMilliseconds(80.0)
 		};
 		_hideFallback.Tick += delegate
 		{
@@ -461,6 +471,8 @@ public sealed class AppSwitcher : Window
 		transform.X = hiddenX;
 		ParkNativeSurfaceOffscreen();
 		Hide();
+		_slideRoot.BeginAnimation(UIElement.OpacityProperty, null);
+		_slideRoot.Opacity = 1.0;
 		_hiding = false;
 	}
 

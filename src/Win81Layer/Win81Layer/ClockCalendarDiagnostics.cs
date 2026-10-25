@@ -60,21 +60,21 @@ internal static class ClockCalendarDiagnostics
 				taskbar.Show();
 				startup.Stop();
 				DateTime reference = new DateTime(2026, 8, 31, 17, 17, 6, DateTimeKind.Local);
-				ClockCalendarQaMetrics metrics = taskbar.QaRenderClockCalendar(screenshot, reference, 340.0, 500.0);
-				ClockCalendarQaMetrics compactMetrics = taskbar.QaRenderClockCalendar(compactScreenshot, reference, 310.0, 440.0);
+				ClockCalendarQaMetrics metrics = taskbar.QaRenderClockCalendar(screenshot, reference, 304.0, 444.0);
+				ClockCalendarQaMetrics compactMetrics = taskbar.QaRenderClockCalendar(compactScreenshot, reference, 280.0, 400.0);
 				Dictionary<string, string> after = HashMutableState();
 				bool stateUnchanged = before.Count == after.Count && before.All(pair => after.TryGetValue(pair.Key, out string value) && value == pair.Value);
 				FileInfo image = new FileInfo(screenshot);
 				FileInfo compactImage = new FileInfo(compactScreenshot);
 				var checks = new Dictionary<string, bool>
 				{
-					["reference-layout-340x500"] = metrics.WidthDiu == 340.0 && metrics.HeightDiu == 500.0,
+					["reference-layout-304x444"] = metrics.WidthDiu == 304.0 && metrics.HeightDiu == 444.0,
 					["calendar-grid-7x7"] = metrics.CalendarColumns == 7 && metrics.CalendarRows == 7,
 					["calendar-visuals-preallocated"] = metrics.DayVisuals == 42,
 					["reference-month-has-31-days"] = metrics.VisibleDays == 31,
 					["reference-date-selected"] = metrics.SelectedDate == "2026-08-31",
 					["live-seconds-separated"] = metrics.ClockText == "17:17:06",
-					["compact-layout-310x440"] = compactMetrics.WidthDiu == 310.0 && compactMetrics.HeightDiu == 440.0,
+					["compact-layout-280x400"] = compactMetrics.WidthDiu == 280.0 && compactMetrics.HeightDiu == 400.0,
 					["compact-month-complete"] = compactMetrics.VisibleDays == 31 && compactMetrics.DayVisuals == 42,
 					["start-theme-background-synchronized"] = metrics.ThemeBackgroundSynchronized && compactMetrics.ThemeBackgroundSynchronized,
 					["red-blue-theme-switch-is-not-hardcoded"] = metrics.ThemeSwitchPassed && compactMetrics.ThemeSwitchPassed,

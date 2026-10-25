@@ -21,6 +21,7 @@ public sealed class SoundFlyoutQaMetrics
 	public int ActionTiles { get; set; }
 	public bool ActionIconsCentered { get; set; }
 	public bool ActionIconsVector { get; set; }
+	public bool ActionLabelsFit { get; set; }
 	public string DefaultOutputName { get; set; } = string.Empty;
 	public double MasterIconContainerWidthDiu { get; set; }
 	public double MasterIconGlyphWidthDiu { get; set; }
@@ -108,8 +109,10 @@ internal static class SoundFlyoutDiagnostics
 				};
 				taskbar.Show();
 				startup.Stop();
-				SoundFlyoutQaMetrics metrics = taskbar.QaRenderSoundFlyout(screenshot, 420.0, 540.0, commandScreenshot);
-				SoundFlyoutQaMetrics compactMetrics = taskbar.QaRenderSoundFlyout(compactScreenshot, 380.0, 500.0);
+				SoundFlyoutQaMetrics metrics = taskbar.QaRenderSoundFlyout(screenshot, 376.0, 480.0, commandScreenshot);
+				SoundFlyoutQaMetrics compactMetrics = taskbar.QaRenderSoundFlyout(compactScreenshot, 356.0, 456.0);
+				// the smallest tier, only for the footer labels (its icons are the smallest there)
+				SoundFlyoutQaMetrics tightMetrics = taskbar.QaRenderSoundFlyout(Path.Combine(qaRoot, "SOUND-FLYOUT-QA-VERYCOMPACT.png"), 340.0, 430.0);
 
 				controller.Reset();
 				float volumeAfter = controller.GetVolume();
@@ -126,11 +129,12 @@ internal static class SoundFlyoutDiagnostics
 
 				var checks = new Dictionary<string, bool>
 				{
-					["full-layout-420x540"] = metrics.WidthDiu == 420.0 && metrics.HeightDiu == 540.0,
-					["compact-layout-380x500"] = compactMetrics.WidthDiu == 380.0 && compactMetrics.HeightDiu == 500.0,
+					["full-layout-376x480"] = metrics.WidthDiu == 376.0 && metrics.HeightDiu == 480.0,
+					["compact-layout-356x456"] = compactMetrics.WidthDiu == 356.0 && compactMetrics.HeightDiu == 456.0,
 					["preview-output-two-input-states-and-session-present"] = metrics.OutputRows == 1 && metrics.InputRows == 2 && metrics.AppSessionRows == 1,
 					["four-action-routes-present"] = metrics.ActionTiles == 4 && compactMetrics.ActionTiles == 4,
 					["four-action-icons-use-centered-crisp-vectors"] = metrics.ActionIconsCentered && compactMetrics.ActionIconsCentered && metrics.ActionIconsVector && compactMetrics.ActionIconsVector,
+					["action-tile-labels-whole-in-every-tier"] = metrics.ActionLabelsFit && compactMetrics.ActionLabelsFit && tightMetrics.ActionLabelsFit,
 					["start-theme-background-synchronized"] = metrics.ThemeBackgroundSynchronized && compactMetrics.ThemeBackgroundSynchronized,
 					["default-and-alternate-input-colors-distinct"] = metrics.InputStateColorDistance >= 70.0 && compactMetrics.InputStateColorDistance >= 70.0,
 					["master-range-0-to-100"] = metrics.MasterSliderMinimum == 0.0 && metrics.MasterSliderMaximum == 100.0,

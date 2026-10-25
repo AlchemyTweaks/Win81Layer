@@ -61,7 +61,7 @@ internal static class PerfProbe
 // idle (timer wake-ups and context switches of the idle shell schedule), stall (UI dispatch delay while the periodic
 // maintenance runs). Every window stays offscreen (Left/Top <= -3000), is never activated and carries WS_EX_NOACTIVATE.
 // The user state folder is hashed before and after; any difference fails the run. Self-exits at 100 s (hard at 115 s).
-internal static class PerfProbeDiagnostics
+internal static partial class PerfProbeDiagnostics
 {
 	private const int SoftDeadlineMs = 100000;
 
@@ -1353,6 +1353,9 @@ internal static class PerfProbeDiagnostics
 		UnitSuspensionGuard();
 		UnitHeartbeat();
 		UnitWardenDryRun();
+		UnitMotionTokens();
+		UnitMotionFirstFrame();
+		UnitTrayMenuMetrics();
 		Report["unit"] = UnitResults.ToArray();
 		Report["unitPassed"] = UnitResults.Count(r => r.StartsWith("PASS", StringComparison.Ordinal));
 		Report["unitFailed"] = UnitResults.Count(r => r.StartsWith("FAIL", StringComparison.Ordinal));

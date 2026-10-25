@@ -104,14 +104,16 @@ internal static class DesktopContextMenu
 		_paste.Icon = TaskbarContextMenu.MenuGlyph(59263);
 		ctx.Items.Add(_paste);
 		ctx.Items.Add(TaskbarContextMenu.Sep());
-		ctx.Items.Add(TaskbarContextMenu.Leaf81("Open command prompt here", "cmd.png", 59222, DesktopShell.OpenTerminalHere));
-		ctx.Items.Add(TaskbarContextMenu.Leaf81("Open PowerShell here", "powershell.png", 59222, DesktopShell.OpenPowerShellHere));
-		MenuItem psAdmin = TaskbarContextMenu.Leaf("Open PowerShell here (Admin)", DesktopShell.OpenPowerShellHereAdmin);
+		// the three terminals in one submenu
+		MenuItem psAdmin = TaskbarContextMenu.Leaf("PowerShell (Admin)", DesktopShell.OpenPowerShellHereAdmin);
 		psAdmin.Icon = TaskbarContextMenu.MenuStockIcon(TaskbarContextMenu.SIID_SHIELD, 57767);   // authentic UAC shield
-		ctx.Items.Add(psAdmin);
+		ctx.Items.Add(TaskbarContextMenu.Sub81("Open terminal here", "cmd.png", 59222,
+			TaskbarContextMenu.Leaf81("Command prompt", "cmd.png", 59222, DesktopShell.OpenTerminalHere),
+			TaskbarContextMenu.Leaf81("PowerShell", "powershell.png", 59222, DesktopShell.OpenPowerShellHere),
+			psAdmin));
 		ctx.Items.Add(TaskbarContextMenu.Sep());
-		ctx.Items.Add(TaskbarContextMenu.PerformanceToolsSub());
-		ctx.Items.Add(TaskbarContextMenu.SystemToolsSub());
+		// "Performance tools" is the first group of System tools: Task Manager, Resource Monitor, Performance Monitor
+		ctx.Items.Add(TaskbarContextMenu.SystemToolsSub(includeTaskManager: true, includeWindowsTaskbar: false, includePerformance: true));
 		ctx.Items.Add(TaskbarContextMenu.Sep());
 		System.Collections.Generic.List<object> newChildren = new System.Collections.Generic.List<object>
 		{

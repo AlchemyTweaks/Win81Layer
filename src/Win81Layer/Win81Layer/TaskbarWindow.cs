@@ -2284,6 +2284,23 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		{
 			UseSoftwareRender(PresentationSource.FromVisual(popup.Child) as HwndSource);
 		}
+		// the two overflow popups take the menu entrance (the clock flyout calls this too and has its own motion)
+		if ((ReferenceEquals(sender, TaskOverflowPopup) || ReferenceEquals(sender, OverflowPopup)) && sender is Popup { Child: UIElement child } bar)
+		{
+			MenuMotion.PlayPopupEntrance(child, BarPopupPlacement());
+		}
+	}
+
+	// Where the bar's popups open relative to their button: above a bottom bar, below a top bar, beside a side bar.
+	private PlacementMode BarPopupPlacement()
+	{
+		return _position switch
+		{
+			"Top" => PlacementMode.Bottom,
+			"Left" => PlacementMode.Right,
+			"Right" => PlacementMode.Left,
+			_ => PlacementMode.Top
+		};
 	}
 
 	private void OnNetChanged(object sender, EventArgs e)
@@ -3650,6 +3667,10 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 			TaskOverflowButton.Visibility = hasOverflow ? Visibility.Visible : Visibility.Collapsed;
 			PinOverflowSection.Visibility = hiddenPins.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
 			TaskOverflowSection.Visibility = hiddenTasks.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+			// the "PINNED" / "OPEN APPS" captions only when both sections are present
+			bool both = hiddenPins.Count > 0 && hiddenTasks.Count > 0;
+			PinOverflowCaption.Visibility = both ? Visibility.Visible : Visibility.Collapsed;
+			TaskOverflowCaption.Visibility = both ? Visibility.Visible : Visibility.Collapsed;
 			if (!hasOverflow)
 			{
 				TaskOverflowPopup.IsOpen = false;
@@ -3781,34 +3802,7 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 
 	private void AnimateTrayCommandPopup(FrameworkElement root, TranslateTransform slide)
 	{
-		ResetTrayCommandPopup(root, slide);
-		if (Motion.Mode == MotionMode.Off)
-		{
-			return;
-		}
-		System.Windows.Vector offset = _position switch
-		{
-			"Top" => new System.Windows.Vector(0.0, -8.0),
-			"Left" => new System.Windows.Vector(-8.0, 0.0),
-			"Right" => new System.Windows.Vector(8.0, 0.0),
-			_ => new System.Windows.Vector(0.0, 8.0)
-		};
-		// Route through the Motion contract (base 90ms == old value at Authentic) so it scales with Fast/Reduced like every
-		// other flyout instead of a hardcoded 90ms + local ease.
-		Duration duration = Motion.Dur(Motion.Cat.Hover);
-		IEasingFunction ease = Motion.Ease(Motion.Cat.Hover);
-		root.CacheMode = new BitmapCache();
-		root.Opacity = 0.0;
-		slide.X = offset.X;
-		slide.Y = offset.Y;
-		DoubleAnimation fade = new DoubleAnimation(1.0, duration) { EasingFunction = ease };
-		fade.Completed += delegate
-		{
-			root.CacheMode = null;
-		};
-		root.BeginAnimation(UIElement.OpacityProperty, fade, HandoffBehavior.SnapshotAndReplace);
-		slide.BeginAnimation(TranslateTransform.XProperty, new DoubleAnimation(0.0, duration) { EasingFunction = ease }, HandoffBehavior.SnapshotAndReplace);
-		slide.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(0.0, duration) { EasingFunction = ease }, HandoffBehavior.SnapshotAndReplace);
+		PlayCommandPopupEntrance(root, slide);
 	}
 
 	private static void ResetTrayCommandPopup(FrameworkElement root, TranslateTransform slide)
@@ -3839,10 +3833,10 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 
 	private void OnClockRightClick(object sender, MouseButtonEventArgs e)
 	{
-		ShowTrayMenu((FrameworkElement)sender, TaskbarContextMenu.Leaf("Adjust date/time", 59271, delegate
+		ShowTrayMenu((FrameworkElement)sender, TaskbarContextMenu.Leaf("Date and time settings", 59271, delegate
 		{
 			TaskbarContextMenu.OpenUri("ms-settings:dateandtime");
-		}), TaskbarContextMenu.Leaf("Date and Time settings", delegate
+		}), TaskbarContextMenu.Leaf("Additional clocks and Internet time", delegate
 		{
 			TrayRun("control.exe", "timedate.cpl");
 		}));
@@ -6536,8 +6530,8 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 
 		_volumeInventoryBusy = true;
 		int token = _volumeRefreshToken;
-		VolumeRefreshStatus.Text = "Updating...";
-		VolumeRefreshStatus.Visibility = Visibility.Visible;
+		bool failed = false;
+		DispatcherTimer? statusLater = ShowStatusLater(VolumeRefreshStatus, "Updating...", () => _volumeInventoryBusy && token == _volumeRefreshToken && VolumePopup.IsOpen && !_volumeSwitching);
 		try
 		{
 			AudioFlyoutSnapshot snapshot = await Task.Run(delegate
@@ -6553,12 +6547,13 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 			{
 				return;
 			}
-			ApplyAudioSnapshot(snapshot);
+			ApplyAfterVolumeEntrance(() => ApplyAudioSnapshot(snapshot));
 			_volumeLastInventoryMs = Environment.TickCount64;
 		}
 		catch (Exception ex)
 		{
 			Logger.Log("Sound flyout refresh failed: " + ex.Message);
+			failed = true;
 			if (token == _volumeRefreshToken && VolumePopup.IsOpen)
 			{
 				VolumeRefreshStatus.Text = "Audio service unavailable";
@@ -6567,10 +6562,13 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		}
 		finally
 		{
+			statusLater?.Stop();
 			_volumeInventoryBusy = false;
-			if (token == _volumeRefreshToken && VolumePopup.IsOpen && VolumeRefreshStatus.Text == "Updating...")
+			// A refresh that worked clears whatever the line said ("Updating...", an earlier error), except the
+			// "Switching device..." of a switch still in progress (SwitchDefaultDeviceAsync clears that one).
+			if (token == _volumeRefreshToken && VolumePopup.IsOpen && !failed && !_volumeSwitching)
 			{
-				VolumeRefreshStatus.Visibility = Visibility.Collapsed;
+				ResetVolumeStatus();
 			}
 			if (_volumeRefreshPending && VolumePopup.IsOpen && !_stopped)
 			{
@@ -6603,6 +6601,8 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		_volumeInventoryMs = snapshot.EnumerateMs;
 		VolumeEmptyApps.Visibility = _appSessions.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
 		VolDeviceName.Text = DefaultDeviceName(snapshot.Outputs, "No output device");
+		// the header's device line is left out when it only repeats the single (default) output row below
+		VolDeviceName.Visibility = snapshot.Outputs.Count == 1 && string.Equals(snapshot.Outputs[0].Name, VolDeviceName.Text, StringComparison.Ordinal) ? Visibility.Collapsed : Visibility.Visible;
 		QueuePendingVolumeWheelFlush();
 	}
 
@@ -6660,9 +6660,11 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		foreach (AudioDevice d in devices)
 		{
 			System.Windows.Media.Brush rowInk = !rest ? System.Windows.Media.Brushes.White : (d.IsDefault ? DarkRestPalette.InkOnAccent : DarkRestPalette.Ink);
-			System.Windows.Media.Brush rowInk2 = !rest ? new SolidColorBrush(System.Windows.Media.Color.FromArgb(190, 255, 255, 255)) : (d.IsDefault ? DarkRestPalette.InkOnAccent : DarkRestPalette.Ink2);
+			// The status line ("Default device" / "Select device") in opaque white on the saturated Metro rows (a translucent
+			// ink fell to 2.4:1 on the blue row); the SemiBold name above keeps it apart.
+			System.Windows.Media.Brush rowInk2 = !rest ? System.Windows.Media.Brushes.White : (d.IsDefault ? DarkRestPalette.InkOnAccent : DarkRestPalette.Ink2);
 			Grid content = new Grid();
-			content.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(50.0) });
+			content.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(44.0) });
 			content.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.0) });
 			content.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.0, GridUnitType.Star) });
 			content.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
@@ -6675,8 +6677,8 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 			{
 				System.Windows.Controls.Image img = new System.Windows.Controls.Image
 				{
-					Width = 24.0,
-					Height = 24.0,
+					Width = 22.0,
+					Height = 22.0,
 					Stretch = System.Windows.Media.Stretch.Uniform,
 					Source = audioImg,
 					SnapsToDevicePixels = true,
@@ -6692,7 +6694,7 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 				{
 					Text = char.ConvertFromUtf32(capture ? 59168 : 59239),
 					FontFamily = new System.Windows.Media.FontFamily("Segoe MDL2 Assets"),
-					FontSize = 24.0,
+					FontSize = 22.0,
 					Foreground = rowInk,
 					HorizontalAlignment = System.Windows.HorizontalAlignment.Center,
 					VerticalAlignment = VerticalAlignment.Center
@@ -6709,7 +6711,7 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 			content.Children.Add(separator);
 			StackPanel labels = new StackPanel
 			{
-				Margin = new Thickness(10.0, 6.0, 7.0, 5.0),
+				Margin = new Thickness(10.0, 5.0, 7.0, 5.0),
 				VerticalAlignment = VerticalAlignment.Center
 			};
 			labels.Children.Add(new TextBlock
@@ -6718,6 +6720,7 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 				Foreground = rowInk,
 				FontFamily = new System.Windows.Media.FontFamily("Segoe UI"),
 				FontSize = 12.0,
+				FontWeight = FontWeights.SemiBold,
 				TextTrimming = TextTrimming.CharacterEllipsis
 			});
 			labels.Children.Add(new TextBlock
@@ -6725,21 +6728,16 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 				Text = d.IsDefault ? "Default device" : "Select device",
 				Foreground = rowInk2,
 				FontFamily = new System.Windows.Media.FontFamily("Segoe UI"),
-				FontSize = 10.5,
-				Margin = new Thickness(0.0, 1.0, 0.0, 0.0)
+				FontSize = 12.0,
+				Margin = new Thickness(0.0, 0.0, 0.0, 0.0)
 			});
 			Grid.SetColumn(labels, 2);
 			content.Children.Add(labels);
-			TextBlock arrow = new TextBlock
-			{
-				Text = "›",
-				Foreground = rowInk,
-				FontFamily = new System.Windows.Media.FontFamily("Segoe UI"),
-				FontSize = 22.0,
-				VerticalAlignment = VerticalAlignment.Center,
-				Margin = new Thickness(4.0, 0.0, 9.0, 2.0),
-				Visibility = d.IsDefault ? Visibility.Collapsed : Visibility.Visible
-			};
+			// the shared stroke chevron (MenuGlyphs.Chevron) in the flyout chevron ink
+			System.Windows.Shapes.Path arrow = MenuGlyphs.ChevronPath(System.Windows.Media.Brushes.White);
+			arrow.SetResourceReference(System.Windows.Shapes.Shape.StrokeProperty, "TB.ChevronInk");
+			arrow.Margin = new Thickness(4.0, 0.0, 12.0, 0.0);
+			arrow.Visibility = d.IsDefault ? Visibility.Collapsed : Visibility.Visible;
 			Grid.SetColumn(arrow, 3);
 			content.Children.Add(arrow);
 			System.Windows.Controls.Button btn = new System.Windows.Controls.Button
@@ -6766,10 +6764,13 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		}
 	}
 
+	private bool _volumeSwitching;
+
 	private async Task SwitchDefaultDeviceAsync(string id)
 	{
 		VolumeRefreshStatus.Text = "Switching device...";
 		VolumeRefreshStatus.Visibility = Visibility.Visible;
+		_volumeSwitching = true;
 		try
 		{
 			await Task.Run(delegate { AudioDevices.SetDefault(id); });
@@ -6787,6 +6788,22 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 				VolumeRefreshStatus.Text = "Could not switch device";
 			}
 		}
+		finally
+		{
+			_volumeSwitching = false;
+			// done: the line goes away unless it now reports an error (the switch's or the refresh's)
+			if (VolumeRefreshStatus.Text == "Switching device...")
+			{
+				ResetVolumeStatus();
+			}
+		}
+	}
+
+	// The status line hidden, with its default text for the next slow refresh.
+	private void ResetVolumeStatus()
+	{
+		VolumeRefreshStatus.Visibility = Visibility.Collapsed;
+		VolumeRefreshStatus.Text = "Updating...";
 	}
 
 	private void OnMuteToggle(object sender, RoutedEventArgs e)
@@ -6845,6 +6862,8 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		_volumeRefreshToken++;
 		_volumeClosing = false;
 		_volumeRefreshPending = false;
+		_volumeEntering = false;
+		_volumeEnterPending = null;
 		VolumeFlyoutRoot.BeginAnimation(UIElement.OpacityProperty, null);
 		VolumeFlyoutSlide.BeginAnimation(TranslateTransform.XProperty, null);
 		VolumeFlyoutSlide.BeginAnimation(TranslateTransform.YProperty, null);
@@ -6852,10 +6871,8 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		VolumeFlyoutSlide.X = 0.0;
 		VolumeFlyoutSlide.Y = 0.0;
 		VolumeFlyoutRoot.CacheMode = null;
-		if (VolumeRefreshStatus.Text == "Updating...")
-		{
-			VolumeRefreshStatus.Visibility = Visibility.Collapsed;
-		}
+		// a message never outlives the flyout: the next open starts with an empty status line
+		ResetVolumeStatus();
 	}
 
 	private void StartVolumeTick()
@@ -6900,22 +6917,23 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		}
 		double availableWidth = _screen.WorkingArea.Width / dpiX;
 		double availableHeight = _screen.WorkingArea.Height / dpiY;
-		double width = forcedWidthDiu ?? Math.Max(340.0, Math.Min(420.0, availableWidth - 10.0));
-		double height = forcedHeightDiu ?? Math.Max(450.0, Math.Min(540.0, availableHeight - 10.0));
-		bool veryCompact = width < 380.0 || height < 490.0;
-		bool compact = veryCompact || width < 420.0 || height < 540.0;
+		double width = forcedWidthDiu ?? Math.Max(320.0, Math.Min(376.0, availableWidth - 10.0));
+		double height = forcedHeightDiu ?? Math.Max(400.0, Math.Min(480.0, availableHeight - 10.0));
+		bool veryCompact = width < 344.0 || height < 440.0;
+		bool compact = veryCompact || width < 376.0 || height < 480.0;
 
 		VolumeFlyoutRoot.Width = width;
 		VolumeFlyoutRoot.Height = height;
-		// Taller header so the speaker+slider row (the '*' row after the title + device name) has real room — the tall "100%"
-		// title was squeezing it and clipping the speaker. The speaker Viewbox scales to whatever this row gives it, so it is
-		// always whole; this just makes that room generous. (+22px vs the old 102/110/118.)
-		VolumeHeaderRow.Height = new GridLength(veryCompact ? 124.0 : (compact ? 132.0 : 140.0));
-		VolumeFooterRow.Height = new GridLength(veryCompact ? 104.0 : (compact ? 110.0 : 116.0));
-		VolumeBodyScroll.Padding = veryCompact ? new Thickness(10.0, 5.0, 7.0, 4.0) : (compact ? new Thickness(12.0, 6.0, 8.0, 5.0) : new Thickness(14.0, 7.0, 10.0, 6.0));
-		VolumeTitle.FontSize = veryCompact ? 24.0 : (compact ? 27.0 : 29.0);
-		VolumePercent.FontSize = veryCompact ? 35.0 : (compact ? 39.0 : 43.0);
-		MuteToggle.FontSize = veryCompact ? 21.0 : (compact ? 23.0 : 25.0);
+		// The header keeps real room for the speaker+slider row (the '*' row after the title and device name): the speaker
+		// Viewbox scales to whatever this row gives it, so it is always whole.
+		VolumeHeaderRow.Height = new GridLength(veryCompact ? 110.0 : (compact ? 118.0 : 124.0));
+		// The footer tiles keep their labels whole in every tier (Auto label row); the icon above takes what is left
+		// (26 / 22 / 18 DIP).
+		VolumeFooterRow.Height = new GridLength(veryCompact ? 94.0 : (compact ? 98.0 : 104.0));
+		VolumeBodyScroll.Padding = veryCompact ? new Thickness(9.0, 4.0, 6.0, 4.0) : (compact ? new Thickness(11.0, 5.0, 8.0, 4.0) : new Thickness(12.0, 6.0, 9.0, 5.0));
+		VolumeTitle.FontSize = veryCompact ? 22.0 : (compact ? 24.0 : 26.0);
+		VolumePercent.FontSize = veryCompact ? 32.0 : (compact ? 35.0 : 38.0);
+		MuteToggle.FontSize = veryCompact ? 20.0 : (compact ? 21.0 : 22.0);
 	}
 
 	private CustomPopupPlacement[] PlaceVolumePopup(System.Windows.Size popupSize, System.Windows.Size targetSize, System.Windows.Point offset)
@@ -6930,26 +6948,9 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		};
 	}
 
-	private System.Windows.Vector VolumeFlyoutOffset()
-	{
-		return _position switch
-		{
-			"Top" => new System.Windows.Vector(0.0, -12.0),
-			"Left" => new System.Windows.Vector(-12.0, 0.0),
-			"Right" => new System.Windows.Vector(12.0, 0.0),
-			_ => new System.Windows.Vector(0.0, 12.0)
-		};
-	}
-
 	private void PrepareVolumeFlyoutEnter()
 	{
-		VolumeFlyoutRoot.BeginAnimation(UIElement.OpacityProperty, null);
-		VolumeFlyoutSlide.BeginAnimation(TranslateTransform.XProperty, null);
-		VolumeFlyoutSlide.BeginAnimation(TranslateTransform.YProperty, null);
-		System.Windows.Vector offset = VolumeFlyoutOffset();
-		VolumeFlyoutRoot.Opacity = Motion.Mode == MotionMode.Off ? 1.0 : 0.0;
-		VolumeFlyoutSlide.X = Motion.Mode == MotionMode.Off ? 0.0 : offset.X;
-		VolumeFlyoutSlide.Y = Motion.Mode == MotionMode.Off ? 0.0 : offset.Y;
+		FlyoutPrepare(VolumeFlyoutRoot, VolumeFlyoutSlide);
 	}
 
 	private void AnimateVolumeFlyoutIn()
@@ -6960,44 +6961,8 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		}
 		_volumeClosing = false;
 		int token = ++_volumeAnimationToken;
-		System.Windows.Vector offset = VolumeFlyoutOffset();
-		VolumeFlyoutRoot.BeginAnimation(UIElement.OpacityProperty, null);
-		VolumeFlyoutSlide.BeginAnimation(TranslateTransform.XProperty, null);
-		VolumeFlyoutSlide.BeginAnimation(TranslateTransform.YProperty, null);
-		if (Motion.Mode == MotionMode.Off)
-		{
-			VolumeFlyoutRoot.Opacity = 1.0;
-			VolumeFlyoutSlide.X = 0.0;
-			VolumeFlyoutSlide.Y = 0.0;
-			VolumeFlyoutRoot.CacheMode = null;
-			return;
-		}
-		VolumeFlyoutRoot.CacheMode = new BitmapCache();
-		Duration duration = Motion.Dur(Motion.Cat.EdgeEnter);
-		IEasingFunction ease = Motion.Ease(Motion.Cat.EdgeEnter);
-		DoubleAnimation fade = new DoubleAnimation(0.0, 1.0, duration)
-		{
-			EasingFunction = ease,
-			FillBehavior = FillBehavior.Stop
-		};
-		fade.Completed += delegate
-		{
-			if (token == _volumeAnimationToken)
-			{
-				VolumeFlyoutRoot.Opacity = 1.0;
-				VolumeFlyoutSlide.X = 0.0;
-				VolumeFlyoutSlide.Y = 0.0;
-				VolumeFlyoutRoot.CacheMode = null;
-			}
-		};
-		VolumeFlyoutRoot.BeginAnimation(UIElement.OpacityProperty, fade, HandoffBehavior.SnapshotAndReplace);
-		VolumeFlyoutSlide.BeginAnimation(TranslateTransform.XProperty, new DoubleAnimation(offset.X, 0.0, duration) { EasingFunction = ease, FillBehavior = FillBehavior.Stop }, HandoffBehavior.SnapshotAndReplace);
-		VolumeFlyoutSlide.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(offset.Y, 0.0, duration) { EasingFunction = ease, FillBehavior = FillBehavior.Stop }, HandoffBehavior.SnapshotAndReplace);
-		// Subtle modern grow-in: centre-anchored scale 0.985 -> 1.0 alongside the fade+slide. FillBehavior.Stop reverts
-		// the scale to its base 1.0 afterwards, so no explicit reset is needed.
-		VolumeFlyoutRoot.RenderTransformOrigin = new System.Windows.Point(0.5, 0.5);
-		VolumeFlyoutScale.BeginAnimation(ScaleTransform.ScaleXProperty, new DoubleAnimation(0.985, 1.0, duration) { EasingFunction = ease, FillBehavior = FillBehavior.Stop }, HandoffBehavior.SnapshotAndReplace);
-		VolumeFlyoutScale.BeginAnimation(ScaleTransform.ScaleYProperty, new DoubleAnimation(0.985, 1.0, duration) { EasingFunction = ease, FillBehavior = FillBehavior.Stop }, HandoffBehavior.SnapshotAndReplace);
+		_volumeEntering = Motion.Enabled;
+		FlyoutEnter(VolumeFlyoutRoot, VolumeFlyoutSlide, () => token == _volumeAnimationToken && VolumePopup.IsOpen && !_volumeClosing, FlushVolumeEntrance);
 	}
 
 	private void CloseVolumeFlyout(bool animate)
@@ -7008,27 +6973,21 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		}
 		StopVolumeTick();
 		int token = ++_volumeAnimationToken;
-		if (!animate || Motion.Mode == MotionMode.Off)
+		_volumeEntering = false;
+		_volumeEnterPending = null;
+		if (!animate || !Motion.Enabled)
 		{
 			VolumePopup.IsOpen = false;
 			return;
 		}
 		_volumeClosing = true;
-		VolumeFlyoutRoot.CacheMode = new BitmapCache();
-		System.Windows.Vector offset = VolumeFlyoutOffset();
-		Duration duration = Motion.Dur(Motion.Cat.EdgeExit);
-		IEasingFunction ease = Motion.Ease(Motion.Cat.EdgeExit);
-		DoubleAnimation fade = new DoubleAnimation(0.0, duration) { EasingFunction = ease };
-		fade.Completed += delegate
+		FlyoutExit(VolumeFlyoutRoot, VolumeFlyoutSlide, delegate
 		{
 			if (token == _volumeAnimationToken && _volumeClosing)
 			{
 				VolumePopup.IsOpen = false;
 			}
-		};
-		VolumeFlyoutRoot.BeginAnimation(UIElement.OpacityProperty, fade, HandoffBehavior.SnapshotAndReplace);
-		VolumeFlyoutSlide.BeginAnimation(TranslateTransform.XProperty, new DoubleAnimation(offset.X, duration) { EasingFunction = ease }, HandoffBehavior.SnapshotAndReplace);
-		VolumeFlyoutSlide.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(offset.Y, duration) { EasingFunction = ease }, HandoffBehavior.SnapshotAndReplace);
+		});
 	}
 
 	private void OnNetworkClick(object sender, RoutedEventArgs e)
@@ -7080,6 +7039,8 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		CancelNetworkRefresh();
 		SmoothScroll.StopVertical(NetworkBodyScroll);
 		_networkClosing = false;
+		_networkEntering = false;
+		_networkEnterPending = null;
 		NetworkFlyoutRoot.BeginAnimation(UIElement.OpacityProperty, null);
 		NetworkFlyoutSlide.BeginAnimation(TranslateTransform.XProperty, null);
 		NetworkFlyoutSlide.BeginAnimation(TranslateTransform.YProperty, null);
@@ -7096,10 +7057,7 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		int token = ++_networkRefreshToken;
 		CancellationTokenSource cts = new CancellationTokenSource();
 		_networkRefreshCts = cts;
-		if (NetPopup.IsOpen)
-		{
-			NetRefreshStatus.Visibility = Visibility.Visible;
-		}
+		DispatcherTimer? statusLater = NetPopup.IsOpen ? ShowStatusLater(NetRefreshStatus, "Updating...", () => ReferenceEquals(_networkRefreshCts, cts) && NetPopup.IsOpen) : null;
 		try
 		{
 			Stopwatch read = Stopwatch.StartNew();
@@ -7118,7 +7076,8 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 			{
 				return;
 			}
-			ApplyNetworkSnapshot(snapshot);
+			NetworkFlyoutSnapshot localApplied = snapshot;
+			ApplyAfterNetworkEntrance(() => ApplyNetworkSnapshot(localApplied));
 
 			if (includeExternal && snapshot.State.Connected && snapshot.State.Internet)
 			{
@@ -7129,7 +7088,8 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 				}
 				snapshot = snapshot with { PublicIp = publicIp };
 				_networkSnapshot = snapshot;
-				ApplyNetworkSnapshot(snapshot);
+				NetworkFlyoutSnapshot externalApplied = snapshot;
+				ApplyAfterNetworkEntrance(() => ApplyNetworkSnapshot(externalApplied));
 			}
 		}
 		catch (OperationCanceledException)
@@ -7145,6 +7105,7 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		}
 		finally
 		{
+			statusLater?.Stop();
 			bool isCurrent = ReferenceEquals(_networkRefreshCts, cts);
 			if (isCurrent)
 			{
@@ -7233,6 +7194,9 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		NetPublicIp.Text = !state.Connected || !state.Internet
 			? "Unavailable"
 			: (string.IsNullOrWhiteSpace(snapshot.PublicIp) ? "Checking..." : snapshot.PublicIp);
+		// the header's adapter line is left out when the "Network" detail row already says the same
+		NetAdapter.Visibility = string.Equals(NetAdapter.Text, NetPrimaryValue.Text, StringComparison.OrdinalIgnoreCase) ? Visibility.Collapsed : Visibility.Visible;
+		ApplyNetworkSettingsTileLabel();
 
 		if (state.Internet)
 		{
@@ -7250,6 +7214,21 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 			};
 			NetStateBanner.Visibility = Visibility.Visible;
 		}
+	}
+
+	// "Wi-Fi settings" only on a PC with Wi-Fi; otherwise the tile opens the general network settings and says so.
+	private void ApplyNetworkSettingsTileLabel()
+	{
+		bool wifi = true;
+		try
+		{
+			wifi = NetCaps.HasWifi;
+		}
+		catch
+		{
+		}
+		WifiSettingsLabel.Text = wifi ? "Wi-Fi settings" : "Network settings";
+		WifiSettingsButton.ToolTip = wifi ? "Wi-Fi settings" : "Network settings";
 	}
 
 	private void SetNetworkHero(NetState81 state)
@@ -7287,18 +7266,19 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		}
 		double availableWidth = _screen.WorkingArea.Width / dpiX;
 		double availableHeight = _screen.WorkingArea.Height / dpiY;
-		double width = forcedWidthDiu ?? Math.Max(360.0, Math.Min(420.0, availableWidth - 10.0));
-		double height = forcedHeightDiu ?? Math.Max(430.0, Math.Min(500.0, availableHeight - 10.0));
-		bool veryCompact = width < 380.0 || height < 460.0;
-		bool compact = veryCompact || width < 420.0 || height < 500.0;
+		double width = forcedWidthDiu ?? Math.Max(320.0, Math.Min(376.0, availableWidth - 10.0));
+		double height = forcedHeightDiu ?? Math.Max(392.0, Math.Min(444.0, availableHeight - 10.0));
+		bool veryCompact = width < 344.0 || height < 404.0;
+		bool compact = veryCompact || width < 376.0 || height < 444.0;
 
 		NetworkFlyoutRoot.Width = width;
 		NetworkFlyoutRoot.Height = height;
-		NetworkHeaderRow.Height = new GridLength(veryCompact ? 98.0 : (compact ? 105.0 : 112.0));
-		NetworkFooterRow.Height = new GridLength(veryCompact ? 108.0 : (compact ? 114.0 : 120.0));
-		NetworkBodyScroll.Padding = veryCompact ? new Thickness(10.0, 5.0, 7.0, 4.0) : (compact ? new Thickness(12.0, 6.0, 8.0, 5.0) : new Thickness(15.0, 8.0, 10.0, 7.0));
-		NetTitle.FontSize = veryCompact ? 24.0 : (compact ? 27.0 : 29.0);
-		NetConnectionStatus.FontSize = veryCompact ? 14.5 : (compact ? 16.0 : 17.0);
+		NetworkHeaderRow.Height = new GridLength(veryCompact ? 88.0 : (compact ? 94.0 : 100.0));
+		// labels whole in every tier (Auto label row); the tile icons take the rest (26 / 24 / 20 DIP)
+		NetworkFooterRow.Height = new GridLength(veryCompact ? 96.0 : (compact ? 100.0 : 106.0));
+		NetworkBodyScroll.Padding = veryCompact ? new Thickness(9.0, 4.0, 6.0, 4.0) : (compact ? new Thickness(11.0, 5.0, 8.0, 4.0) : new Thickness(13.0, 7.0, 9.0, 6.0));
+		NetTitle.FontSize = veryCompact ? 22.0 : (compact ? 24.0 : 26.0);
+		NetConnectionStatus.FontSize = veryCompact ? 13.0 : (compact ? 14.0 : 15.0);
 	}
 
 	private CustomPopupPlacement[] PlaceNetworkPopup(System.Windows.Size popupSize, System.Windows.Size targetSize, System.Windows.Point offset)
@@ -7313,26 +7293,9 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		};
 	}
 
-	private System.Windows.Vector NetworkFlyoutOffset()
-	{
-		return _position switch
-		{
-			"Top" => new System.Windows.Vector(0.0, -12.0),
-			"Left" => new System.Windows.Vector(-12.0, 0.0),
-			"Right" => new System.Windows.Vector(12.0, 0.0),
-			_ => new System.Windows.Vector(0.0, 12.0)
-		};
-	}
-
 	private void PrepareNetworkFlyoutEnter()
 	{
-		NetworkFlyoutRoot.BeginAnimation(UIElement.OpacityProperty, null);
-		NetworkFlyoutSlide.BeginAnimation(TranslateTransform.XProperty, null);
-		NetworkFlyoutSlide.BeginAnimation(TranslateTransform.YProperty, null);
-		System.Windows.Vector offset = NetworkFlyoutOffset();
-		NetworkFlyoutRoot.Opacity = Motion.Mode == MotionMode.Off ? 1.0 : 0.0;
-		NetworkFlyoutSlide.X = Motion.Mode == MotionMode.Off ? 0.0 : offset.X;
-		NetworkFlyoutSlide.Y = Motion.Mode == MotionMode.Off ? 0.0 : offset.Y;
+		FlyoutPrepare(NetworkFlyoutRoot, NetworkFlyoutSlide);
 	}
 
 	private void AnimateNetworkFlyoutIn()
@@ -7343,42 +7306,8 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		}
 		_networkClosing = false;
 		int token = ++_networkAnimationToken;
-		System.Windows.Vector offset = NetworkFlyoutOffset();
-		NetworkFlyoutRoot.BeginAnimation(UIElement.OpacityProperty, null);
-		NetworkFlyoutSlide.BeginAnimation(TranslateTransform.XProperty, null);
-		NetworkFlyoutSlide.BeginAnimation(TranslateTransform.YProperty, null);
-		if (Motion.Mode == MotionMode.Off)
-		{
-			NetworkFlyoutRoot.Opacity = 1.0;
-			NetworkFlyoutSlide.X = 0.0;
-			NetworkFlyoutSlide.Y = 0.0;
-			NetworkFlyoutRoot.CacheMode = null;
-			return;
-		}
-		NetworkFlyoutRoot.CacheMode = new BitmapCache();
-		Duration duration = Motion.Dur(Motion.Cat.EdgeEnter);
-		IEasingFunction ease = Motion.Ease(Motion.Cat.EdgeEnter);
-		DoubleAnimation fade = new DoubleAnimation(0.0, 1.0, duration)
-		{
-			EasingFunction = ease,
-			FillBehavior = FillBehavior.Stop
-		};
-		fade.Completed += delegate
-		{
-			if (token == _networkAnimationToken && NetPopup.IsOpen && !_networkClosing)
-			{
-				NetworkFlyoutRoot.Opacity = 1.0;
-				NetworkFlyoutSlide.X = 0.0;
-				NetworkFlyoutSlide.Y = 0.0;
-				NetworkFlyoutRoot.CacheMode = null;
-			}
-		};
-		NetworkFlyoutRoot.BeginAnimation(UIElement.OpacityProperty, fade, HandoffBehavior.SnapshotAndReplace);
-		NetworkFlyoutSlide.BeginAnimation(TranslateTransform.XProperty, new DoubleAnimation(offset.X, 0.0, duration) { EasingFunction = ease, FillBehavior = FillBehavior.Stop }, HandoffBehavior.SnapshotAndReplace);
-		NetworkFlyoutSlide.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(offset.Y, 0.0, duration) { EasingFunction = ease, FillBehavior = FillBehavior.Stop }, HandoffBehavior.SnapshotAndReplace);
-		NetworkFlyoutRoot.RenderTransformOrigin = new System.Windows.Point(0.5, 0.5);
-		NetworkFlyoutScale.BeginAnimation(ScaleTransform.ScaleXProperty, new DoubleAnimation(0.985, 1.0, duration) { EasingFunction = ease, FillBehavior = FillBehavior.Stop }, HandoffBehavior.SnapshotAndReplace);
-		NetworkFlyoutScale.BeginAnimation(ScaleTransform.ScaleYProperty, new DoubleAnimation(0.985, 1.0, duration) { EasingFunction = ease, FillBehavior = FillBehavior.Stop }, HandoffBehavior.SnapshotAndReplace);
+		_networkEntering = Motion.Enabled;
+		FlyoutEnter(NetworkFlyoutRoot, NetworkFlyoutSlide, () => token == _networkAnimationToken && NetPopup.IsOpen && !_networkClosing, FlushNetworkEntrance);
 	}
 
 	private void CloseNetworkFlyout(bool animate)
@@ -7389,27 +7318,21 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		}
 		CancelNetworkRefresh();
 		int token = ++_networkAnimationToken;
-		if (!animate || Motion.Mode == MotionMode.Off)
+		_networkEntering = false;
+		_networkEnterPending = null;
+		if (!animate || !Motion.Enabled)
 		{
 			NetPopup.IsOpen = false;
 			return;
 		}
 		_networkClosing = true;
-		NetworkFlyoutRoot.CacheMode = new BitmapCache();
-		System.Windows.Vector offset = NetworkFlyoutOffset();
-		Duration duration = Motion.Dur(Motion.Cat.EdgeExit);
-		IEasingFunction ease = Motion.Ease(Motion.Cat.EdgeExit);
-		DoubleAnimation fade = new DoubleAnimation(0.0, duration) { EasingFunction = ease };
-		fade.Completed += delegate
+		FlyoutExit(NetworkFlyoutRoot, NetworkFlyoutSlide, delegate
 		{
 			if (token == _networkAnimationToken && _networkClosing)
 			{
 				NetPopup.IsOpen = false;
 			}
-		};
-		NetworkFlyoutRoot.BeginAnimation(UIElement.OpacityProperty, fade, HandoffBehavior.SnapshotAndReplace);
-		NetworkFlyoutSlide.BeginAnimation(TranslateTransform.XProperty, new DoubleAnimation(offset.X, duration) { EasingFunction = ease }, HandoffBehavior.SnapshotAndReplace);
-		NetworkFlyoutSlide.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(offset.Y, duration) { EasingFunction = ease }, HandoffBehavior.SnapshotAndReplace);
+		});
 	}
 
 	private void OnNetworkBodyPreviewMouseWheel(object sender, MouseWheelEventArgs e)
@@ -7437,7 +7360,16 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 	{
 		CloseTrayCommandPopups();
 		CloseNetworkFlyout(animate: false);
-		OpenUri("ms-settings:network-wifi");
+		bool wifi = true;
+		try
+		{
+			wifi = NetCaps.HasWifi;
+		}
+		catch
+		{
+		}
+		// an Ethernet-only PC has no Wi-Fi page: the tile reads "Network settings" and opens that page
+		OpenUri(wifi ? "ms-settings:network-wifi" : "ms-settings:network");
 	}
 
 	private void OnOpenNetworkSettings(object sender, RoutedEventArgs e)
@@ -7774,44 +7706,21 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		MonthLabel.Opacity = 1.0;
 		MonthGridSlide.X = 0.0;
 		MonthLabelSlide.X = 0.0;
-		if (Motion.Mode == MotionMode.Off)
+		MonthGrid.CacheMode = null;
+		if (!Motion.Enabled || token != _monthAnimationToken)
 		{
-			MonthGrid.CacheMode = null;
 			return;
 		}
-
-		double from = direction > 0 ? 20.0 : -20.0;
-		Duration duration = Motion.Dur(Motion.Cat.Micro);
-		IEasingFunction ease = Motion.Ease(Motion.Cat.Micro);
-		MonthGrid.CacheMode = new BitmapCache();
-		DoubleAnimation fade = new DoubleAnimation(0.28, 1.0, duration)
-		{
-			EasingFunction = ease,
-			FillBehavior = FillBehavior.Stop
-		};
-		fade.Completed += delegate
-		{
-			if (token == _monthAnimationToken)
-			{
-				MonthGrid.CacheMode = null;
-			}
-		};
+		DoubleAnimation fade = Motion.Anim(0.0, 1.0, Motion.Tok.FadeInShort);
 		MonthGrid.BeginAnimation(UIElement.OpacityProperty, fade, HandoffBehavior.SnapshotAndReplace);
-		MonthLabel.BeginAnimation(UIElement.OpacityProperty, new DoubleAnimation(0.45, 1.0, duration)
+		MonthLabel.BeginAnimation(UIElement.OpacityProperty, Motion.Anim(0.0, 1.0, Motion.Tok.FadeInShort), HandoffBehavior.SnapshotAndReplace);
+		if (Motion.Mode == MotionMode.Reduced)
 		{
-			EasingFunction = ease,
-			FillBehavior = FillBehavior.Stop
-		}, HandoffBehavior.SnapshotAndReplace);
-		MonthGridSlide.BeginAnimation(TranslateTransform.XProperty, new DoubleAnimation(from, 0.0, duration)
-		{
-			EasingFunction = ease,
-			FillBehavior = FillBehavior.Stop
-		}, HandoffBehavior.SnapshotAndReplace);
-		MonthLabelSlide.BeginAnimation(TranslateTransform.XProperty, new DoubleAnimation(from * 0.6, 0.0, duration)
-		{
-			EasingFunction = ease,
-			FillBehavior = FillBehavior.Stop
-		}, HandoffBehavior.SnapshotAndReplace);
+			return;
+		}
+		double from = direction > 0 ? 8.0 : -8.0;
+		MonthGridSlide.BeginAnimation(TranslateTransform.XProperty, Motion.Anim(from, 0.0, Motion.Tok.MoveMicro), HandoffBehavior.SnapshotAndReplace);
+		MonthLabelSlide.BeginAnimation(TranslateTransform.XProperty, Motion.Anim(from * 0.6, 0.0, Motion.Tok.MoveMicro), HandoffBehavior.SnapshotAndReplace);
 	}
 
 	private void ConfigureClockFlyoutSize(double? forcedWidthDiu = null, double? forcedHeightDiu = null)
@@ -7829,28 +7738,29 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		}
 		double availableWidth = _screen.WorkingArea.Width / dpiX;
 		double availableHeight = _screen.WorkingArea.Height / dpiY;
-		double width = forcedWidthDiu ?? Math.Max(300.0, Math.Min(340.0, availableWidth - 10.0));
-		double height = forcedHeightDiu ?? Math.Max(430.0, Math.Min(500.0, availableHeight - 10.0));
-		bool veryCompact = height < 450.0;
-		bool compact = height < 490.0;
+		double width = forcedWidthDiu ?? Math.Max(272.0, Math.Min(304.0, availableWidth - 10.0));
+		double height = forcedHeightDiu ?? Math.Max(392.0, Math.Min(444.0, availableHeight - 10.0));
+		bool veryCompact = height < 404.0;
+		bool compact = height < 444.0;
 
 		ClockFlyoutRoot.Width = width;
 		ClockFlyoutRoot.Height = height;
-		ClockHeaderRow.Height = new GridLength(veryCompact ? 108.0 : (compact ? 118.0 : 126.0));
-		ClockFooterRow.Height = new GridLength(veryCompact ? 50.0 : (compact ? 54.0 : 58.0));
-		CalendarNavRow.Height = new GridLength(veryCompact ? 36.0 : (compact ? 38.0 : 42.0));
-		ClockBodyLayout.Margin = veryCompact ? new Thickness(10.0, 6.0, 10.0, 6.0) : (compact ? new Thickness(12.0, 8.0, 12.0, 8.0) : new Thickness(14.0, 10.0, 14.0, 10.0));
-		MonthGrid.Margin = veryCompact ? new Thickness(0.0, 2.0, 0.0, 0.0) : (compact ? new Thickness(0.0, 3.0, 0.0, 0.0) : new Thickness(0.0, 4.0, 0.0, 0.0));
-		ClockBig.FontSize = veryCompact ? 48.0 : (compact ? 52.0 : 56.0);
-		ClockSeconds.FontSize = veryCompact ? 22.0 : (compact ? 24.0 : 26.0);
-		ClockFull.FontSize = veryCompact ? 14.0 : (compact ? 15.0 : 16.0);
-		MonthLabel.FontSize = veryCompact ? 20.0 : (compact ? 21.0 : 23.0);
+		ClockHeaderRow.Height = new GridLength(veryCompact ? 96.0 : (compact ? 104.0 : 112.0));
+		ClockFooterRow.Height = new GridLength(veryCompact ? 44.0 : (compact ? 48.0 : 52.0));
+		CalendarNavRow.Height = new GridLength(veryCompact ? 32.0 : (compact ? 34.0 : 38.0));
+		ClockBodyLayout.Margin = veryCompact ? new Thickness(8.0, 5.0, 8.0, 5.0) : (compact ? new Thickness(10.0, 7.0, 10.0, 7.0) : new Thickness(12.0, 9.0, 12.0, 9.0));
+		MonthGrid.Margin = veryCompact ? new Thickness(0.0, 2.0, 0.0, 0.0) : (compact ? new Thickness(0.0, 2.0, 0.0, 0.0) : new Thickness(0.0, 3.0, 0.0, 0.0));
+		ClockBig.FontSize = veryCompact ? 42.0 : (compact ? 46.0 : 50.0);
+		ClockSeconds.FontSize = veryCompact ? 20.0 : (compact ? 21.0 : 23.0);
+		ClockFull.FontSize = veryCompact ? 13.0 : (compact ? 13.0 : 14.0);
+		MonthLabel.FontSize = veryCompact ? 20.0 : (compact ? 20.0 : 21.0);
 		for (int i = 0; i < _calendarHeaderLabels.Length; i++)
 		{
 			TextBlock header = _calendarHeaderLabels[i];
 			if (header != null)
 			{
-				header.FontSize = veryCompact ? 10.0 : (compact ? 10.5 : 11.0);
+				// weekday labels never go below 12 px
+				header.FontSize = 12.0;
 			}
 		}
 		for (int i = 0; i < _calendarDayButtons.Length; i++)
@@ -7860,9 +7770,9 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 			{
 				continue;
 			}
-			dayButton.Width = veryCompact ? 28.0 : (compact ? 30.0 : 34.0);
-			dayButton.Height = veryCompact ? 26.0 : (compact ? 28.0 : 32.0);
-			dayButton.FontSize = veryCompact ? 13.0 : (compact ? 14.0 : 15.0);
+			dayButton.Width = veryCompact ? 28.0 : (compact ? 28.0 : 30.0);
+			dayButton.Height = veryCompact ? 26.0 : (compact ? 26.0 : 28.0);
+			dayButton.FontSize = veryCompact ? 13.0 : (compact ? 13.0 : 14.0);
 		}
 	}
 
@@ -7878,26 +7788,9 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		};
 	}
 
-	private System.Windows.Vector ClockFlyoutOffset()
-	{
-		return _position switch
-		{
-			"Top" => new System.Windows.Vector(0.0, -12.0),
-			"Left" => new System.Windows.Vector(-12.0, 0.0),
-			"Right" => new System.Windows.Vector(12.0, 0.0),
-			_ => new System.Windows.Vector(0.0, 12.0)
-		};
-	}
-
 	private void PrepareClockFlyoutEnter()
 	{
-		ClockFlyoutRoot.BeginAnimation(UIElement.OpacityProperty, null);
-		ClockFlyoutSlide.BeginAnimation(TranslateTransform.XProperty, null);
-		ClockFlyoutSlide.BeginAnimation(TranslateTransform.YProperty, null);
-		System.Windows.Vector offset = ClockFlyoutOffset();
-		ClockFlyoutRoot.Opacity = Motion.Mode == MotionMode.Off ? 1.0 : 0.0;
-		ClockFlyoutSlide.X = Motion.Mode == MotionMode.Off ? 0.0 : offset.X;
-		ClockFlyoutSlide.Y = Motion.Mode == MotionMode.Off ? 0.0 : offset.Y;
+		FlyoutPrepare(ClockFlyoutRoot, ClockFlyoutSlide);
 	}
 
 	private void AnimateClockFlyoutIn()
@@ -7908,48 +7801,7 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		}
 		int token = ++_clockAnimationToken;
 		_clockClosing = false;
-		System.Windows.Vector offset = ClockFlyoutOffset();
-		ClockFlyoutRoot.BeginAnimation(UIElement.OpacityProperty, null);
-		ClockFlyoutSlide.BeginAnimation(TranslateTransform.XProperty, null);
-		ClockFlyoutSlide.BeginAnimation(TranslateTransform.YProperty, null);
-		ClockFlyoutRoot.Opacity = 1.0;
-		ClockFlyoutSlide.X = 0.0;
-		ClockFlyoutSlide.Y = 0.0;
-		if (Motion.Mode == MotionMode.Off)
-		{
-			ClockFlyoutRoot.CacheMode = null;
-			return;
-		}
-
-		ClockFlyoutRoot.CacheMode = new BitmapCache();
-		Duration duration = Motion.Dur(Motion.Cat.EdgeEnter);
-		IEasingFunction ease = Motion.Ease(Motion.Cat.EdgeEnter);
-		DoubleAnimation fade = new DoubleAnimation(0.0, 1.0, duration)
-		{
-			EasingFunction = ease,
-			FillBehavior = FillBehavior.Stop
-		};
-		fade.Completed += delegate
-		{
-			if (token == _clockAnimationToken && ClockPopup.IsOpen && !_clockClosing)
-			{
-				ClockFlyoutRoot.CacheMode = null;
-			}
-		};
-		ClockFlyoutRoot.BeginAnimation(UIElement.OpacityProperty, fade, HandoffBehavior.SnapshotAndReplace);
-		ClockFlyoutSlide.BeginAnimation(TranslateTransform.XProperty, new DoubleAnimation(offset.X, 0.0, duration)
-		{
-			EasingFunction = ease,
-			FillBehavior = FillBehavior.Stop
-		}, HandoffBehavior.SnapshotAndReplace);
-		ClockFlyoutSlide.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(offset.Y, 0.0, duration)
-		{
-			EasingFunction = ease,
-			FillBehavior = FillBehavior.Stop
-		}, HandoffBehavior.SnapshotAndReplace);
-		ClockFlyoutRoot.RenderTransformOrigin = new System.Windows.Point(0.5, 0.5);
-		ClockFlyoutScale.BeginAnimation(ScaleTransform.ScaleXProperty, new DoubleAnimation(0.985, 1.0, duration) { EasingFunction = ease, FillBehavior = FillBehavior.Stop }, HandoffBehavior.SnapshotAndReplace);
-		ClockFlyoutScale.BeginAnimation(ScaleTransform.ScaleYProperty, new DoubleAnimation(0.985, 1.0, duration) { EasingFunction = ease, FillBehavior = FillBehavior.Stop }, HandoffBehavior.SnapshotAndReplace);
+		FlyoutEnter(ClockFlyoutRoot, ClockFlyoutSlide, () => token == _clockAnimationToken && ClockPopup.IsOpen && !_clockClosing, null);
 	}
 
 	private void CloseClockFlyout(bool animate)
@@ -7964,37 +7816,20 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		}
 		StopClockTick();
 		int token = ++_clockAnimationToken;
-		if (!animate || Motion.Mode == MotionMode.Off)
+		if (!animate || !Motion.Enabled)
 		{
 			ClockPopup.IsOpen = false;
 			return;
 		}
 
 		_clockClosing = true;
-		ClockFlyoutRoot.CacheMode = new BitmapCache();
-		System.Windows.Vector offset = ClockFlyoutOffset();
-		Duration duration = Motion.Dur(Motion.Cat.EdgeExit);
-		IEasingFunction ease = Motion.Ease(Motion.Cat.EdgeExit);
-		DoubleAnimation fade = new DoubleAnimation(0.0, duration)
-		{
-			EasingFunction = ease
-		};
-		fade.Completed += delegate
+		FlyoutExit(ClockFlyoutRoot, ClockFlyoutSlide, delegate
 		{
 			if (token == _clockAnimationToken && _clockClosing)
 			{
 				ClockPopup.IsOpen = false;
 			}
-		};
-		ClockFlyoutRoot.BeginAnimation(UIElement.OpacityProperty, fade, HandoffBehavior.SnapshotAndReplace);
-		ClockFlyoutSlide.BeginAnimation(TranslateTransform.XProperty, new DoubleAnimation(offset.X, duration)
-		{
-			EasingFunction = ease
-		}, HandoffBehavior.SnapshotAndReplace);
-		ClockFlyoutSlide.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(offset.Y, duration)
-		{
-			EasingFunction = ease
-		}, HandoffBehavior.SnapshotAndReplace);
+		});
 	}
 
 	private void OnOpenDateTimeSettings(object sender, RoutedEventArgs e)
@@ -8132,7 +7967,7 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		_tray.Muted = false;
 		PopulateDevices();
 		RenderDetached((FrameworkElement)VolumePopup.Child, _tray, volumePath);
-		QaRenderClockCalendar(clockPath, DateTime.Now, 340.0, 500.0);
+		QaRenderClockCalendar(clockPath, DateTime.Now, 304.0, 444.0);
 		if (networkPath != null)
 		{
 			ApplyNetworkFlyoutTheme();
@@ -8250,7 +8085,7 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 			: Rect.Empty;
 	}
 
-	public SoundFlyoutQaMetrics QaRenderSoundFlyout(string screenshotPath, double widthDiu = 420.0, double heightDiu = 540.0, string? commandScreenshotPath = null, ImageSource? qaSessionIcon = null)
+	public SoundFlyoutQaMetrics QaRenderSoundFlyout(string screenshotPath, double widthDiu = 376.0, double heightDiu = 480.0, string? commandScreenshotPath = null, ImageSource? qaSessionIcon = null)
 	{
 		StopVolumeTick();
 		Stopwatch total = Stopwatch.StartNew();
@@ -8418,10 +8253,11 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 			ActionTiles = SoundActionGrid.Children.Count,
 			ActionIconsCentered = actionButtons.All(button =>
 				button.Content is Grid content
-					&& content.Children.OfType<Viewbox>().Any(iconBox => iconBox.Width == 30.0
-						&& iconBox.Height == 30.0
+					&& content.Children.OfType<Viewbox>().Any(iconBox => iconBox.MaxWidth == 26.0
+						&& iconBox.MaxHeight == 26.0
 						&& iconBox.HorizontalAlignment == System.Windows.HorizontalAlignment.Center
 						&& iconBox.VerticalAlignment == VerticalAlignment.Center)),
+			ActionLabelsFit = actionButtons.All(ActionTileLabelFits),
 			ActionIconsVector = actionButtons.All(button =>
 				button.Content is Grid content
 					&& content.Children.OfType<Viewbox>().Any(iconBox =>
@@ -8474,7 +8310,7 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 						iconBox.Child is Canvas canvas
 							&& canvas.Children.OfType<Shape>().Any()
 							&& !canvas.Children.OfType<TextBlock>().Any())),
-			RightClickMetroSurface = SoundCommandRoot.Width == 306.0
+			RightClickMetroSurface = SoundCommandRoot.Width == 272.0
 				&& SoundCommandRoot.CornerRadius == new CornerRadius(0.0)
 				&& SoundCommandRoot.Background != null,
 			RightClickCustomPlacement = SoundCommandPopup.Placement == PlacementMode.Custom
@@ -8541,10 +8377,11 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 			ActionTiles = NetworkActionGrid.Children.Count,
 			ActionIconsCentered = actionButtons.All(button =>
 				button.Content is Grid content
-					&& content.Children.OfType<Viewbox>().Any(iconBox => iconBox.Width == 30.0
-						&& iconBox.Height == 30.0
+					&& content.Children.OfType<Viewbox>().Any(iconBox => iconBox.MaxWidth == 26.0
+						&& iconBox.MaxHeight == 26.0
 						&& iconBox.HorizontalAlignment == System.Windows.HorizontalAlignment.Center
 						&& iconBox.VerticalAlignment == VerticalAlignment.Center)),
+			ActionLabelsFit = actionButtons.All(ActionTileLabelFits),
 			ActionIconsVector = actionButtons.All(button =>
 				button.Content is Grid content
 					&& content.Children.OfType<Viewbox>().Any(iconBox =>
@@ -8590,7 +8427,7 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 						iconBox.Child is Canvas canvas
 							&& canvas.Children.OfType<Shape>().Any()
 							&& !canvas.Children.OfType<TextBlock>().Any())),
-			RightClickMetroSurface = NetworkCommandRoot.Width == 326.0
+			RightClickMetroSurface = NetworkCommandRoot.Width == 290.0
 				&& NetworkCommandRoot.CornerRadius == new CornerRadius(0.0)
 				&& NetworkCommandRoot.Background != null,
 			RightClickCustomPlacement = NetworkCommandPopup.Placement == PlacementMode.Custom
@@ -8624,7 +8461,7 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		return base.Resources.Contains(key) ? base.Resources[key] as System.Windows.Media.Brush : null;
 	}
 
-	public ClockCalendarQaMetrics QaRenderClockCalendar(string clockPath, DateTime sample, double widthDiu = 340.0, double heightDiu = 500.0)
+	public ClockCalendarQaMetrics QaRenderClockCalendar(string clockPath, DateTime sample, double widthDiu = 304.0, double heightDiu = 444.0)
 	{
 		Stopwatch total = Stopwatch.StartNew();
 		ApplyClockCalendarTheme();
@@ -9028,14 +8865,6 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		{
 			AppendJumpListForWindow(menu, hwnd, exe);
 		}
-		menu.Items.Add(TaskbarContextMenu.Leaf("Restore / Activate", 59559, delegate
-		{
-			WindowList.Activate(hwnd);
-		}));
-		menu.Items.Add(TaskbarContextMenu.Leaf("Minimize", 59681, delegate
-		{
-			WindowList.Minimize(hwnd);
-		}));
 		// Pinning stays for shared hosts: PinTaskWindow pins their shell app by its AppUserModelID, not the host exe.
 		string? pinExe = (kind == TaskProcessKind.Shell) ? null : exe;
 		if (kind != TaskProcessKind.App)
@@ -9044,42 +8873,109 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 			exe = null;
 			pid = 0;
 		}
-		if (!string.IsNullOrEmpty(exe))
+		// Top level: Open new window, one state-aware window row (Restore when minimized, otherwise Switch to and
+		// Minimize), Pin/Unpin, More, Close. File and process actions live under More, End task away from Close (it is
+		// at the top only for a window that stopped responding).
+		if (!string.IsNullOrEmpty(exe) && CanOpenNewInstance(exe))
 		{
-			menu.Items.Add(TaskbarContextMenu.Sep());
-			menu.Items.Add(TaskbarContextMenu.Leaf("Open file location", 57736, delegate
-			{
-				OpenFileLocation(exe);
-			}));
-			menu.Items.Add(TaskbarContextMenu.Leaf("Copy path", 59592, delegate
-			{
-				CopyToClipboard(exe);
-			}));
-			menu.Items.Add(TaskbarContextMenu.Leaf("Run as administrator", 57767, delegate
-			{
-				RunAsAdmin(exe);
-			}));
-			// The window's own app id lets "Pin to Start" find apps whose app-list id is not their exe (Chrome, Discord).
-			string? windowAppId = null;
+			string newExe = exe;
+			// A packaged app (UWP or MSIX desktop) only starts through its AppUserModelID, as its pinned button does.
+			string? packagedAumid = null;
 			try
 			{
-				windowAppId = AppInventory.GetWindowAppId(hwnd);
+				packagedAumid = AumidForWindow(core != IntPtr.Zero ? core : hwnd);
 			}
 			catch
 			{
 			}
-			FileContextMenu.AppendExtras(menu, exe, windowAppId);
-		}
-		if (pid > 0)
-		{
-			menu.Items.Add(PrioritySub(pid));
-		}
-		if (!string.IsNullOrEmpty(pinExe) && !TaskbarPins.IsPinned(_pins, pinExe))
-		{
-			menu.Items.Add(TaskbarContextMenu.Sep());
-			menu.Items.Add(TaskbarContextMenu.Leaf("Pin to taskbar", 57665, delegate
+			menu.Items.Add(TaskbarContextMenu.Leaf("Open new window", 57724, delegate
 			{
-				PinTaskWindow(hwnd);
+				LaunchNewInstance(newExe, packagedAumid);
+			}));
+		}
+		bool minimized = IsIconic(hwnd);
+		if (minimized)
+		{
+			menu.Items.Add(TaskbarContextMenu.Leaf("Restore", 59559, delegate
+			{
+				WindowList.Activate(hwnd);
+			}));
+		}
+		else
+		{
+			menu.Items.Add(TaskbarContextMenu.Leaf("Switch to", 59559, delegate
+			{
+				WindowList.Activate(hwnd);
+			}));
+			menu.Items.Add(TaskbarContextMenu.Leaf("Minimize", 59681, delegate
+			{
+				WindowList.Minimize(hwnd);
+			}));
+		}
+		if (!string.IsNullOrEmpty(pinExe))
+		{
+			if (!TaskbarPins.IsPinned(_pins, pinExe))
+			{
+				menu.Items.Add(TaskbarContextMenu.Leaf("Pin to taskbar", 57665, delegate
+				{
+					PinTaskWindow(hwnd);
+				}));
+			}
+			else
+			{
+				string unpinExe = pinExe;
+				menu.Items.Add(TaskbarContextMenu.Leaf("Unpin from taskbar", 57750, delegate
+				{
+					UnpinExe(unpinExe);
+				}));
+			}
+		}
+		if (!string.IsNullOrEmpty(exe) || pid > 0)
+		{
+			System.Windows.Controls.MenuItem more = TaskbarContextMenu.Sub("More", 59154);
+			if (!string.IsNullOrEmpty(exe))
+			{
+				more.Items.Add(TaskbarContextMenu.Leaf("Open file location", 57736, delegate
+				{
+					OpenFileLocation(exe);
+				}));
+				more.Items.Add(TaskbarContextMenu.Leaf("Copy path", 59592, delegate
+				{
+					CopyToClipboard(exe);
+				}));
+				more.Items.Add(TaskbarContextMenu.Leaf("Run as administrator", 57767, delegate
+				{
+					RunAsAdmin(exe);
+				}));
+				// The window's own app id lets "Pin to Start" find apps whose app-list id is not their exe (Chrome, Discord).
+				string? windowAppId = null;
+				try
+				{
+					windowAppId = AppInventory.GetWindowAppId(hwnd);
+				}
+				catch
+				{
+				}
+				FileContextMenu.AppendExtras(more, exe, windowAppId);
+			}
+			if (pid > 0)
+			{
+				more.Items.Add(PrioritySub(pid));
+				int endPid = pid;
+				more.Items.Add(TaskbarContextMenu.Sep());
+				more.Items.Add(TaskbarContextMenu.Leaf("End task", 59162, delegate
+				{
+					EndTask(endPid);
+				}));
+			}
+			menu.Items.Add(more);
+		}
+		if (pid > 0 && IsHungAppWindow(hwnd))
+		{
+			int hungPid = pid;
+			menu.Items.Add(TaskbarContextMenu.Leaf("End task", 59162, delegate
+			{
+				EndTask(hungPid);
 			}));
 		}
 		menu.Items.Add(TaskbarContextMenu.Sep());
@@ -9095,17 +8991,9 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		}
 		else
 		{
-			menu.Items.Add(TaskbarContextMenu.Leaf("Close", 59579, delegate
+			menu.Items.Add(TaskbarContextMenu.Leaf("Close window", 59579, delegate
 			{
 				WindowList.Close(hwnd);
-			}));
-		}
-		if (pid > 0)
-		{
-			int endPid = pid;
-			menu.Items.Add(TaskbarContextMenu.Leaf("End task", 59162, delegate
-			{
-				EndTask(endPid);
 			}));
 		}
 		menu.PlacementTarget = (UIElement)sender;
@@ -9379,18 +9267,19 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 			st = (ScaleTransform)(el.RenderTransform = new ScaleTransform(1.0, 1.0));
 			el.RenderTransformOrigin = new System.Windows.Point(0.5, 0.5);
 		}
-		DoubleAnimationUsingKeyFrames anim = new DoubleAnimationUsingKeyFrames();
-		anim.KeyFrames.Add(new EasingDoubleKeyFrame(0.8, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(70L))));
-		anim.KeyFrames.Add(new EasingDoubleKeyFrame(1.0, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(260L)))
+		// launch pulse: 1 -> 0.90 over PressDown, then back over 250 ms DECELERATE (no overshoot); none in calm motion or Off
+		if (!Motion.AllowScale)
 		{
-			EasingFunction = new BackEase
-			{
-				EasingMode = EasingMode.EaseOut,
-				Amplitude = 0.5
-			}
-		});
-		st.BeginAnimation(ScaleTransform.ScaleXProperty, anim);
-		st.BeginAnimation(ScaleTransform.ScaleYProperty, anim);
+			st.BeginAnimation(ScaleTransform.ScaleXProperty, null);
+			st.BeginAnimation(ScaleTransform.ScaleYProperty, null);
+			return;
+		}
+		TimeSpan down = Motion.Time(Motion.Tok.PressDown);
+		DoubleAnimationUsingKeyFrames anim = new DoubleAnimationUsingKeyFrames { FillBehavior = FillBehavior.Stop };
+		anim.KeyFrames.Add(new EasingDoubleKeyFrame(0.90, KeyTime.FromTimeSpan(down), Motion.Decelerate));
+		anim.KeyFrames.Add(new EasingDoubleKeyFrame(1.0, KeyTime.FromTimeSpan(down + Motion.Time(Motion.Tok.MoveShort)), Motion.Decelerate));
+		st.BeginAnimation(ScaleTransform.ScaleXProperty, anim, HandoffBehavior.SnapshotAndReplace);
+		st.BeginAnimation(ScaleTransform.ScaleYProperty, anim, HandoffBehavior.SnapshotAndReplace);
 	}
 
 	private void ActivateOrLaunch(PinnedTile tile)
@@ -9491,6 +9380,8 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 	// "Remove from group" instead, so a right-click there opens a menu rather than silently ungrouping the app.
 	private void AppendPinnedTileItems(System.Windows.Controls.ContextMenu menu, PinnedTile tile, bool inGroupFlyout)
 	{
+		// Open new window, Close window(s) while running, then Unpin, Add to group and More (file actions). Left-click
+		// already activates, so there is no "Activate" row.
 		AppendJumpList(menu, tile);
 		menu.Items.Add(TaskbarContextMenu.Leaf("Open new window", 57724, delegate
 		{
@@ -9498,11 +9389,7 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		}));
 		if (tile.RunningHwnds.Count > 0)
 		{
-			menu.Items.Add(TaskbarContextMenu.Leaf("Activate", 59559, delegate
-			{
-				WindowList.Activate(tile.RunningHwnds[0]);
-			}));
-			menu.Items.Add(TaskbarContextMenu.Leaf("Close", 59579, delegate
+			menu.Items.Add(TaskbarContextMenu.Leaf(tile.RunningHwnds.Count > 1 ? "Close all windows" : "Close window", 59579, delegate
 			{
 				foreach (nint current in tile.RunningHwnds.ToList())
 				{
@@ -9511,18 +9398,19 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 			}));
 		}
 		string exe = tile.ExePath;
+		System.Windows.Controls.MenuItem? more = null;
 		if (!string.IsNullOrEmpty(exe) && File.Exists(exe))
 		{
-			menu.Items.Add(TaskbarContextMenu.Sep());
-			menu.Items.Add(TaskbarContextMenu.Leaf("Open file location", 57736, delegate
+			more = TaskbarContextMenu.Sub("More", 59154);
+			more.Items.Add(TaskbarContextMenu.Leaf("Open file location", 57736, delegate
 			{
 				OpenFileLocation(exe);
 			}));
-			menu.Items.Add(TaskbarContextMenu.Leaf("Copy path", 59592, delegate
+			more.Items.Add(TaskbarContextMenu.Leaf("Copy path", 59592, delegate
 			{
 				CopyToClipboard(exe);
 			}));
-			menu.Items.Add(TaskbarContextMenu.Leaf("Run as administrator", 57767, delegate
+			more.Items.Add(TaskbarContextMenu.Leaf("Run as administrator", 57767, delegate
 			{
 				RunAsAdmin(exe);
 			}));
@@ -9537,7 +9425,7 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 				{
 				}
 			}
-			FileContextMenu.AppendExtras(menu, exe, pinAppId);
+			FileContextMenu.AppendExtras(more, exe, pinAppId);
 		}
 		menu.Items.Add(TaskbarContextMenu.Sep());
 		if (inGroupFlyout)
@@ -9546,6 +9434,10 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 			{
 				RemoveFromGroup(tile);
 			}));
+			if (more != null)
+			{
+				menu.Items.Add(more);
+			}
 			return;
 		}
 		System.Windows.Controls.MenuItem groupMenu = TaskbarContextMenu.Sub("Add to group", TaskbarContextMenu.Leaf("New group…", delegate
@@ -9560,12 +9452,72 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 				SetPinGroup(tile, gn);
 			}));
 		}
-		menu.Items.Add(groupMenu);
 		menu.Items.Add(TaskbarContextMenu.Leaf("Unpin from taskbar", 57750, delegate
 		{
 			Unpin(tile);
 		}));
+		menu.Items.Add(groupMenu);
+		if (more != null)
+		{
+			menu.Items.Add(more);
+		}
 	}
+
+	// A running window's "Open new window": starts the program again through the same launcher a pinned button uses, so a
+	// packaged app is activated by its AppUserModelID (a WindowsApps exe cannot be started directly) and a desktop app
+	// by its Start shortcut when it has one, else its exe.
+	private static void LaunchNewInstance(string exe, string? packagedAumid)
+	{
+		ShellLaunch.Run(delegate
+		{
+			try
+			{
+				if (!AppLauncher.TryLaunch(exe, null, packagedAumid, asAdmin: false, out string? error))
+				{
+					Logger.Log("Open new window failed: " + error);
+				}
+			}
+			catch (Exception ex)
+			{
+				Logger.Log("Open new window failed: " + ex.Message);
+			}
+		});
+	}
+
+	// Hosts whose windows come from their command line (a console snap-in, a Java app, a script or a DLL entry point):
+	// started again without it they open nothing useful, so their windows get no "Open new window".
+	private static readonly HashSet<string> ArgumentHostExes = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+	{
+		"mmc.exe", "java.exe", "javaw.exe", "rundll32.exe", "dllhost.exe", "mshta.exe", "wscript.exe", "cscript.exe", "pythonw.exe", "msiexec.exe"
+	};
+
+	private static bool CanOpenNewInstance(string exe)
+	{
+		try
+		{
+			return !ArgumentHostExes.Contains(System.IO.Path.GetFileName(exe));
+		}
+		catch
+		{
+			return false;
+		}
+	}
+
+	// A running window's "Unpin from taskbar" (its pinned button is the same program).
+	private void UnpinExe(string exe)
+	{
+		PinnedTile? tile = _pinItems.OfType<PinnedTile>().FirstOrDefault(p => string.Equals(p.ExePath, exe, StringComparison.OrdinalIgnoreCase));
+		if (tile != null)
+		{
+			Unpin(tile);
+		}
+	}
+
+	[DllImport("user32.dll")]
+	private static extern bool IsHungAppWindow(nint hwnd);
+
+	[DllImport("user32.dll")]
+	private static extern bool IsIconic(nint hwnd);
 
 	private void AppendJumpList(System.Windows.Controls.ContextMenu menu, PinnedTile tile)
 	{
@@ -9631,7 +9583,7 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		{
 			return;
 		}
-		menu.Items.Insert(insertAt++, TaskbarContextMenu.Leaf("Recent", delegate { }, enabled: false));
+		menu.Items.Insert(insertAt++, TaskbarContextMenu.Caption("Recent"));
 		foreach (JumpList.Item item in recent)
 		{
 			string path = item.Path;
@@ -9731,7 +9683,7 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 			Placement = FlyoutMode(),
 			StaysOpen = false,
 			AllowsTransparency = true,
-			PopupAnimation = PopupAnimation.Fade
+			PopupAnimation = PopupAnimation.None
 		};
 		popup.Child = BuildGroupFlyout(group, delegate
 		{
@@ -9739,20 +9691,21 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		});
 		popup.Opened += OnBarPopupOpened;
 		popup.IsOpen = true;
+		MenuMotion.PlayPopupEntrance(popup.Child, popup.Placement);
 	}
 
 	private Border BuildGroupFlyout(GroupTile group, Action? onClose)
 	{
 		StackPanel panel = new StackPanel
 		{
-			MinWidth = 190.0
+			MinWidth = 170.0
 		};
 		panel.Children.Add(new TextBlock
 		{
 			Text = group.Name,
 			Foreground = System.Windows.Media.Brushes.White,
 			FontFamily = new System.Windows.Media.FontFamily("Segoe UI"),
-			FontSize = 14.0,
+			FontSize = 13.0,
 			FontWeight = FontWeights.SemiBold,
 			Margin = new Thickness(2.0, 0.0, 0.0, 8.0)
 		});
@@ -9765,8 +9718,8 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 			System.Windows.Controls.Image jlImg = new System.Windows.Controls.Image
 			{
 				Source = m.Icon,
-				Width = 22.0,
-				Height = 22.0,
+				Width = 20.0,
+				Height = 20.0,
 				Margin = new Thickness(0.0, 0.0, 10.0, 0.0)
 			};
 			RenderOptions.SetBitmapScalingMode(jlImg, BitmapScalingMode.HighQuality);
@@ -10461,18 +10414,19 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 				st = (ScaleTransform)(el.RenderTransform = new ScaleTransform(1.0, 1.0));
 				el.RenderTransformOrigin = new System.Windows.Point(0.5, 0.5);
 			}
-			DoubleAnimationUsingKeyFrames anim = new DoubleAnimationUsingKeyFrames();
-			anim.KeyFrames.Add(new EasingDoubleKeyFrame(0.82, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(80L)), new CubicEase
+			// press pulse: 1 -> 0.92 over PressDown, back over PressUp (no overshoot); none in calm motion or Off
+			if (!Motion.AllowScale)
 			{
-				EasingMode = EasingMode.EaseOut
-			}));
-			anim.KeyFrames.Add(new EasingDoubleKeyFrame(1.0, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(300L)), new BackEase
-			{
-				EasingMode = EasingMode.EaseOut,
-				Amplitude = 0.7
-			}));
-			st.BeginAnimation(ScaleTransform.ScaleXProperty, anim);
-			st.BeginAnimation(ScaleTransform.ScaleYProperty, anim);
+				st.BeginAnimation(ScaleTransform.ScaleXProperty, null);
+				st.BeginAnimation(ScaleTransform.ScaleYProperty, null);
+				return;
+			}
+			TimeSpan down = Motion.Time(Motion.Tok.PressDown);
+			DoubleAnimationUsingKeyFrames anim = new DoubleAnimationUsingKeyFrames { FillBehavior = FillBehavior.Stop };
+			anim.KeyFrames.Add(new EasingDoubleKeyFrame(0.92, KeyTime.FromTimeSpan(down), Motion.Decelerate));
+			anim.KeyFrames.Add(new EasingDoubleKeyFrame(1.0, KeyTime.FromTimeSpan(down + Motion.Time(Motion.Tok.PressUp)), Motion.Decelerate));
+			st.BeginAnimation(ScaleTransform.ScaleXProperty, anim, HandoffBehavior.SnapshotAndReplace);
+			st.BeginAnimation(ScaleTransform.ScaleYProperty, anim, HandoffBehavior.SnapshotAndReplace);
 		}
 	}
 

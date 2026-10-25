@@ -155,17 +155,9 @@ public partial class CharmsBar : Window, IComponentConnector
 			_proximityTimer.Stop();
 		}
 		BarRoot.RenderTransform = _slide;
-		if (!wasVisible)
-		{
-			// fresh open: snap off-screen first so the entrance still slides in
-			_slide.BeginAnimation(TranslateTransform.XProperty, null);
-			_slide.X = base.Width;
-		}
-		// omit From so a re-trigger mid-flight animates from the current position (interruptible)
-		_slide.BeginAnimation(TranslateTransform.XProperty, new DoubleAnimation(0.0, Motion.Dur(Motion.Cat.EdgeEnter))
-		{
-			EasingFunction = Motion.Ease(Motion.Cat.EdgeEnter)
-		});
+		// fresh open: from the edge (86 DIP over 250 ms SOFT DECELERATE; calm motion 24 DIP with a fade). The animation omits
+		// From, so a re-trigger mid-flight continues from the current position (interruptible).
+		PaneMotion.Enter(_slide, BarRoot, base.Width, fresh: !wasVisible);
 	}
 
 	// Progressive reveal driven by the right-edge pull gesture. reveal 0 = fully hidden, 1 = fully revealed. On the
@@ -246,20 +238,16 @@ public partial class CharmsBar : Window, IComponentConnector
 		_proximityTimer.Stop();
 		_clock?.HideAnimated();
 		BarRoot.RenderTransform = _slide;
-		// omit From so an interrupted show slides out from its current position
-		DoubleAnimation slide = new DoubleAnimation(base.Width, Motion.Dur(Motion.Cat.EdgeExit))
-		{
-			EasingFunction = Motion.Ease(Motion.Cat.EdgeExit)
-		};
-		slide.Completed += delegate
+		// out over 167 ms ACCELERATE from wherever it is (an interrupted show slides out from its current position)
+		PaneMotion.Exit(_slide, BarRoot, base.Width, delegate
 		{
 			if (_hiding)
 			{
 				Hide();
 				_hiding = false;
+				PaneMotion.Reset(_slide, BarRoot, base.Width);
 			}
-		};
-		_slide.BeginAnimation(TranslateTransform.XProperty, slide);
+		});
 	}
 
 	public void ToggleCharms()

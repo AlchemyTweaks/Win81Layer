@@ -53,17 +53,17 @@ public sealed class OsdWindow : Window
 		_icon = new TextBlock
 		{
 			FontFamily = new System.Windows.Media.FontFamily("Segoe MDL2 Assets"),
-			FontSize = 24.0,
+			FontSize = 22.0,
 			Foreground = System.Windows.Media.Brushes.White,
 			VerticalAlignment = VerticalAlignment.Center,
-			Width = 34.0,
+			Width = 30.0,
 			TextAlignment = TextAlignment.Center
 		};
 		// Authentic SndVolSSO speaker (falls back to the MDL2 glyph in _icon when the asset can't resolve).
 		_iconImg = new System.Windows.Controls.Image
 		{
-			Width = 24.0,
-			Height = 24.0,
+			Width = 22.0,
+			Height = 22.0,
 			Stretch = Stretch.Uniform,
 			VerticalAlignment = VerticalAlignment.Center,
 			HorizontalAlignment = System.Windows.HorizontalAlignment.Center,
@@ -72,7 +72,7 @@ public sealed class OsdWindow : Window
 		};
 		System.Windows.Controls.Grid iconSlot = new System.Windows.Controls.Grid
 		{
-			Width = 34.0,
+			Width = 30.0,
 			VerticalAlignment = VerticalAlignment.Center
 		};
 		iconSlot.Children.Add(_icon);
@@ -87,8 +87,8 @@ public sealed class OsdWindow : Window
 		{
 			Border s = new Border
 			{
-				Width = 13.0,
-				Height = 24.0,
+				Width = 12.0,
+				Height = 20.0,
 				Margin = new Thickness(0.0, 0.0, 4.0, 0.0),
 				Background = EmptyFor()
 			};
@@ -99,7 +99,7 @@ public sealed class OsdWindow : Window
 		{
 			Text = "0",
 			FontFamily = new System.Windows.Media.FontFamily("Segoe UI"),
-			FontSize = 22.0,
+			FontSize = 20.0,
 			Foreground = System.Windows.Media.Brushes.White,
 			VerticalAlignment = VerticalAlignment.Center,
 			MinWidth = 42.0,
@@ -115,7 +115,7 @@ public sealed class OsdWindow : Window
 		base.Content = new Border
 		{
 			Background = CardBackground(),
-			Padding = new Thickness(16.0, 11.0, 16.0, 11.0),
+			Padding = new Thickness(14.0, 10.0, 14.0, 10.0),
 			Child = row
 		};
 		_hide = new DispatcherTimer
@@ -235,7 +235,8 @@ public sealed class OsdWindow : Window
 		UpdateLayout();
 		Reposition();
 		_fadingOut = false;
-		BeginAnimation(UIElement.OpacityProperty, Motion.To(1.0, Motion.Cat.Micro));
+		// in over 83 ms linear (FadeInShort)
+		BeginAnimation(UIElement.OpacityProperty, new DoubleAnimation(1.0, Motion.Dur(Motion.Tok.FadeInShort)) { EasingFunction = Motion.Ease(Motion.Tok.FadeInShort) }, HandoffBehavior.SnapshotAndReplace);
 		_hide.Stop();
 		_hide.Start();
 	}
@@ -243,7 +244,8 @@ public sealed class OsdWindow : Window
 	private void FadeOut()
 	{
 		_fadingOut = true;
-		DoubleAnimation a = Motion.To(0.0, Motion.Cat.Exit);
+		// out over 167 ms linear (FadeOutLong)
+		DoubleAnimation a = new DoubleAnimation(0.0, Motion.Dur(Motion.Tok.FadeOutLong)) { EasingFunction = Motion.Ease(Motion.Tok.FadeOutLong) };
 		a.Completed += delegate
 		{
 			if (_fadingOut)

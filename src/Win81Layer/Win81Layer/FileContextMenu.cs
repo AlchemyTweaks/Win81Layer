@@ -51,16 +51,20 @@ internal static class FileContextMenu
 		TaskbarContextMenu.PrepareForInstantOpen(menu);
 	}
 
-	internal static void AppendExtras(ContextMenu menu, string path, string? appId = null)
+	// target: the menu itself or a "More" submenu. "Open with..." is left out for a program (.exe), which opens itself.
+	internal static void AppendExtras(ItemsControl menu, string path, string? appId = null)
 	{
 		if (string.IsNullOrEmpty(path))
 		{
 			return;
 		}
-		menu.Items.Add(TaskbarContextMenu.Leaf("Open with…", 59308, delegate
+		if (!path.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
 		{
-			FileShell.OpenWith(path);
-		}));
+			menu.Items.Add(TaskbarContextMenu.Leaf("Open with…", 59308, delegate
+			{
+				FileShell.OpenWith(path);
+			}));
+		}
 		if (PinToStart != null)
 		{
 			menu.Items.Add(TaskbarContextMenu.Leaf("Pin to Start", 57665, delegate

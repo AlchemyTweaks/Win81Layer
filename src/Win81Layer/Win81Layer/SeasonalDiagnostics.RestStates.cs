@@ -427,7 +427,7 @@ internal static partial class SeasonalDiagnostics
     // Called from RestFlyouts: the volume flyout tall enough for its app cards, a second app with a black logo.
     private static void RestVolumeRender(string path, TaskbarWindow taskbar)
     {
-        taskbar.QaRenderSoundFlyout(path, 420.0, 760.0, null, GlyphIcon(Colors.Black));
+        taskbar.QaRenderSoundFlyout(path, 376.0, 760.0, null, GlyphIcon(Colors.Black));
         _restVolumeDefault = taskbar.QaVolumeRowBounds(capture: false, 0);
         _restVolumeOther = taskbar.QaVolumeRowBounds(capture: true, 1);
         _restVolumeCard = taskbar.QaVolumeSessionBounds(1);
@@ -610,7 +610,8 @@ internal static partial class SeasonalDiagnostics
             Spot("share row detail", "share-rest.png", new Int32Rect(68, 146, 140, 12), new Int32Rect(250, 146, 60, 12), 4.5);
             Spot("share unavailable row", "share-rest.png", new Int32Rect(68, 240, 100, 16), new Int32Rect(250, 240, 60, 16), 4.5);
             Spot("devices title", "devices-rest.png", new Int32Rect(24, 24, 140, 40), new Int32Rect(220, 24, 100, 40), 4.5);
-            Spot("power item", "settings-power-rest.png", new Int32Rect(60, 40, 100, 16), new Int32Rect(176, 40, 16, 16), 4.5);
+            // the second row ("Shut down"): 32 px rows, text from 12 px inside the flyout
+            Spot("power item", "settings-power-rest.png", new Int32Rect(30, 58, 60, 14), new Int32Rect(150, 58, 16, 14), 4.5);
             Check("rest-panes-soft-ink", bad.Count == 0, bad.Count == 0 ? string.Join(" ", got) : string.Join(" ; ", bad) + " | " + string.Join(" ", got));
         }
         // PC Settings: the outline of a secondary action button stays one crisp pixel (3:1 on the black page)
@@ -643,8 +644,9 @@ internal static partial class SeasonalDiagnostics
         RestSearchScrollBarCheck(outDir, start, real);
     }
 
-    // The notification card's icon centre in actioncenter-rest-notifications.png (found from the render).
-    private static readonly (int X, int Y) _restNotificationIcon = (48, 152);
+    // The notification card's icon centre in actioncenter-rest-notifications.png (found from the render; the compact
+    // header moved the first card up 15 px, so the logo sample sits inside the logo again and the card sample on the card).
+    private static readonly (int X, int Y) _restNotificationIcon = (48, 137);
 
     // The bottom edge of a secondary action button ("Restore previous") in pcsettings-rest-launcher.png.
     private static readonly (int X, int Y) _restSecondaryButton = (150, 349);

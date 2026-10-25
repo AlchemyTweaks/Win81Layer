@@ -1111,20 +1111,35 @@ internal static partial class SeasonalDiagnostics
 		Spot("action center title", "actioncenter-rest.png", new Int32Rect(22, 28, 210, 40), new Int32Rect(250, 20, 120, 50), 4.5);
 		Spot("toast title", "toast-rest.png", new Int32Rect(56, 8, 160, 40), new Int32Rect(4, 4, 10, 60), 4.5);
 		Spot("clock digits", "flyout-clock-rest.png", new Int32Rect(20, 20, 200, 60), new Int32Rect(240, 10, 80, 30), 4.5);
+		// the QA menu at (20, 20): 1 px border, 3 px padding, 32 px rows (row tops 24, 56, 88; separator 120-127; the keyboard
+		// row 127-159), text from x = 50
 		Spot("menu item", "contextmenu-rest.png", new Int32Rect(50, 30, 120, 20), new Int32Rect(170, 28, 40, 24), 4.5);
-		Spot("menu disabled item", "contextmenu-rest.png", new Int32Rect(50, 102, 130, 20), new Int32Rect(185, 100, 25, 24), 4.5);
-		Spot("menu keyboard row", "contextmenu-rest.png", new Int32Rect(50, 145, 100, 24), new Int32Rect(28, 146, 16, 22), 4.5);
+		Spot("menu disabled item", "contextmenu-rest.png", new Int32Rect(50, 94, 130, 20), new Int32Rect(185, 92, 25, 24), 4.5);
+		Spot("menu keyboard row", "contextmenu-rest.png", new Int32Rect(50, 131, 100, 24), new Int32Rect(28, 132, 16, 22), 4.5);
 		Spot("caption title active", "caption-rest.png", new Int32Rect(40, 8, 100, 16), new Int32Rect(200, 4, 200, 24), 4.5);
 		Spot("caption title inactive", "caption-rest.png", new Int32Rect(40, 46, 100, 16), new Int32Rect(200, 42, 200, 24), 4.5);
 		Spot("tooltip text", "tooltip-rest.png", new Int32Rect(28, 26, 200, 18), new Int32Rect(30, 20, 4, 4), 4.5);
 		Spot("action center tile off", "actioncenter-rest.png", new Int32Rect(246, 566, 80, 18), new Int32Rect(300, 530, 30, 20), 4.5);
 		Spot("action center tile on", "actioncenter-rest.png", new Int32Rect(28, 566, 80, 18), new Int32Rect(60, 530, 30, 20), 4.5);
-		Spot("osd value", "osd-rest.png", new Int32Rect(360, 10, 40, 30), new Int32Rect(4, 4, 10, 40), 4.5);
+		// the OSD card is 376 DIP wide now (12x20 segments): its value sits at the right, before the 14 px padding
+		Spot("osd value", "osd-rest.png", new Int32Rect(326, 10, 40, 28), new Int32Rect(4, 4, 10, 38), 4.5);
 		// the review follow-ups: the selected calendar day, "Clear all" with nothing to clear, the zoomed-out group name,
 		// the hollow OSD segments, the outline of a plain button and of a slider's remainder, and the open category of
 		// PC Settings (its fill against the navigation pane and its ink on it)
 		Spot("clock selected day", "flyout-clock-rest.png", new Int32Rect(66, 398, 32, 30), new Int32Rect(66, 398, 32, 30), 4.5);
-		Spot("action center clear all, nothing to clear", "actioncenter-rest.png", new Int32Rect(398, 36, 52, 16), new Int32Rect(320, 30, 60, 30), 4.5);
+		// "Clear all" with nothing to clear is not shown at all now (it used to be a dimmed link): nothing is drawn there
+		{
+			string acPath = Path.Combine(outDir, "actioncenter-rest.png");
+			if (File.Exists(acPath))
+			{
+				double c = ContrastIn(acPath, new Int32Rect(398, 36, 52, 16), new Int32Rect(320, 30, 60, 30));
+				got.Add($"action center clear all hidden={c:F2}");
+				if (c > 1.2)
+				{
+					bad.Add($"action center clear all is drawn with nothing to clear ({c:F2})");
+				}
+			}
+		}
 		Spot("zoom group name", "start-rest-zoom.png", new Int32Rect(370, 384, 80, 20), new Int32Rect(470, 384, 80, 20), 4.5);
 		Spot("osd empty outline", "osd-rest.png", new Int32Rect(240, 12, 30, 20), new Int32Rect(247, 15, 8, 10), 3.0);
 		Spot("button outline", "controls-rest.png", new Int32Rect(240, 559, 70, 6), new Int32Rect(240, 540, 70, 8), 3.0);
@@ -1159,7 +1174,9 @@ internal static partial class SeasonalDiagnostics
 		}
 	}
 
-	private static void RenderContextMenu(string path)
+	// The QA menu: a plain row, a submenu header (chevron), a disabled row, a separator, the keyboard row with a shortcut
+	// and a plain last row.
+	private static ContextMenu BuildQaContextMenu()
 	{
 		ContextMenu ctx = new ContextMenu { Style = (Style)Application.Current.Resources["Win81ContextMenu"] };
 		TaskbarContextMenu.ApplyTheme(ctx);
@@ -1169,24 +1186,75 @@ internal static partial class SeasonalDiagnostics
 		ctx.Items.Add(TaskbarContextMenu.Sep());
 		ctx.Items.Add(new QaHighlightedItem { Header = "Task Manager", InputGestureText = "Ctrl+Shift+Esc", Style = TaskbarContextMenu.ItemStyle });
 		ctx.Items.Add(TaskbarContextMenu.Leaf("Properties", delegate { }));
+		return ctx;
+	}
+
+	private static void RenderContextMenu(string path)
+	{
+		ContextMenu ctx = BuildQaContextMenu();
 		TaskbarContextMenu.PrepareForInstantOpen(ctx);
 		double w = Math.Ceiling(ctx.ActualWidth);
 		double h = Math.Ceiling(ctx.ActualHeight);
-		// the mouse-hover row, drawn with the menu's own hover colours below the menu
+		// the mouse-hover row, drawn with the menu's own hover colours below the menu: a one-row menu (border of
+		// M.BorderThickness, 3 px padding) whose 30 px row (inside the 1 px item border) shows the hover fill and 14 px text
 		DrawingVisual dv = new DrawingVisual();
 		RenderTargetBitmap menu = new RenderTargetBitmap((int)Math.Max(1, w), (int)Math.Max(1, h), 96, 96, PixelFormats.Pbgra32);
 		menu.Render(ctx);
 		Color bg = TaskbarContextMenu.QaMenuColor("M.Bg");
+		double b = TaskbarContextMenu.BorderThicknessNow();
 		using (DrawingContext dc = dv.RenderOpen())
 		{
 			dc.DrawRectangle(new SolidColorBrush(Color.FromRgb(0x30, 0x30, 0x30)), null, new Rect(0, 0, w + 40, h + 90));
 			dc.DrawImage(menu, new Rect(20, 20, w, h));
-			dc.DrawRectangle(new SolidColorBrush(Win7Palette.Over(bg, Color.FromRgb(0x30, 0x30, 0x30))), new Pen(new SolidColorBrush(TaskbarContextMenu.QaMenuColor("M.Border")), 2), new Rect(21, h + 30, w - 8, 44));
-			dc.DrawRectangle(new SolidColorBrush(TaskbarContextMenu.QaMenuColor("M.Hover")), null, new Rect(23, h + 35, w - 12, 34));
-			FormattedText ft = new FormattedText("Lock the taskbar (hover)", CultureInfo.InvariantCulture, FlowDirection.LeftToRight, new Typeface("Segoe UI"), 15, new SolidColorBrush(TaskbarContextMenu.QaMenuColor("M.Fg")), 1.0);
-			dc.DrawText(ft, new Point(23 + 31, h + 42));
+			double top = h + 30;
+			double outerH = b + 3 + 32 + 3 + b;
+			dc.DrawRectangle(new SolidColorBrush(TaskbarContextMenu.QaMenuColor("M.Border")), null, new Rect(20, top, w, outerH));
+			dc.DrawRectangle(new SolidColorBrush(Win7Palette.Over(bg, Color.FromRgb(0x30, 0x30, 0x30))), null, new Rect(20 + b, top + b, w - 2 * b, outerH - 2 * b));
+			dc.DrawRectangle(new SolidColorBrush(TaskbarContextMenu.QaMenuColor("M.Hover")), null, new Rect(20 + b + 1, top + b + 3 + 1, w - 2 * b - 2, 30));
+			FormattedText ft = new FormattedText("Lock the taskbar (hover)", CultureInfo.InvariantCulture, FlowDirection.LeftToRight, new Typeface("Segoe UI"), 14, new SolidColorBrush(TaskbarContextMenu.QaMenuColor("M.Fg")), 1.0);
+			dc.DrawText(ft, new Point(20 + b + 1 + 24 + 4, top + b + 3 + 1 + (30 - ft.Height) / 2));
 		}
 		SavePng(Render(dv, (int)w + 40, (int)h + 90), path);
+	}
+
+	// The QA menu laid out at another DPI (VisualTreeHelper.SetRootDpi, so layout rounding and the 1 DIP borders snap to
+	// that device grid) and rendered at that DPI: rows must be exactly 40 px at 120 dpi and 48 px at 144 dpi. Returns the
+	// row heights in device pixels.
+	private static List<double> RenderContextMenuDpi(string path, double dpi)
+	{
+		double scale = dpi / 96.0;
+		ContextMenu ctx = BuildQaContextMenu();
+		VisualTreeHelper.SetRootDpi(ctx, new DpiScale(scale, scale));
+		TaskbarContextMenu.PrepareForInstantOpen(ctx);
+		int pw = (int)Math.Ceiling(ctx.ActualWidth * scale);
+		int ph = (int)Math.Ceiling(ctx.ActualHeight * scale);
+		RenderTargetBitmap bmp = new RenderTargetBitmap(Math.Max(1, pw), Math.Max(1, ph), dpi, dpi, PixelFormats.Pbgra32);
+		bmp.Render(ctx);
+		SavePng(bmp, path);
+		List<double> rows = new List<double>();
+		foreach (object o in ctx.Items)
+		{
+			if (o is MenuItem mi)
+			{
+				rows.Add(Math.Round(mi.ActualHeight * scale, 3));
+			}
+		}
+		return rows;
+	}
+
+	// 120 and 144 dpi variants of the QA menu in the current look ("contextmenu-<tag>-120.png" / "-144.png").
+	private static void RenderContextMenuDpiSet(string outDir, string tag, List<string> bad, List<string> got)
+	{
+		foreach (double dpi in new double[2] { 120.0, 144.0 })
+		{
+			List<double> rows = RenderContextMenuDpi(Path.Combine(outDir, $"contextmenu-{tag}-{(int)dpi}.png"), dpi);
+			double want = 32.0 * dpi / 96.0;
+			got.Add($"{tag}@{(int)dpi}=[{string.Join(",", rows)}]");
+			if (rows.Count == 0 || rows.Any(r => Math.Abs(r - want) > 0.01))
+			{
+				bad.Add($"{tag}@{(int)dpi} rows {string.Join(",", rows)} != {want}");
+			}
+		}
 	}
 
 	private static void RenderControls(string path, Brush page)

@@ -371,7 +371,7 @@ internal static class DarkRestPalette
 
 	// ----- the Metro controls: one table for the application scope (every window) and for the PC Settings window. The
 	// accent-role keys (focus border, links, slider fill, MenuAccent) carry the accent family instead of the Start accent.
-	private static readonly (string Key, string Hex)[] ControlTokens = new (string, string)[53]
+	private static readonly (string Key, string Hex)[] ControlTokens = new (string, string)[54]
 	{
 		("Metro81.Surface", "#FF141414"),
 		("Metro81.Ink", "#FFDCDCDC"),
@@ -397,6 +397,8 @@ internal static class DarkRestPalette
 		("Metro81.HighlightSurface", "#FF4E7179"),
 		("Metro81.HighlightInk", "#FFEEEEEE"),
 		("Metro81.HighlightGesture", "#FFEEEEEE"),
+		// the shortcut column of a menu: 8.6:1 on the menu, 6.0:1 on the hover row
+		("Metro81.MenuGesture", "#FFAAAAAA"),
 		("Metro81.OnAccentInk", "#FFEEEEEE"),
 		("Metro81.NavInk", "#FFDCDCDC"),
 		("Metro81.SliderTrack", "#FF333333"),
@@ -441,8 +443,10 @@ internal static class DarkRestPalette
 	// Values of the control family that are not brushes: disabled controls and rows keep their text at 4.5:1 on the
 	// black panes (the secondary ink at 0.72 is #7D7D7D on #0A0A0A, the soft ink #A1A1A1), and selected text is a little
 	// stronger.
-	private static readonly (string Key, object Value)[] ControlValues = new (string, object)[3]
+	private static readonly (string Key, object Value)[] ControlValues = new (string, object)[4]
 	{
+		// the menu border is 1 DIP on black (as in Windows dark)
+		("Metro81.MenuBorderThickness", new Thickness(1.0)),
 		("Metro81.DisabledOpacity", 0.72),
 		("Metro81.DisabledRowOpacity", 0.72),
 		("Metro81.TextSelectionOpacity", 0.5)

@@ -28,8 +28,8 @@ internal static class ActionCenterDiagnostics
 			Dictionary<string, string> stateBefore = HashMutableState();
 			try
 			{
-				ActionCenterQaMetrics empty = ActionCenter.QaRenderMetro(emptyScreenshot, 440.0, 860.0, compact: false, withNotifications: false);
-				ActionCenterQaMetrics notifications = ActionCenter.QaRenderMetro(notificationsScreenshot, 440.0, 860.0, compact: false, withNotifications: true);
+				ActionCenterQaMetrics empty = ActionCenter.QaRenderMetro(emptyScreenshot, 392.0, 860.0, compact: false, withNotifications: false);
+				ActionCenterQaMetrics notifications = ActionCenter.QaRenderMetro(notificationsScreenshot, 392.0, 860.0, compact: false, withNotifications: true);
 				ActionCenterQaMetrics compact = ActionCenter.QaRenderMetro(compactScreenshot, 376.0, 700.0, compact: true, withNotifications: true);
 
 				Dictionary<string, string> stateAfter = HashMutableState();
@@ -39,7 +39,7 @@ internal static class ActionCenterDiagnostics
 				FileInfo[] screenshots = { new FileInfo(emptyScreenshot), new FileInfo(notificationsScreenshot), new FileInfo(compactScreenshot) };
 				var checks = new Dictionary<string, bool>
 				{
-					["full-layout-440x860"] = empty.WidthDiu == 440.0 && empty.HeightDiu == 860.0 && notifications.WidthDiu == 440.0 && notifications.HeightDiu == 860.0,
+					["full-layout-392x860"] = empty.WidthDiu == 392.0 && empty.HeightDiu == 860.0 && notifications.WidthDiu == 392.0 && notifications.HeightDiu == 860.0,
 					["compact-layout-376x700"] = compact.WidthDiu == 376.0 && compact.HeightDiu == 700.0,
 					["four-column-reference-order"] = metrics.All(item => item.TileColumns == 4 && item.FourColumnReferenceOrder),
 					["all-tiles-have-exact-functional-route-contracts"] = metrics.All(item => item.DefinedTiles >= 13
@@ -51,7 +51,7 @@ internal static class ActionCenterDiagnostics
 						&& item.MapsTarget == "https://www.google.com/maps"),
 					["premium-vector-icons-and-active-state"] = metrics.All(item => item.IconsAreVectors
 						&& item.IconsUseUniformPremiumGeometry
-						&& item.TileIconSizeDiu == 34.0
+						&& item.TileIconSizeDiu == 30.0
 						&& item.ActiveChecksPresent
 						&& item.StatefulTiles >= 6),
 					["laptop-and-desktop-device-rules"] = metrics.All(item => item.LaptopRulesPassed && item.DesktopRulesPassed),
@@ -65,7 +65,7 @@ internal static class ActionCenterDiagnostics
 					["bounded-smooth-scroll-and-wide-hit-target"] = metrics.All(item => item.NotificationViewportBounded && item.PixelScrollingEnabled && item.ScrollBarHitWidthDiu >= 14.0) && notifications.ScrollRangeDiu > 0.0 && compact.ScrollRangeDiu > 0.0,
 					["start-theme-background-synchronized"] = metrics.All(item => item.ThemeBackgroundSynchronized),
 					["red-blue-theme-switch-is-not-hardcoded"] = metrics.All(item => item.ThemeSwitchPassed),
-					["authentic-motion-contract"] = metrics.All(item => item.AuthenticOpenMs == 250 && item.AuthenticCloseMs == 200 && item.TileHoverMs == 100 && item.TileClickMs == 100 && item.NotificationTransitionMs == 200 && item.ClearAllTransitionMs == 150),
+					["authentic-motion-contract"] = metrics.All(item => item.AuthenticOpenMs == 250 && item.AuthenticCloseMs == 100 && item.TileHoverMs == 100 && item.TileClickMs == 100 && item.NotificationTransitionMs == 250 && item.ClearAllTransitionMs == 100),
 					["cold-build-under-350ms-and-warm-build-under-50ms"] = empty.VisualBuildMs <= 350 && notifications.VisualBuildMs <= 50 && compact.VisualBuildMs <= 50,
 					["render-and-layout-under-1000ms"] = metrics.All(item => item.RenderAndLayoutMs <= 1000),
 					["zero-closed-idle-worker-or-render-hook"] = metrics.All(item => !item.RefreshWorkerActiveDuringDetachedRender && item.IdleRenderingHookInactive),

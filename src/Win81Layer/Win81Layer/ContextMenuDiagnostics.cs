@@ -13,7 +13,7 @@ using System.Windows.Threading;
 
 namespace Win81Layer;
 
-internal static class ContextMenuDiagnostics
+internal static partial class ContextMenuDiagnostics
 {
 	private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
 
@@ -54,7 +54,11 @@ internal static class ContextMenuDiagnostics
 				double desktopP95 = Percentile(desktop, 0.95);
 				double fileP95 = Percentile(file, 0.95);
 				double dynamicP95 = Percentile(dynamicMenu, 0.95);
-				bool passed = themeP95 < 2.0
+				// the visual part (after the timings): the real menus in three looks and the entrance filmstrip
+				Filmstrip film = RenderEntranceFilmstrip(directory);
+				List<string> looks = RenderLooks(directory);
+				bool passed = film.Ok
+					&& themeP95 < 2.0
 					&& taskbarP95 < 8.0
 					&& desktopP95 < 8.0
 					&& fileP95 < 16.67
@@ -86,6 +90,10 @@ internal static class ContextMenuDiagnostics
 					DesktopMenuIsCachedAndPremeasured = true,
 					HeavyCommandsLeaveTheUiThread = true,
 					CapturedTargetRemainsStableAfterMenuReuse = capturedTargetStable,
+					EntranceFilmstripPassed = film.Ok,
+					EntranceFilmstrip = film.Detail,
+					EntranceFrames = film.Frames,
+					LookRenders = looks,
 					ReportPath = reportPath
 				});
 				Logger.Log($"CONTEXTMENUQA: passed={passed} taskbarP95={taskbarP95:F2}ms desktopP95={desktopP95:F2}ms fileP95={fileP95:F2}ms dynamicP95={dynamicP95:F2}ms queuePost={queuePostReturnMs:F3}ms queueCallback={queueLatencyMs:F2}ms");

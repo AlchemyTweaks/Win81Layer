@@ -3128,6 +3128,14 @@ public partial class App : System.Windows.Application
 		{
 			Logger.Log("AppSwitcher init failed, keeping Task View: " + ex3.Message);
 		}
+		// the taskbar menu's Properties opens the launcher's own taskbar settings
+		TaskbarContextMenu.OpenTaskbarProperties = delegate
+		{
+			((DispatcherObject)this).Dispatcher.BeginInvoke((Delegate)(Action)delegate
+			{
+				OpenPcSettings("Launcher");
+			}, Array.Empty<object>());
+		};
 		FileContextMenu.PinToStart = delegate(string path, string? appId)
 		{
 			((DispatcherObject)this).Dispatcher.BeginInvoke((Delegate)(Action)delegate
@@ -3212,6 +3220,8 @@ public partial class App : System.Windows.Application
 			}, Array.Empty<object>());
 		};
 		HookSecondaryMonitorPopupRendering();
+		// one entrance for every menu and submenu (83 ms fade + 4 DIP slide; calm motion fades only, Off is instant)
+		MenuMotion.Hook();
 		_taskbar = new TaskbarManager();
 		_taskbar.StartRequested += delegate
 		{
@@ -3811,514 +3821,76 @@ public partial class App : System.Windows.Application
 		((DispatcherObject)this).Dispatcher.BeginInvoke((Delegate)(Action)delegate
 		{
 		ContextMenuStrip menu = new ContextMenuStrip();
-		// 8.1 Metro look, synced to the Start-menu theme: dark #1E1E1E surface, white text, accent selection bar,
-		// 8.1 chevron submenu arrows (renderer reads StartAccent live, so it follows the theme). The tray menu is the
-		// only WinForms ToolStrip in this WPF app, so setting the global ToolStripManager.Renderer is safe and is what
-		// makes SUBMENUS (which default to ManagerRenderMode) inherit the Metro style too.
+		// 8.1 Metro look, synced to the Start-menu theme (the renderer reads the theme live). The tray menu is the only
+		// WinForms ToolStrip in this WPF app, so setting the global ToolStripManager.Renderer is safe and is what makes
+		// SUBMENUS (which default to ManagerRenderMode) inherit the Metro style too.
 		Win81TrayMenuRenderer metroRenderer = new Win81TrayMenuRenderer();
 		ToolStripManager.Renderer = metroRenderer;
 		menu.Renderer = metroRenderer;
 		menu.BackColor = TrayMetro.Bg;
 		menu.ForeColor = TrayMetro.Fg;
 		menu.ShowImageMargin = true;   // keep the gutter so checkmarks/radios on the toggle items still render
-		menu.Font = new System.Drawing.Font("Segoe UI", 9.75f);
+		menu.Font = TrayMenuMetrics.CreateFont();
+		// Nine top-level rows. Every launcher setting that used to be listed here lives in PC settings > Launcher
+		// ("Launcher settings..."); the live tiles and the pin sync are under More.
+		ToolStripMenuItem cornersItem = null!;
+		bool syncingCorners = false;
 		menu.Opening += delegate
 		{
 			ForegroundContext.Capture();
+			// PC settings can change hot corners meanwhile: show the current value without writing it back
+			try
+			{
+				bool cornersOn = SettingsStore.FastSnapshot.HotCornersEnabled;
+				if (cornersItem != null && cornersItem.Checked != cornersOn)
+				{
+					syncingCorners = true;
+					cornersItem.Checked = cornersOn;
+				}
+			}
+			catch
+			{
+			}
+			finally
+			{
+				syncingCorners = false;
+			}
+			// rows and separators for the DPI of the monitor the menu last showed on (the strip moves between monitors)
+			TrayMenuMetrics.Apply(menu);
 		};
-		menu.Items.Add("Open Start (Win)", null, delegate
+		ToolStripMenuItem openStartItem = new ToolStripMenuItem("Open Start")
+		{
+			ShortcutKeyDisplayString = "Win"
+		};
+		openStartItem.Click += delegate
 		{
 			((DispatcherObject)this).Dispatcher.BeginInvoke((Delegate)new Action(ToggleStart), Array.Empty<object>());
-		});
-		menu.Items.Add("Open Charms (Win+C)", null, delegate
+		};
+		menu.Items.Add(openStartItem);
+		ToolStripMenuItem charmsItem = new ToolStripMenuItem("Charms")
+		{
+			ShortcutKeyDisplayString = "Win+C"
+		};
+		charmsItem.Click += delegate
 		{
 			((DispatcherObject)this).Dispatcher.BeginInvoke((Delegate)(Action)delegate
 			{
 				_charmsBar?.ToggleCharms();
 			}, Array.Empty<object>());
-		});
-		menu.Items.Add("Lock screen (Win8.1)", null, delegate
+		};
+		menu.Items.Add(charmsItem);
+		// No shortcut shown: this is the launcher's own 8.1 lock overlay, while Win+L is Windows' secure lock.
+		ToolStripMenuItem lockItem = new ToolStripMenuItem("Lock screen");
+		lockItem.Click += delegate
 		{
 			((DispatcherObject)this).Dispatcher.BeginInvoke((Delegate)new Action(LockScreen.Show), Array.Empty<object>());
-		});
+		};
+		menu.Items.Add(lockItem);
 		_idleAutoLock = new IdleAutoLock();
 		_idleAutoLock.SetMinutes(settings.AutoLockMinutes);
-		autoLockMenu = new ToolStripMenuItem("Auto-lock (Win8.1)");
-		autoLockMenu.DropDownItems.Add(AutoLockItem("Off", 0));
-		autoLockMenu.DropDownItems.Add(AutoLockItem("After 5 minutes", 5));
-		autoLockMenu.DropDownItems.Add(AutoLockItem("After 10 minutes", 10));
-		autoLockMenu.DropDownItems.Add(AutoLockItem("After 15 minutes", 15));
-		menu.Items.Add(autoLockMenu);
-		ToolStripMenuItem cornersItem = new ToolStripMenuItem("Hot corners")
-		{
-			Checked = settings.HotCornersEnabled,
-			CheckOnClick = true
-		};
-		cornersItem.CheckedChanged += delegate
-		{
-			SettingsStore.Update(delegate(AppSettings appSettings)
-			{
-				appSettings.HotCornersEnabled = cornersItem.Checked;
-			});
-			// Route through the gated hook (stays in sync with PC Settings; keeps the SwitcherEdgeReveal gate so the
-			// 10Hz poll never restarts with nothing to do; adds the null-guard the direct assignment lacked).
-			ApplyHotCorners(cornersItem.Checked);
-		};
-		menu.Items.Add(cornersItem);
-		ToolStripMenuItem replaceStartItem = new ToolStripMenuItem("Replace Start button")
-		{
-			Checked = settings.ReplaceStartMenu,
-			CheckOnClick = true
-		};
-		replaceStartItem.CheckedChanged += delegate
-		{
-			_winHook.ReplaceStartButton = replaceStartItem.Checked;
-			SettingsStore.Update(delegate(AppSettings appSettings)
-			{
-				appSettings.ReplaceStartMenu = replaceStartItem.Checked;
-			});
-		};
-		menu.Items.Add(replaceStartItem);
-		ToolStripMenuItem suspendNativeItem = new ToolStripMenuItem("Suspend native Start host")
-		{
-			Checked = settings.SuspendNativeStart,
-			CheckOnClick = true,
-			ToolTipText = "Freezes StartMenuExperienceHost while we run. Always resumed on exit."
-		};
-		suspendNativeItem.CheckedChanged += delegate
-		{
-			SettingsStore.Update(delegate(AppSettings appSettings)
-			{
-				appSettings.SuspendNativeStart = suspendNativeItem.Checked;
-			});
-			if (suspendNativeItem.Checked)
-			{
-				NativeShell.SuspendShellHosts();
-			}
-			else
-			{
-				NativeShell.ResumeShellHosts();
-			}
-		};
-		menu.Items.Add(suspendNativeItem);
-		ToolStripMenuItem taskbarItem = new ToolStripMenuItem("Taskbar (Win8.1)")
-		{
-			Checked = settings.TaskbarEnabled,
-			CheckOnClick = true,
-			ToolTipText = "Replaces the primary taskbar. Native is restored on exit / toggle off."
-		};
-		taskbarItem.CheckedChanged += delegate
-		{
-			SettingsStore.Update(delegate(AppSettings appSettings)
-			{
-				appSettings.TaskbarEnabled = taskbarItem.Checked;
-			});
-			if (taskbarItem.Checked)
-			{
-				_taskbar.Activate();
-			}
-			else
-			{
-				_taskbar.Deactivate();
-			}
-		};
-		menu.Items.Add(taskbarItem);
-		ToolStripMenuItem appIcons81Item = new ToolStripMenuItem("Win8.1 app icons")
-		{
-			Checked = settings.Replace81AppIcons,
-			CheckOnClick = true,
-			ToolTipText = "Show authentic Win8.1 / Office 2013 icons for Calculator, Photos, Store, PC Settings, Word/Excel... on Start tiles, the all-apps list and taskbar pins. Off = native icons. Swaps live, no restart."
-		};
-		appIcons81Item.CheckedChanged += delegate
-		{
-			SettingsStore.Update(delegate(AppSettings appSettings)
-			{
-				appSettings.Replace81AppIcons = appIcons81Item.Checked;
-			});
-			AppIconOverrides.RefreshAllSurfaces();
-		};
-		menu.Items.Add(appIcons81Item);
-		// "Native windows: 8.1 title bars" removed Ã¢â‚¬â€ the NativeChromeManager overlay was frozen/glitchy and is
-		// superseded by the documented-DWM accent title bars (Desktop Composition modes) + real Aero glass via
-		// DwmBlurGlass. Phase-2 consolidation RETIRED it: the 3 overlay files were removed from the build (backed up
-		// to _retired-overlay-2026-08-28/); nothing references them any more.
-		ToolStripMenuItem dominantItem = new ToolStripMenuItem("Dominant mode (Win8.1 takes over)")
-		{
-			Checked = settings.DominantMode,
-			CheckOnClick = true,
-			ToolTipText = "Win8.1 takes over: suspends the native Start host, replaces the taskbar, and routes Win+S to our Search. Reversible; native is restored on exit / toggle off."
-		};
-		dominantItem.CheckedChanged += delegate
-		{
-			bool on = dominantItem.Checked;
-			SettingsStore.Update(delegate(AppSettings appSettings)
-			{
-				appSettings.DominantMode = on;
-			});
-			_winHook.DominantMode = on;
-			_winHook.ReplaceExplorerShortcut = on;
-			suspendNativeItem.Checked = on;
-			taskbarItem.Checked = on;
-		};
-		menu.Items.Add(dominantItem);
-		ToolStripMenuItem runFirstItem = new ToolStripMenuItem("Run first at boot (earlier)")
-		{
-			Checked = settings.RunFirstTask,
-			CheckOnClick = true,
-			ToolTipText = "Adds a per-user logon Scheduled Task so we start earlier at logon than the Run entry. Reversible; never a shell replacement."
-		};
-		bool runFirstBusy = false;
-		runFirstItem.CheckedChanged += delegate
-		{
-			if (!runFirstBusy)
-			{
-				bool on = runFirstItem.Checked;
-				Task.Run(delegate
-				{
-					bool ok = LogonTask.SetEnabled(on);
-					((DispatcherObject)this).Dispatcher.BeginInvoke((Delegate)(Action)delegate
-					{
-						if (ok)
-						{
-							SettingsStore.Update(delegate(AppSettings appSettings)
-							{
-								appSettings.RunFirstTask = on;
-							});
-						}
-						else
-						{
-							ToastService.Show(null, "Win8.1 layer", "Couldn't set the logon task", "The Scheduled Task couldn't be created - the HKCU Run autostart still works.");
-							runFirstBusy = true;
-							runFirstItem.Checked = !on;
-							runFirstBusy = false;
-						}
-					}, Array.Empty<object>());
-				});
-			}
-		};
-		menu.Items.Add(runFirstItem);
-		ToolStripMenuItem recoverMenu = new ToolStripMenuItem("Shell recovery");
-		ToolStripMenuItem autoRecoverItem = new ToolStripMenuItem("Auto-recover shell")
-		{
-			Checked = settings.AutoRecoverShell,
-			CheckOnClick = true,
-			ToolTipText = "While our taskbar is the shell: keep re-hiding any native taskbar that reappears, and restart Explorer if it dies."
-		};
-		autoRecoverItem.CheckedChanged += delegate
-		{
-			SettingsStore.Update(delegate(AppSettings appSettings)
-			{
-				appSettings.AutoRecoverShell = autoRecoverItem.Checked;
-			});
-		};
-		recoverMenu.DropDownItems.Add(autoRecoverItem);
-		ToolStripMenuItem rebootItem = new ToolStripMenuItem("Force-reboot if Explorer can't recover")
-		{
-			Checked = settings.ForceRebootOnShellFailure,
-			CheckOnClick = true,
-			ToolTipText = "Last resort only: reboot the PC (30-second cancellable countdown, never twice within 10 minutes) if Explorer will not come back after repeated restarts. Requires Auto-recover shell."
-		};
-		rebootItem.CheckedChanged += delegate
-		{
-			SettingsStore.Update(delegate(AppSettings appSettings)
-			{
-				appSettings.ForceRebootOnShellFailure = rebootItem.Checked;
-			});
-		};
-		recoverMenu.DropDownItems.Add(rebootItem);
-		menu.Items.Add(recoverMenu);
-		if (string.IsNullOrWhiteSpace(settings.ScreenshotApp))
-		{
-			string detected = DetectScreenshotApp();
-			if (detected != null)
-			{
-				settings.ScreenshotApp = detected;
-				SettingsStore.Update(delegate(AppSettings appSettings)
-				{
-					appSettings.ScreenshotApp = detected;
-				});
-			}
-		}
-		ToolStripMenuItem shotItem = new ToolStripMenuItem(ShotLabel(settings.ScreenshotApp))
-		{
-			ToolTipText = "The Share charm launches this tool and sends Print Screen to capture."
-		};
-		shotItem.Click += delegate
-		{
-			System.Windows.Forms.OpenFileDialog dlg = new System.Windows.Forms.OpenFileDialog
-			{
-				Filter = "Programs (*.exe)|*.exe|All files (*.*)|*.*",
-				Title = "Choose the screenshot app for the Share charm"
-			};
-			try
-			{
-				try
-				{
-					if (!string.IsNullOrWhiteSpace(settings.ScreenshotApp))
-					{
-						dlg.InitialDirectory = Path.GetDirectoryName(settings.ScreenshotApp);
-					}
-				}
-				catch
-				{
-				}
-				if (dlg.ShowDialog() == DialogResult.OK)
-				{
-					settings.ScreenshotApp = dlg.FileName;
-					SettingsStore.Update(delegate(AppSettings appSettings)
-					{
-						appSettings.ScreenshotApp = dlg.FileName;
-					});
-					shotItem.Text = ShotLabel(settings.ScreenshotApp);
-				}
-			}
-			finally
-			{
-				if (dlg != null)
-				{
-					((IDisposable)dlg).Dispose();
-				}
-			}
-		};
-		menu.Items.Add(shotItem);
-		ToolStripMenuItem syncPinsItem = new ToolStripMenuItem("Sync pins from native taskbar")
-		{
-			ToolTipText = "Mirror the apps currently pinned to your Windows taskbar."
-		};
-		syncPinsItem.Click += delegate
-		{
-			List<PinnedApp> list = TaskbarPins.ImportFromNative();
-			if (list.Count > 0)
-			{
-				TaskbarPins.Save(list);
-				((DispatcherObject)this).Dispatcher.BeginInvoke((Delegate)(Action)delegate
-				{
-					TaskbarWindow.ReloadPins();
-				}, Array.Empty<object>());
-			}
-		};
-		menu.Items.Add(syncPinsItem);
-		ToolStripMenuItem bgMenu = new ToolStripMenuItem("Start background");
-		ToolStripMenuItem bgDefault = new ToolStripMenuItem("Default wallpaper");
-		bgDefault.Click += delegate
-		{
-			SetBg("default");
-		};
-		ToolStripMenuItem bgDesktop = new ToolStripMenuItem("Desktop wallpaper");
-		bgDesktop.Click += delegate
-		{
-			SetBg("desktop");
-		};
-		ToolStripMenuItem bgCustom = new ToolStripMenuItem("Custom image...");
-		bgCustom.Click += delegate
-		{
-			using System.Windows.Forms.OpenFileDialog openFileDialog = new System.Windows.Forms.OpenFileDialog
-			{
-				Filter = "Images (*.png;*.jpg;*.jpeg;*.bmp)|*.png;*.jpg;*.jpeg;*.bmp|All files (*.*)|*.*",
-				Title = "Choose a Start background image"
-			};
-			if (openFileDialog.ShowDialog() == DialogResult.OK)
-			{
-				SetBg("custom", openFileDialog.FileName);
-			}
-		};
-		ToolStripMenuItem perfItem = new ToolStripMenuItem("Performance monitor (CPU/RAM/net)")
-		{
-			Checked = settings.PerfMonEnabled,
-			CheckOnClick = true,
-			ToolTipText = "Show CPU/RAM/network telemetry on the taskbar."
-		};
-		perfItem.CheckedChanged += delegate
-		{
-			SettingsStore.Update(delegate(AppSettings appSettings)
-			{
-				appSettings.PerfMonEnabled = perfItem.Checked;
-			});
-			((DispatcherObject)this).Dispatcher.BeginInvoke((Delegate)(Action)delegate
-			{
-				TaskbarWindow.ReloadPerfMode();
-			}, Array.Empty<object>());
-		};
-		menu.Items.Add(perfItem);
-		ToolStripMenuItem dwmTimingItem = new ToolStripMenuItem("Capture DWM frame timing (5s)")
-		{
-			ToolTipText = "Phase-3 diagnostics: sample DWM composition timing from the live shell (has a real composition context) and write a report to %LocalAppData%\\Win81Layer\\dwm-diag. Requires 'DWM frame-timing telemetry' enabled in PC Settings → Desktop composition."
-		};
-		dwmTimingItem.Click += delegate
-		{
-			if (!SettingsStore.Current.EnableDwmTimingTelemetry)
-			{
-				Logger.Log("[dwmperf] skipped — EnableDwmTimingTelemetry is off");
-				return;
-			}
-			((DispatcherObject)this).Dispatcher.BeginInvoke((Delegate)(Action)delegate
-			{
-				nint h = ShellHwndForDiagnostics();
-				System.Threading.Tasks.Task.Run((Action)delegate
-				{
-					try { DwmDiagnostics.FrameTimingBurst(h, 300, 16); }
-					catch (Exception ex) { Logger.Log("[dwmperf] failed: " + ex.Message); }
-				});
-			}, Array.Empty<object>());
-		};
-		menu.Items.Add(dwmTimingItem);
-		ToolStripMenuItem soundsItem = new ToolStripMenuItem("Win8.1 sounds")
-		{
-			Checked = settings.UseWin81Sounds,
-			CheckOnClick = true,
-			ToolTipText = "Use the authentic Windows 8.1 system sounds (fully reversible)."
-		};
-		soundsItem.CheckedChanged += delegate
-		{
-			bool on = soundsItem.Checked;
-			SettingsStore.Update(delegate(AppSettings appSettings) { appSettings.UseWin81Sounds = on; });
-			if (on)
-			{
-				SoundScheme.Apply();
-			}
-			else
-			{
-				SoundScheme.Revert();
-			}
-		};
-		menu.Items.Add(soundsItem);
-		ToolStripMenuItem pointersMenu = new ToolStripMenuItem("Pointers")
-		{
-			ToolTipText = "Windows 8.1 or Alchemy pointers for every pointer role, fully reversible: Windows default puts back the pointers you had before."
-		};
-		for (int pointerIndex = 0; pointerIndex < PointerScheme.ChoiceLabels.Length; pointerIndex++)
-		{
-			int choice = pointerIndex;
-			ToolStripMenuItem pointerItem = new ToolStripMenuItem(PointerScheme.ChoiceLabels[choice])
-			{
-				Tag = choice
-			};
-			pointerItem.Click += async delegate
-			{
-				pointersMenu.Enabled = false;
-				try
-				{
-					SettingsStore.Update(delegate(AppSettings appSettings) { PointerScheme.SetChoice(appSettings, choice); });
-					PointerResult r = await PointerScheme.ApplyAsync("tray");
-					if (!r.Success)
-					{
-						ToastService.Show(null, "Pointers", "Could not change pointers", r.Message);
-					}
-					else if (r.ShowsAfterSignIn)
-					{
-						ToastService.Show(null, "Pointers", "Pointers change after sign-in", r.Message);
-					}
-				}
-				catch (Exception exPointers)
-				{
-					Logger.Log("Pointers: tray change failed: " + exPointers.Message);
-				}
-				finally
-				{
-					pointersMenu.Enabled = true;
-				}
-			};
-			pointersMenu.DropDownItems.Add(pointerItem);
-		}
-		pointersMenu.DropDownOpening += delegate
-		{
-			int current = PointerScheme.ChoiceIndex(SettingsStore.FastSnapshot);
-			foreach (ToolStripItem item in pointersMenu.DropDownItems)
-			{
-				if (item is ToolStripMenuItem mi)
-				{
-					mi.Checked = mi.Tag is int t && t == current;
-				}
-			}
-		};
-		menu.Items.Add(pointersMenu);
-		colorMenu = new ToolStripMenuItem("Taskbar color");
-		colorMenu.DropDownItems.Add(ColorItem("From desktop wallpaper", "Wallpaper"));
-		colorMenu.DropDownItems.Add(ColorItem("Match Start screen", "Start"));
-		colorMenu.DropDownItems.Add(ColorItem("Transparent", "Transparent"));
-		menu.Items.Add(colorMenu);
-		bgMenu.DropDownItems.AddRange(bgDefault, bgCustom, bgDesktop);
-		bool presetsLoaded = false;
-		bgMenu.DropDownOpening += delegate
-		{
-			if (!presetsLoaded)
-			{
-				presetsLoaded = true;
-				Wallpapers.SeedFromPack();
-				List<string> list = Wallpapers.Presets();
-				if (list.Count != 0)
-				{
-					bgMenu.DropDownItems.Add(new ToolStripSeparator());
-					foreach (string current in list)
-					{
-						string path = current;
-						ToolStripMenuItem toolStripMenuItem = new ToolStripMenuItem(Path.GetFileNameWithoutExtension(current))
-						{
-							ImageScaling = ToolStripItemImageScaling.None
-						};
-						try
-						{
-							toolStripMenuItem.Image = MakeThumb(path);
-						}
-						catch
-						{
-						}
-						toolStripMenuItem.Click += delegate
-						{
-							SetBg("custom", path);
-						};
-						bgMenu.DropDownItems.Add(toolStripMenuItem);
-					}
-				}
-			}
-		};
-		menu.Items.Add(bgMenu);
-		ToolStripMenuItem autostartItem = new ToolStripMenuItem("Start with Windows")
-		{
-			Checked = Autostart.IsEnabled(),
-			CheckOnClick = true
-		};
-		autostartItem.CheckedChanged += delegate
-		{
-			Autostart.SetEnabled(autostartItem.Checked);
-		};
-		menu.Items.Add(autostartItem);
-		ToolStripMenuItem bootItem = new ToolStripMenuItem("Open Start at login")
-		{
-			Checked = settings.BootToStart,
-			CheckOnClick = true
-		};
-		bootItem.CheckedChanged += delegate
-		{
-			SettingsStore.Update(delegate(AppSettings appSettings)
-			{
-				appSettings.BootToStart = bootItem.Checked;
-			});
-		};
-		menu.Items.Add(bootItem);
-		ToolStripMenuItem personalization = new ToolStripMenuItem("Personalization (Win8.1)");
-		ToolStripMenuItem wallpaperItem = new ToolStripMenuItem("Desktop wallpaper")
-		{
-			Checked = settings.Win81Wallpaper,
-			CheckOnClick = true,
-			Enabled = WallpaperModule.AssetAvailable
-		};
-		wallpaperItem.CheckedChanged += delegate
-		{
-			if (wallpaperItem.Checked ? WallpaperModule.Apply() : WallpaperModule.Revert())
-			{
-				SettingsStore.Update(delegate(AppSettings appSettings)
-				{
-					appSettings.Win81Wallpaper = wallpaperItem.Checked;
-				});
-			}
-			else
-			{
-				wallpaperItem.Checked = settings.Win81Wallpaper;
-			}
-		};
-		personalization.DropDownItems.Add(wallpaperItem);
-		ToolStripMenuItem seasonalMenu = new ToolStripMenuItem("Seasonal theme / Dark rest");
+		menu.Items.Add(new ToolStripSeparator());
+		// Look: Normal, Halloween, Christmas and Dark rest, one hover away (radio items)
+		ToolStripMenuItem seasonalMenu = new ToolStripMenuItem("Look");
 		foreach ((string seasonId, string seasonLabel) in SeasonalTheme.Choices)
 		{
 			string sid = seasonId;
@@ -4326,6 +3898,7 @@ public partial class App : System.Windows.Application
 			{
 				Tag = sid
 			};
+			TrayMenuMetrics.MarkRadio(seasonItem);
 			seasonItem.Click += async delegate
 			{
 				seasonalMenu.Enabled = false;
@@ -4361,64 +3934,54 @@ public partial class App : System.Windows.Application
 				}
 			}
 		};
-		personalization.DropDownItems.Insert(0, seasonalMenu);
-		personalization.DropDownOpening += delegate
+		menu.Items.Add(seasonalMenu);
+		cornersItem = new ToolStripMenuItem("Hot corners")
 		{
-			// The Win8.1 wallpaper snapshot would capture the seasonal picture as the user's own.
-			wallpaperItem.Enabled = WallpaperModule.AssetAvailable && !SeasonalTheme.OwnsDesktopWallpaper;
+			Checked = settings.HotCornersEnabled,
+			CheckOnClick = true
 		};
-		ToolStripMenuItem cursorsInfo = new ToolStripMenuItem("Cursors: extracted (module on request)")
+		cornersItem.CheckedChanged += delegate
 		{
-			Enabled = false
-		};
-		ToolStripMenuItem soundsInfo = new ToolStripMenuItem("Sounds: extracted (module on request)")
-		{
-			Enabled = false
-		};
-		personalization.DropDownItems.Add(cursorsInfo);
-		personalization.DropDownItems.Add(soundsInfo);
-		ToolStripMenuItem deskComp = new ToolStripMenuItem("Desktop composition");
-		foreach (var (Label, Id) in CompositionProfiles.MenuModes)   // the 4 canonical modes, single source of truth
-		{
-			deskComp.DropDownItems.Add(ModeItem(Label, Id));
-		}
-		deskComp.DropDownItems.Add(new ToolStripSeparator());
-		ToolStripMenuItem previewSub = new ToolStripMenuItem("Preview (10s)");
-		foreach (var (Label, Id) in CompositionProfiles.MenuModes)
-		{
-			string pid = Id;
-			previewSub.DropDownItems.Add(Label, null, delegate
+			if (syncingCorners)
 			{
-				DesktopComposition.PreviewMode(pid, 10);
-			});
-		}
-		deskComp.DropDownItems.Add(previewSub);
-		deskComp.DropDownItems.Add("Restore previous", null, delegate
-		{
-			DesktopComposition.RestorePrevious();
-		});
-		deskComp.DropDownItems.Add("Restore Windows default", null, delegate
-		{
-			DesktopComposition.RestoreWindowsDefault();
-		});
-		deskComp.DropDownOpening += delegate
-		{
-			string cur = CompositionProfiles.Resolve(DesktopComposition.Mode).Id;   // live check marks
-			foreach (ToolStripItem tsi in deskComp.DropDownItems)
-			{
-				if (tsi is ToolStripMenuItem mi && mi.Tag is string tid)
-				{
-					mi.Checked = string.Equals(CompositionProfiles.Resolve(tid).Id, cur, StringComparison.OrdinalIgnoreCase);
-				}
+				return;
 			}
+			SettingsStore.Update(delegate(AppSettings appSettings)
+			{
+				appSettings.HotCornersEnabled = cornersItem.Checked;
+			});
+			// Route through the gated hook (stays in sync with PC Settings; keeps the SwitcherEdgeReveal gate so the
+			// 10Hz poll never restarts with nothing to do; adds the null-guard the direct assignment lacked).
+			ApplyHotCorners(cornersItem.Checked);
 		};
-		personalization.DropDownItems.Add(deskComp);
-		menu.Items.Add(personalization);
-		// Removed: "Files (Win8.1)" (own FileBrowser) and "Win8.1 window (sample)" (demo) Ã¢â‚¬â€ unused / superseded.
-		tileSize = new ToolStripMenuItem("Tile size");
-		tileSize.DropDownItems.Add(MakeDensity("Comfortable", 1.0));
-		tileSize.DropDownItems.Add(MakeDensity("Compact", 0.8));
-		menu.Items.Add(tileSize);
+		menu.Items.Add(cornersItem);
+		menu.Items.Add(new ToolStripSeparator());
+		ToolStripMenuItem launcherSettingsItem = new ToolStripMenuItem("Launcher settings...")
+		{
+			ToolTipText = "Startup, shell takeover, taskbar, Start screen, appearance, motion and recovery (PC settings > Launcher)."
+		};
+		launcherSettingsItem.Click += delegate
+		{
+			((DispatcherObject)this).Dispatcher.BeginInvoke((Delegate)(Action)delegate
+			{
+				OpenPcSettings("Launcher");
+			}, Array.Empty<object>());
+		};
+		menu.Items.Add(launcherSettingsItem);
+		// The Share charm's screenshot tool is chosen in PC settings; the first-run detection stays here.
+		if (string.IsNullOrWhiteSpace(settings.ScreenshotApp))
+		{
+			string detected = DetectScreenshotApp();
+			if (detected != null)
+			{
+				settings.ScreenshotApp = detected;
+				SettingsStore.Update(delegate(AppSettings appSettings)
+				{
+					appSettings.ScreenshotApp = detected;
+				});
+			}
+		}
+		ToolStripMenuItem moreMenu = new ToolStripMenuItem("More");
 		ToolStripMenuItem liveTiles = new ToolStripMenuItem("Add live tile");
 		liveTiles.DropDownItems.Add("Clock", null, delegate
 		{
@@ -4487,7 +4050,9 @@ public partial class App : System.Windows.Application
 		ToolStripMenuItem weatherUnitsItem = new ToolStripMenuItem("Weather units");
 		string activeWeatherUnits = string.Equals(settings.WeatherUnits, "F", StringComparison.OrdinalIgnoreCase) ? "F" : "C";
 		ToolStripMenuItem celsiusItem = new ToolStripMenuItem("Celsius") { Checked = activeWeatherUnits == "C" };
+		TrayMenuMetrics.MarkRadio(celsiusItem);
 		ToolStripMenuItem fahrenheitItem = new ToolStripMenuItem("Fahrenheit") { Checked = activeWeatherUnits == "F" };
+		TrayMenuMetrics.MarkRadio(fahrenheitItem);
 		Action<string> setWeatherUnits = delegate(string units)
 		{
 			settings.WeatherUnits = units;
@@ -4504,89 +4069,25 @@ public partial class App : System.Windows.Application
 		weatherUnitsItem.DropDownItems.Add(celsiusItem);
 		weatherUnitsItem.DropDownItems.Add(fahrenheitItem);
 		liveTiles.DropDownItems.Add(weatherUnitsItem);
-		menu.Items.Add(liveTiles);
-		ToolStripMenuItem googleMenu = new ToolStripMenuItem("Google account (Mail/Agenda)");
-		ToolStripMenuItem gStatus = new ToolStripMenuItem("(status)")
+		moreMenu.DropDownItems.Add(liveTiles);
+		ToolStripMenuItem syncPinsItem = new ToolStripMenuItem("Sync pins from Windows taskbar")
 		{
-			Enabled = false
+			ToolTipText = "Mirror the apps currently pinned to your Windows taskbar."
 		};
-		ToolStripMenuItem gSignIn = new ToolStripMenuItem("Connect Google Calendar...");
-		ToolStripMenuItem gSignOut = new ToolStripMenuItem("Sign out");
-		ToolStripMenuItem gCreds = new ToolStripMenuItem("Manage Calendar account...");
-		googleMenu.DropDownItems.AddRange(gStatus, new ToolStripSeparator(), gSignIn, gSignOut, new ToolStripSeparator(), gCreds);
-		googleMenu.DropDownOpening += delegate
+		syncPinsItem.Click += delegate
 		{
-			bool isConfigured = GoogleAuth.IsConfigured;
-			bool isSignedIn = GoogleAuth.IsSignedIn;
-			gStatus.Text = ((!isConfigured) ? "Not set up - add OAuth credentials first" : (isSignedIn ? "Signed in" : "Not signed in"));
-			gSignIn.Enabled = !GoogleAuth.HasCalendarAccess;
-			gSignOut.Enabled = isSignedIn;
-		};
-		gSignIn.Click += delegate
-		{
-			GoogleCalendarConnectWindow.ShowFor();
-		};
-		gSignOut.Click += delegate
-		{
-			try
+			List<PinnedApp> list = TaskbarPins.ImportFromNative();
+			if (list.Count > 0)
 			{
-				GoogleAuth.SignOut();
-				ToastService.Show(null, "Google", "Signed out", "The local Google connection was removed.");
-			}
-			catch (Exception ex)
-			{
-				Logger.Log("Google disconnect failed: " + ex.GetType().Name);
-				GoogleCalendarConnectWindow.ShowFor();
-				ToastService.Show(null, "Google", "Could not disconnect", "The saved connection could not be removed. Manage the account to try again.");
+				TaskbarPins.Save(list);
+				((DispatcherObject)this).Dispatcher.BeginInvoke((Delegate)(Action)delegate
+				{
+					TaskbarWindow.ReloadPins();
+				}, Array.Empty<object>());
 			}
 		};
-		gCreds.Click += delegate
-		{
-			GoogleCalendarConnectWindow.ShowFor();
-		};
-		menu.Items.Add(googleMenu);
-		ToolStripMenuItem motionItem = new ToolStripMenuItem("Motion");
-		string[] array2 = new string[4] { "Authentic", "Fast", "Reduced", "Off" };
-		foreach (string m in array2)
-		{
-			ToolStripMenuItem mi = new ToolStripMenuItem(m)
-			{
-				Checked = (settings.MotionMode == m)
-			};
-			string mode = m;
-			mi.Click += delegate
-			{
-				Motion.Mode = Motion.Parse(mode);
-				SettingsStore.Update(delegate(AppSettings appSettings)
-				{
-					appSettings.MotionMode = mode;
-				});
-				foreach (ToolStripMenuItem toolStripMenuItem in motionItem.DropDownItems)
-				{
-					toolStripMenuItem.Checked = toolStripMenuItem.Text == mode;
-				}
-			};
-			motionItem.DropDownItems.Add(mi);
-		}
-		menu.Items.Add(motionItem);
-		ToolStripMenuItem packedItem = new ToolStripMenuItem("Packed grid (auto-arrange)")
-		{
-			Checked = settings.PackedGrid,
-			CheckOnClick = true
-		};
-		packedItem.Click += delegate
-		{
-			TilePanel.Packed = packedItem.Checked;
-			SettingsStore.Update(delegate(AppSettings appSettings)
-			{
-				appSettings.PackedGrid = packedItem.Checked;
-			});
-			((DispatcherObject)this).Dispatcher.BeginInvoke((Delegate)(Action)delegate
-			{
-				_startScreen.RepackTiles();
-			}, Array.Empty<object>());
-		};
-		menu.Items.Add(packedItem);
+		moreMenu.DropDownItems.Add(syncPinsItem);
+		menu.Items.Add(moreMenu);
 		_startScreen.SetWeatherCity(settings.WeatherCity);
 		_startScreen.SetWeatherUnits(settings.WeatherUnits);
 		menu.Items.Add(new ToolStripSeparator());
@@ -4599,6 +4100,7 @@ public partial class App : System.Windows.Application
 			_exitReason = "tray menu Exit";
 			((DispatcherObject)this).Dispatcher.BeginInvoke((Delegate)new Action(ExitApp), Array.Empty<object>());
 		});
+		TrayMenuMetrics.Apply(menu);
 		if (_trayIcon != null) { _trayIcon.ContextMenuStrip = menu; }
 		}, (DispatcherPriority)4, Array.Empty<object>());
 		// _trayIcon may be null if the tray-host/NotifyIcon init above was caught (fault isolation). Guard the
@@ -4995,6 +4497,12 @@ public partial class App : System.Windows.Application
 
 	private void OpenPcSettings()
 	{
+		OpenPcSettings(null);
+	}
+
+	// page: an optional PC settings category to open (for example "Launcher").
+	internal void OpenPcSettings(string? page)
+	{
 		try
 		{
 			PcSettingsWindow existing = _pcSettings;
@@ -5005,6 +4513,10 @@ public partial class App : System.Windows.Application
 					if (existing.IsVisible)
 					{
 						existing.Activate();
+						if (!string.IsNullOrEmpty(page))
+						{
+							existing.OpenCategory(page);
+						}
 						return;
 					}
 				}
@@ -5030,6 +4542,10 @@ public partial class App : System.Windows.Application
 			};
 			_pcSettings = win;
 			win.ShowFullScreen();
+			if (!string.IsNullOrEmpty(page))
+			{
+				win.OpenCategory(page);
+			}
 		}
 		catch (Exception ex)
 		{
