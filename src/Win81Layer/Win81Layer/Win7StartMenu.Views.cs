@@ -21,7 +21,8 @@ namespace Win81Layer;
 // - main: pinned programs, then the recent list; rebuilt on every open (about 20 cheap rows);
 // - All Programs: a one-level folder tree (root programs, then folders), built once per inventory revision and kept;
 //   folder children are created on their first expand;
-// - search: programs ranked with SearchScore, rebuilt per keystroke within a row budget, so it never scrolls.
+// - search: programs, Settings and Control Panel groups, rebuilt per keystroke within a row budget, so it never scrolls
+//   (Win7StartMenu.Search.cs).
 // The pin and hidden lists, usage and taskbar-pin state are read here (injected in QA).
 public sealed partial class Win7StartMenu
 {
@@ -49,6 +50,9 @@ public sealed partial class Win7StartMenu
     private const string LoadingText = "Loading programs\u2026";
 
     private const string NoMatchText = "No items match your search.";
+
+    // No program matched yet and the system index is still loading.
+    private const string SearchingText = "Searching\u2026";
 
     // Recent-list seeds, by exact name, used when fewer recent programs remain than the list has room for.
     private static readonly string[] RecentSeeds =
@@ -738,142 +742,6 @@ public sealed partial class Win7StartMenu
         }
     }
 
-    // ---- Search -----------------------------------------------------------------------------------------------------
-
-    internal readonly record struct Ranked(AppEntry App, int Score, int Match);
-
-    // Matches of the last search (the header shows them all, the list only the row budget) and how long ranking took.
-    private int _searchMatches;
-
-    private double _lastRankMs;
-
-    // The first keystroke of an open is traced, later ones only when they are slow.
-    private bool _keystrokeTraced;
-
-    // Ranked results, rebuilt per keystroke: 'Programs (n)', at most floor((V - 24) / 22) program rows with the first one
-    // selected, and the command row turned into See more results. No match: a message row instead.
-    private void RefreshSearch(string raw)
-    {
-        Stopwatch sw = Stopwatch.StartNew();
-        ClearRows(_searchList);
-        List<AppEntry> apps = LoadApps();
-        if (apps.Count == 0)
-        {
-            _searchMatches = 0;
-            _searchList.Children.Add(MessageRow(LoadingText));
-            _progScroll.ScrollToTop();
-            return;
-        }
-        EnsureShortcutIndex();
-        Stopwatch rank = Stopwatch.StartNew();
-        List<Ranked> ranked = RankSearch(apps, raw);
-        _lastRankMs = rank.Elapsed.TotalMilliseconds;
-        _searchMatches = ranked.Count;
-        if (ranked.Count == 0)
-        {
-            _searchList.Children.Add(MessageRow(NoMatchText));
-        }
-        else
-        {
-            W7Row header = new W7Row(W7Row.Kind.Header24, onGlass: false)
-            {
-                Tag = "w7:header"
-            };
-            header.SetText($"Programs ({ranked.Count})");
-            _searchList.Children.Add(header);
-            int budget = Math.Max(1, (int)Math.Floor((_layout.V - 24.0) / 22.0));
-            W7Row? first = null;
-            foreach (Ranked r in ranked.Take(budget))
-            {
-                W7Row row = ProgramRow(r.App, W7Row.Kind.Program22, isRecent: false);
-                first ??= row;
-                _searchList.Children.Add(row);
-            }
-            if (first != null)
-            {
-                // The first result is the virtual cursor's position: Enter launches it, Down moves on from it. It is an
-                // automatic selection, so the caret keys still edit the query (SearchBoxKeepsKey).
-                Select(Zone.Left, first, byKeyboard: true, animate: false);
-                _selAuto = true;
-            }
-        }
-        _progScroll.ScrollToTop();
-        double ms = sw.Elapsed.TotalMilliseconds;
-        if (!_keystrokeTraced || ms >= 8.0)
-        {
-            _keystrokeTraced = true;
-            Trace($"Win7 Start: search {raw.Length} chars -> {ranked.Count} matches in {ms:0.0}ms (ranking {_lastRankMs:0.00}ms)");
-        }
-    }
-
-    // score = max(name match, Greek-layout recovery - 1, shortcut target match (TargetScore)) + usage bonus. A program
-    // needs a match; the usage bonus only orders programs within a tier. Ordered by score, then by name.
-    private List<Ranked> RankSearch(List<AppEntry> apps, string raw)
-    {
-        List<Ranked> res = new List<Ranked>();
-        string q = (raw ?? string.Empty).Trim().ToLowerInvariant();
-        if (q.Length == 0)
-        {
-            return res;
-        }
-        string qg = GreekLayout.ToLatinKeys(q);
-        Dictionary<string, string>? targets = TargetNamesMap;
-        foreach (AppEntry a in apps)
-        {
-            int m = SearchScore.Name(a.Name, q);
-            if (qg.Length > 0)
-            {
-                m = Math.Max(m, SearchScore.Name(a.Name, qg) - 1);
-            }
-            if (targets != null && targets.TryGetValue(a.Name, out string? target))
-            {
-                m = Math.Max(m, TargetScore(target, q));
-            }
-            if (m <= 0)
-            {
-                continue;
-            }
-            res.Add(new Ranked(a, m + UsageBonusOf(a.LaunchPath), m));
-        }
-        StringComparer byName = StringComparer.CurrentCultureIgnoreCase;
-        res.Sort((Ranked x, Ranked y) =>
-        {
-            int c = y.Score.CompareTo(x.Score);
-            return c != 0 ? c : byName.Compare(x.App.Name, y.App.Name);
-        });
-        return res;
-    }
-
-    // A typed command matched against a shortcut's target name, around the WordStart tier and far below the name tiers
-    // above it. Only exact, prefix and word-start matches count (acronym, substring and typo tiers mean nothing for a file
-    // name). The whole command ('cmd', 'regedit') scores one point above WordStart, so it comes before programs that only
-    // have it as a word of their name (Git CMD); part of a command scores one point below, so a program whose own name
-    // matches at WordStart comes first.
-    internal static int TargetScore(string target, string q)
-    {
-        int t = SearchScore.Name(target, q);
-        if (t == SearchScore.Exact)
-        {
-            return SearchScore.WordStart + 1;
-        }
-        return (t == SearchScore.Prefix || t == SearchScore.WordStart) ? SearchScore.WordStart - 1 : 0;
-    }
-
-    // SearchScore.UsageBonus applied to this menu's usage source (injected in QA): frequency up to +15 and recency up to
-    // +5, always below the gap between two match tiers.
-    private int UsageBonusOf(string path)
-    {
-        (int count, long last) = UsageOf(path);
-        int freq = count <= 0 ? 0 : Math.Min(15, (int)Math.Round(5.0 * Math.Log(count + 1.0)));
-        int rec = 0;
-        if (last > 0)
-        {
-            double days = (DateTime.UtcNow.Ticks - last) / (double)TimeSpan.TicksPerDay;
-            rec = days < 1.0 ? 5 : (days < 7.0 ? 3 : (days < 30.0 ? 1 : 0));
-        }
-        return freq + rec;
-    }
-
     // ---- Start menu shortcuts --------------------------------------------------------------------------------------
 
     // What the Start menu's own shortcut files say about the programs. Read once per process from every *.lnk and *.url
@@ -1494,7 +1362,20 @@ public sealed partial class Win7StartMenu
             NoteLetter(row, isLetter: false);
             return;
         }
-        if (W7Icons.TryGet(a.LaunchPath, box, px, out W7Icons.Entry e))
+        BindPathIcon(row, a.LaunchPath, a.Name);
+    }
+
+    // The shell icon of a path, icon location ("file,index") or parsing name at the row's box size: from the cache, or
+    // requested from the worker (the row waits with an empty box, or keeps a letter tile that is due for a retry).
+    private void BindPathIcon(W7Row row, string path, string name)
+    {
+        int box = row.IconBox;
+        if (box <= 0 || string.IsNullOrEmpty(path))
+        {
+            return;
+        }
+        int px = Math.Max(16, (int)Math.Round(box * _iconScale, MidpointRounding.AwayFromZero));
+        if (W7Icons.TryGet(path, box, px, out W7Icons.Entry e))
         {
             row.SetIcon(e.Img, e.Plated, e.Plate, null, alwaysPlate: false, _paletteIsDark);
             NoteLetter(row, e.IsLetter);
@@ -1503,14 +1384,14 @@ public sealed partial class Win7StartMenu
                 return;
             }
         }
-        W7Icons.Request(a.LaunchPath, box, px, a.Name);
-        if (W7Icons.TryGet(a.LaunchPath, box, px, out e) && !W7Icons.IsStale(e))
+        W7Icons.Request(path, box, px, name);
+        if (W7Icons.TryGet(path, box, px, out e) && !W7Icons.IsStale(e))
         {
             row.SetIcon(e.Img, e.Plated, e.Plate, null, alwaysPlate: false, _paletteIsDark);
             NoteLetter(row, e.IsLetter);
             return;
         }
-        string key = W7Icons.Key(a.LaunchPath, box, px);
+        string key = W7Icons.Key(path, box, px);
         if (!_iconWaiters.TryGetValue(key, out List<(W7Row Row, string Path, int Px)>? list))
         {
             list = new List<(W7Row Row, string Path, int Px)>();
@@ -1518,7 +1399,7 @@ public sealed partial class Win7StartMenu
         }
         if (!list.Exists(((W7Row Row, string Path, int Px) w) => ReferenceEquals(w.Row, row)))
         {
-            list.Add((row, a.LaunchPath, px));
+            list.Add((row, path, px));
         }
     }
 

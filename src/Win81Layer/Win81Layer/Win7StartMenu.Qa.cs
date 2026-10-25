@@ -198,6 +198,7 @@ public sealed partial class Win7StartMenu
         _qaName = null;
         _qaGlassSource = QaGlassSourceFixed;
         _qaEmptyInventory = false;
+        _qaSystemIndexOff = false;
     }
 
     // The injected extra entries, as part of the All Programs revision (the provider's list itself never changes in QA).
@@ -303,6 +304,11 @@ public sealed partial class Win7StartMenu
         EnsurePalette();
         // The shortcut index is built once per process, here before any timing is taken.
         EnsureShortcutIndex(synchronous: true);
+        // So is the system search index: built from this machine's sources, never from or into the user's cache.
+        _qaCacheStampBefore = File.Exists(SystemSearchIndex.CachePath) ? File.GetLastWriteTimeUtc(SystemSearchIndex.CachePath) : null;
+        SystemSearchIndex.Ensure(synchronous: true);
+        SystemSearchIndex? ssi = SystemSearchIndex.Current;
+        Info($"system-index source={ssi?.Source ?? "none"} entries={ssi?.Hits.Count ?? 0} ms={ssi?.LoadMs ?? 0.0:0} error={SystemSearchIndex.LastError ?? "none"}");
         ShortcutIndex? sci = System.Threading.Volatile.Read(ref s_shortcuts);
         Info($"tag={tag} apps={LoadApps().Count} palette={_paletteSig} rw={_rw:0.##} shortcut-files={sci?.Files ?? -1} ({sci?.BuildMs ?? 0.0:0} ms) target-names={sci?.TargetNames.Count ?? -1} folder-keys={sci?.FolderByName.Count ?? -1}/{sci?.FolderByTarget.Count ?? -1}");
         List<(string Name, string Hash)> metroHashes = QaMetroIconHashes();
@@ -395,6 +401,7 @@ public sealed partial class Win7StartMenu
         }
         QaStage3Renders();
         QaStage4Renders();
+        QaSearchRenders();
         QaSnapTooltip();
         QaWriteSheet();
 
@@ -951,6 +958,8 @@ public sealed partial class Win7StartMenu
         QaStage3Checks();
 
         QaStage4Checks();
+
+        QaSearchChecks();
 
         QaPerfMetrics();
 
@@ -4075,21 +4084,27 @@ public sealed partial class Win7StartMenu
             Rect hb = QaBounds(header, _progList);
             Rect tb = QaBounds(header.TextBlock, header);
             Rect rule = QaBounds(header.Rule, header);
+            // 'co' starts with the Programs group (a prefix match there); its header counts every program match. Other
+            // groups follow, each with its own header of the same look.
+            SearchGroupInfo? programs = _searchGroups.FirstOrDefault((SearchGroupInfo g) => g.Group == SearchGroup.Programs);
             bool headerOk = Near(hb.Top, 0.0) && Near(hb.Height, 24.0) && Near(tb.Left, 8.0) && Near(rule.Left, tb.Right + 6.0) && Near(rule.Right, hb.Width - 8.0) && Near(rule.Top, 12.0) && Near(rule.Height, 1.0)
-                && header.Text == $"Programs ({_searchMatches})"
+                && programs != null && ReferenceEquals(programs.Header, header) && header.Text == $"Programs ({_searchMatches})"
+                && _searchGroups.All((SearchGroupInfo g) => ReferenceEquals(g.Header.TextBlock.Foreground, _paletteDict!["W7.GroupHeaderInk"]) && g.Header.TextBlock.FontWeight == FontWeights.SemiBold && g.Header.Rule != null)
                 && ReferenceEquals(header.TextBlock.Foreground, _paletteDict!["W7.GroupHeaderInk"]) && ReferenceEquals(header.Rule.Background, _paletteDict["W7.GroupRule"]) && header.TextBlock.FontWeight == FontWeights.SemiBold;
             Rect fb = QaBounds(rows[0], _progList);
             Rect fi = rows[0].IconImage != null ? QaBounds(rows[0].IconImage!, rows[0]) : Rect.Empty;
             Rect ft = QaBounds(rows[0].TextBlock, rows[0]);
             bool firstOk = Near(fb.Top, 24.0) && Near(fb.Height, 22.0) && Near(fi.Left, 8.0) && Near(fi.Top, 3.0) && Near(ft.Left, 30.0) && ReferenceEquals(_sel, rows[0]);
-            int budget = (int)Math.Floor((_layout.V - 24.0) / 22.0);
-            bool budgetOk = rows.Count == Math.Min(_searchMatches, budget) && _progScroll.ScrollableHeight < 0.5;
+            int[] alloc = AllocateRows(_searchGroups.Select((SearchGroupInfo g) => g.Count).ToArray(), _searchGroups.Select((SearchGroupInfo g) => g.Best).ToArray(), _layout.V);
+            bool allocOk = _searchGroups.Select((SearchGroupInfo g) => g.Rows).SequenceEqual(alloc.Take(_searchGroups.Count));
+            bool budgetOk = allocOk && rows.Count == _searchGroups.Sum((SearchGroupInfo g) => g.Rows)
+                && _searchGroups.Count * 24.0 + rows.Count * 22.0 <= _layout.V + 0.5 && _progScroll.ScrollableHeight < 0.5;
             Rect mag = QaBounds(_cmdMagnifier, this);
             Rect lbl = QaBounds(_cmdRow.TextBlock, this);
             bool cmdOk = _cmdRow.Text == "See more results" && _cmdMagnifier.Visibility == Visibility.Visible && _cmdTriangle.Visibility == Visibility.Collapsed
                 && Near(mag.Left, 7.0 + 10.0) && Near(mag.Width, 12.0) && Near(lbl.Left, 7.0 + 28.0);
             bool ok = headerOk && firstOk && budgetOk && cmdOk;
-            return (ok, $"header '{header.Text}' {R4(hb)} text {R4(tb)} rule {R4(rule)} (from text end + 6 to width - 8, y 12) ok={headerOk}; first result {R4(fb)} icon {R4(fi)} text x {ft.Left:0.##} selected={ReferenceEquals(_sel, rows[0])} ok={firstOk}; rows {rows.Count} of {_searchMatches} (budget {budget}) scrollable={_progScroll.ScrollableHeight:0.#} ok={budgetOk}; command '{_cmdRow.Text}' magnifier x {mag.Left:0.##} ({mag.Width:0.##} px) label x {lbl.Left:0.##} ok={cmdOk}");
+            return (ok, $"header '{header.Text}' {R4(hb)} text {R4(tb)} rule {R4(rule)} (from text end + 6 to width - 8, y 12) ok={headerOk}; first result {R4(fb)} icon {R4(fi)} text x {ft.Left:0.##} selected={ReferenceEquals(_sel, rows[0])} ok={firstOk}; groups [{string.Join(", ", _searchGroups.Select((SearchGroupInfo g) => GroupTitle(g.Group) + " " + g.Rows + "/" + g.Count))}] rows {rows.Count} (allocation {string.Join(",", alloc)}) scrollable={_progScroll.ScrollableHeight:0.#} ok={budgetOk}; command '{_cmdRow.Text}' magnifier x {mag.Left:0.##} ({mag.Width:0.##} px) label x {lbl.Left:0.##} ok={cmdOk}");
         });
 
         QaTry("geometry-message", delegate
@@ -4387,7 +4402,7 @@ public sealed partial class Win7StartMenu
                     string t = map.TryGetValue(r.App.Name, out string? tv) ? tv : "(none)";
                     int tier = SearchScore.Name(t, q);
                     targetOnly.Add($"{q}->{r.App.Name}({t}, {r.Match})");
-                    int want = tier == SearchScore.Exact ? SearchScore.WordStart + 1 : SearchScore.WordStart - 1;
+                    int want = tier == SearchScore.Exact ? TargetExact : SearchScore.WordStart - 1;
                     if (r.Match != want || !(tier == SearchScore.Exact || tier == SearchScore.Prefix || tier == SearchScore.WordStart))
                     {
                         bad.Add($"{q}->{r.App.Name}({t}, tier {tier}, match {r.Match})");

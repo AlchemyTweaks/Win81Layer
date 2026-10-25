@@ -52,4 +52,45 @@ internal static class GreekLayout
         }
         return hadGreek ? sb.ToString() : "";
     }
+
+    private static Dictionary<char, char> _toGreek;
+
+    // The reverse: the Greek letter on the same physical key as each Latin letter ("pontiki" -> "ποντικι"), for a Greek
+    // word typed while the English layout was active. Returns "" if the input had no Latin letters. Used only to look up
+    // the search synonym table, never as a search term of its own.
+    public static string ToGreekKeys(string s)
+    {
+        if (string.IsNullOrEmpty(s))
+        {
+            return "";
+        }
+        Dictionary<char, char> map = _toGreek ??= BuildToGreek();
+        bool hadLatin = false;
+        StringBuilder sb = new StringBuilder(s.Length);
+        foreach (char c0 in s)
+        {
+            char c = char.ToLowerInvariant(c0);
+            if (map.TryGetValue(c, out char gr))
+            {
+                sb.Append(gr);
+                hadLatin = true;
+            }
+            else
+            {
+                sb.Append(c0);
+            }
+        }
+        return hadLatin ? sb.ToString() : "";
+    }
+
+    private static Dictionary<char, char> BuildToGreek()
+    {
+        Dictionary<char, char> map = new Dictionary<char, char>();
+        foreach (KeyValuePair<char, char> kv in ToLatin)
+        {
+            // Final sigma sits on 'w'; a word typed that way folds to sigma anyway.
+            map[kv.Value] = kv.Key;
+        }
+        return map;
+    }
 }

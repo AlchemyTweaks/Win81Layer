@@ -5,6 +5,7 @@ using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
+using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
@@ -282,6 +283,9 @@ internal sealed class W7Row : Grid
     // Builds the tooltip shown while the label is cut off (the menu supplies its Win7 tooltip).
     internal Func<string, ToolTip>? ToolTipFactory { get; set; }
 
+    // A tooltip shown whether or not the label is cut off (search results: the full name and where it comes from).
+    internal string? FixedTip { get; set; }
+
     // Caps the label width (the account name link).
     internal double TextMaxWidth
     {
@@ -337,6 +341,30 @@ internal sealed class W7Row : Grid
     {
         _label = text ?? string.Empty;
         _text.Text = _label;
+        if (_shadow != null)
+        {
+            _shadow.Text = _label;
+        }
+        AutomationProperties.SetName(this, _label);
+        UpdateTrim();
+    }
+
+    // A name with a grey detail after it ("Mouse - Accessibility", with an en dash); the detail is cut off first. Without
+    // a detail this is SetText.
+    internal void SetText(string text, string? detail)
+    {
+        if (string.IsNullOrEmpty(detail))
+        {
+            SetText(text);
+            return;
+        }
+        string tail = " " + (char)0x2013 + " " + detail;
+        _label = (text ?? string.Empty) + tail;
+        _text.Inlines.Clear();
+        _text.Inlines.Add(new Run(text ?? string.Empty));
+        Run grey = new Run(tail);
+        grey.SetResourceReference(TextElement.ForegroundProperty, "W7.Ink2");
+        _text.Inlines.Add(grey);
         if (_shadow != null)
         {
             _shadow.Text = _label;
@@ -489,6 +517,16 @@ internal sealed class W7Row : Grid
                 new Typeface(_text.FontFamily, _text.FontStyle, _text.FontWeight, _text.FontStretch), _text.FontSize, Brushes.Black,
                 null, TextOptions.GetTextFormattingMode(_text), ppd);
             trimmed = ft.WidthIncludingTrailingWhitespace > avail + 0.5;
+        }
+        if (FixedTip != null)
+        {
+            IsTrimmed = trimmed;
+            if (ToolTip == null || !string.Equals(_tipLabel, FixedTip, StringComparison.Ordinal))
+            {
+                ToolTip = ToolTipFactory?.Invoke(FixedTip);
+                _tipLabel = ToolTip != null ? FixedTip : null;
+            }
+            return;
         }
         // A row that stays trimmed while its label changes (the account name link) rebuilds its tooltip.
         if (trimmed == IsTrimmed && (!trimmed || (ToolTip != null && string.Equals(_tipLabel, _label, StringComparison.Ordinal))))
@@ -1012,14 +1050,18 @@ public sealed partial class Win7StartMenu
         {
             return;
         }
-        AppEntry? first = FirstProgramRow();
-        if (first != null)
+        // The first result of the first group, whatever its kind.
+        switch (FirstResultRow()?.Payload)
         {
+        case AppEntry first:
             LaunchProgram(first, asAdmin);
-        }
-        else
-        {
+            break;
+        case SystemHit hit:
+            LaunchHit(hit, asAdmin);
+            break;
+        default:
             SeeMoreResults(q);
+            break;
         }
     }
 
@@ -1032,6 +1074,9 @@ public sealed partial class Win7StartMenu
             break;
         case W7Row row when row.Payload is AppEntry a:
             LaunchProgram(a, asAdmin);
+            break;
+        case W7Row row when row.Payload is SystemHit hit:
+            LaunchHit(hit, asAdmin);
             break;
         case W7Row row when row.Payload is TreeNode folder:
             ToggleFolder(folder, expand: null, bringIntoView: true);
@@ -1091,6 +1136,11 @@ public sealed partial class Win7StartMenu
         if (_sel is W7Row row && row.Payload is AppEntry a)
         {
             ShowItemMenu(a, row, row.IsRecent, keyboard: true);
+            return true;
+        }
+        if (_sel is W7Row hitRow && hitRow.Payload is SystemHit hit)
+        {
+            ShowHitMenu(hit, hitRow, keyboard: true);
             return true;
         }
         return false;
@@ -1242,6 +1292,11 @@ public sealed partial class Win7StartMenu
         if (row.Payload is AppEntry a)
         {
             LaunchProgram(a, asAdmin: false);
+            return;
+        }
+        if (row.Payload is SystemHit hit)
+        {
+            LaunchHit(hit, asAdmin: false);
             return;
         }
         if (row.Payload is TreeNode folder)

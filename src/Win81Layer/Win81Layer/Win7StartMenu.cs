@@ -36,10 +36,12 @@ namespace Win81Layer;
 // - Palette: one frozen W7.* brush dictionary per theme, swapped whole; every element reads it by resource reference.
 // - Chrome: the frame, list pane, search band, right column and Shut down button, sized by LayoutFor/ApplyLayout.
 // - Rows: the W7Row element, the virtual-cursor keyboard model (focus never leaves the search box) and press tracking.
-// - Views: the three list containers (main, All Programs, search), the recent-list rules and search ranking.
+// - Views: the three list containers (main, All Programs, search) and the recent-list rules.
+// - Search: grouped search results (Programs, Settings, Control Panel) over the programs and SystemSearchIndex (the
+//   Settings pages, Control Panel items and tasks and system tools Windows itself ships, in Greek and English).
 // - Icons: exact-size icons loaded on a background worker into a strong cache, with plates for single-colour logos.
 // - Menus: the Win7 context menus (item, power, edit, empty area), opened through one child-menu helper.
-// - Qa: the offscreen harness (--win7starttest), which injects all user data and records side effects.
+// - Qa, QaSearch: the offscreen harness (--win7starttest), which injects all user data and records side effects.
 public sealed partial class Win7StartMenu : Window
 {
     private readonly Func<IReadOnlyList<AppEntry>> _appsProvider;
@@ -332,6 +334,8 @@ public sealed partial class Win7StartMenu : Window
         RefreshMain();
         ApplyLayout(LayoutFor(_mainPins, _mainRecent, maxWindowDip, _rw));
         EnsureShortcutIndex();
+        // The system search index (Settings, Control Panel, tools): the disk cache or a build, off the UI thread.
+        EnsureSystemIndex();
     }
 
     // True once Prewarm has run (a later inventory reload then prewarms again at idle).
@@ -826,6 +830,20 @@ public sealed partial class Win7StartMenu : Window
             if (child is FrameworkElement fe && fe.Tag is AppEntry a)
             {
                 return a;
+            }
+        }
+        return null;
+    }
+
+    // The first result row of the list (a program or a system entry of the first search group; never a weak match such
+    // as an uninstaller found by the word 'uninstall').
+    private W7Row? FirstResultRow()
+    {
+        foreach (UIElement child in _progList.Children)
+        {
+            if (child is W7Row r && r.Visibility == Visibility.Visible && (r.Payload is AppEntry || r.Payload is SystemHit) && !_weakRows.Contains(r))
+            {
+                return r;
             }
         }
         return null;
