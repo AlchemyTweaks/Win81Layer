@@ -25,31 +25,25 @@
       <SolidColorBrush x:Key="TB.StartSurfacePressed" Color="#FF000000" />
       <SolidColorBrush x:Key="TB.StartFrame" Color="#00FFFFFF" />
       <SolidColorBrush x:Key="TB.StartFramePressed" Color="#FF000000" />
+      <!-- The clock and volume flyouts: the Action Center's surface (body gradient, footer band, frame, contrast-raised link),
+           rewritten by ApplyClockCalendarTheme / ApplySoundFlyoutTheme from the same tones (ActionCenter.NormalTones). -->
       <SolidColorBrush x:Key="TB.ClockBackground" Color="#FF07345F" />
-      <SolidColorBrush x:Key="TB.ClockHeader" Color="#FF0865B8" />
       <SolidColorBrush x:Key="TB.ClockBody" Color="#FF09315B" />
       <SolidColorBrush x:Key="TB.ClockFooter" Color="#FF092F58" />
       <SolidColorBrush x:Key="TB.ClockBorder" Color="#FF0B72C4" />
       <SolidColorBrush x:Key="TB.ClockLink" Color="#FF67BCFF" />
       <SolidColorBrush x:Key="TB.ClockSelection" Color="#FF078FF0" />
       <SolidColorBrush x:Key="TB.SoundBackground" Color="#FF07345F" />
-      <SolidColorBrush x:Key="TB.SoundHeader" Color="#FF084A85" />
       <SolidColorBrush x:Key="TB.SoundFooter" Color="#FF052D55" />
       <SolidColorBrush x:Key="TB.SoundBorder" Color="#FF0B72C4" />
       <SolidColorBrush x:Key="TB.SoundLink" Color="#FF45B7FF" />
-      <SolidColorBrush x:Key="TB.SoundOutputDefault" Color="#FF078FEF" />
-      <SolidColorBrush x:Key="TB.SoundOutputOther" Color="#FF0A4D83" />
-      <SolidColorBrush x:Key="TB.SoundInputDefault" Color="#FF743EC4" />
-      <SolidColorBrush x:Key="TB.SoundInputOther" Color="#FF236F73" />
-      <!-- The outline of the default and of the other device rows (Dark rest gives the other rows the control outline). -->
-      <SolidColorBrush x:Key="TB.SoundRowEdgeDefault" Color="#24FFFFFF" />
-      <SolidColorBrush x:Key="TB.SoundRowEdgeOther" Color="#24FFFFFF" />
-      <SolidColorBrush x:Key="TB.SoundApp" Color="#FF0D8EA5" />
-      <SolidColorBrush x:Key="TB.SoundSystemApp" Color="#FF0A9A83" />
-      <SolidColorBrush x:Key="TB.SoundPlaybackTile" Color="#FF078FEF" />
-      <SolidColorBrush x:Key="TB.SoundRecordingTile" Color="#FF6637B6" />
-      <SolidColorBrush x:Key="TB.SoundSoundsTile" Color="#FF35A952" />
-      <SolidColorBrush x:Key="TB.SoundSettingsTile" Color="#FF0759A9" />
+      <!-- The shared quiet tokens of both flyouts: the footer divider, the hover / keyboard-focus and pressed washes, the
+           value ink (percentages, the date) and the secondary ink (weekdays, counts, a footer message). Dark rest swaps them. -->
+      <SolidColorBrush x:Key="TB.FlyoutDivider" Color="#32FFFFFF" />
+      <SolidColorBrush x:Key="TB.FlyoutHover" Color="#1AFFFFFF" />
+      <SolidColorBrush x:Key="TB.FlyoutPressed" Color="#33FFFFFF" />
+      <SolidColorBrush x:Key="TB.FlyoutValueInk" Color="#E8FFFFFF" />
+      <SolidColorBrush x:Key="TB.FlyoutSecondaryInk" Color="#B8FFFFFF" />
       <SolidColorBrush x:Key="TB.NetworkBackground" Color="#FF07345F" />
       <SolidColorBrush x:Key="TB.NetworkHeader" Color="#FF084A85" />
       <SolidColorBrush x:Key="TB.NetworkFooter" Color="#FF052D55" />
@@ -360,47 +354,125 @@
           </Setter.Value>
         </Setter>
       </Style>
-      <Style x:Key="FlyoutGlyph" TargetType="{x:Type Button}">
+      <!-- The clock and volume flyouts' rows and buttons (device rows, expanders, app icons, the footer link and its icon
+           buttons): no fill of their own; hover and keyboard focus take TB.FlyoutHover, a press TB.FlyoutPressed. The Action
+           Center's footer button, ported. -->
+      <Style x:Key="FlyoutRow" TargetType="{x:Type Button}">
+        <Setter Property="Foreground" Value="{DynamicResource TB.Ink}" />
         <Setter Property="Background" Value="#00FFFFFF" />
         <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="Padding" Value="0" />
         <Setter Property="FrameworkElement.Cursor" Value="Hand" />
         <Setter Property="FrameworkElement.FocusVisualStyle" Value="{x:Null}" />
-        <Setter Property="Foreground" Value="#EEFFFFFF" />
+        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+        <Setter Property="VerticalContentAlignment" Value="Stretch" />
+        <Setter Property="SnapsToDevicePixels" Value="True" />
         <Setter Property="Template">
           <Setter.Value>
             <ControlTemplate TargetType="{x:Type Button}">
-              <Border Name="Bd" Background="{TemplateBinding Control.Background}" CornerRadius="2" Padding="{TemplateBinding Control.Padding}">
-                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+              <Border Name="Bd" Background="{TemplateBinding Control.Background}" Padding="{TemplateBinding Control.Padding}" SnapsToDevicePixels="True">
+                <ContentPresenter HorizontalAlignment="{TemplateBinding Control.HorizontalContentAlignment}" VerticalAlignment="{TemplateBinding Control.VerticalContentAlignment}" />
               </Border>
               <ControlTemplate.Triggers>
+                <Trigger Property="UIElement.IsKeyboardFocused" Value="True">
+                  <Setter TargetName="Bd" Property="Border.Background" Value="{DynamicResource TB.FlyoutHover}" />
+                </Trigger>
                 <Trigger Property="UIElement.IsMouseOver" Value="True">
-                  <Setter TargetName="Bd" Value="{DynamicResource TaskbarHover}" Property="Border.Background" />
+                  <Setter TargetName="Bd" Property="Border.Background" Value="{DynamicResource TB.FlyoutHover}" />
+                </Trigger>
+                <Trigger Property="ButtonBase.IsPressed" Value="True">
+                  <Setter TargetName="Bd" Property="Border.Background" Value="{DynamicResource TB.FlyoutPressed}" />
+                </Trigger>
+                <Trigger Property="UIElement.IsEnabled" Value="False">
+                  <Setter Property="FrameworkElement.Cursor" Value="Arrow" />
                 </Trigger>
               </ControlTemplate.Triggers>
             </ControlTemplate>
           </Setter.Value>
         </Setter>
       </Style>
+      <!-- The 40 DIP footer link (the gear centred on the 32 DIP icon column: 1 frame + 19 padding, the label at x = 52). -->
+      <Style x:Key="FlyoutFooterButton" TargetType="{x:Type Button}" BasedOn="{StaticResource FlyoutRow}">
+        <Setter Property="Height" Value="40" />
+        <Setter Property="Padding" Value="19,0,8,0" />
+        <Setter Property="HorizontalAlignment" Value="Left" />
+        <Setter Property="VerticalAlignment" Value="Top" />
+        <Setter Property="HorizontalContentAlignment" Value="Left" />
+        <Setter Property="VerticalContentAlignment" Value="Center" />
+      </Style>
+      <!-- A 40 x 40 footer icon button with a 16 DIP vector (the Action Center's Power button). -->
+      <Style x:Key="FlyoutIconButton" TargetType="{x:Type Button}" BasedOn="{StaticResource FlyoutRow}">
+        <Setter Property="Width" Value="40" />
+        <Setter Property="Height" Value="40" />
+        <Setter Property="VerticalAlignment" Value="Top" />
+        <Setter Property="HorizontalContentAlignment" Value="Center" />
+        <Setter Property="VerticalContentAlignment" Value="Center" />
+      </Style>
+      <!-- A 16 DIP line glyph on the 24-unit grid (devices, expanders, footer icons). -->
+      <Style x:Key="FlyoutGlyph16" TargetType="{x:Type Viewbox}">
+        <Setter Property="Width" Value="16" />
+        <Setter Property="Height" Value="16" />
+        <Setter Property="Stretch" Value="Uniform" />
+        <Setter Property="HorizontalAlignment" Value="Center" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+        <Setter Property="SnapsToDevicePixels" Value="True" />
+        <Setter Property="IsHitTestVisible" Value="False" />
+      </Style>
+      <Style x:Key="FlyoutStroke" TargetType="{x:Type Path}">
+        <Setter Property="Stroke" Value="{DynamicResource TB.Ink}" />
+        <Setter Property="StrokeThickness" Value="1.6" />
+        <Setter Property="StrokeStartLineCap" Value="Round" />
+        <Setter Property="StrokeEndLineCap" Value="Round" />
+        <Setter Property="StrokeLineJoin" Value="Round" />
+      </Style>
+      <!-- The flyouts' disclosure chevron (MenuGlyphs.ChevronDown, 10 x 6, 1.5 stroke) in a 24 DIP column; it turns 180 degrees. -->
+      <Style x:Key="FlyoutChevron" TargetType="{x:Type Path}">
+        <Setter Property="Data" Value="{x:Static local:MenuGlyphs.ChevronDown}" />
+        <Setter Property="Stroke" Value="{DynamicResource TB.ChevronInk}" />
+        <Setter Property="StrokeThickness" Value="1.5" />
+        <Setter Property="StrokeStartLineCap" Value="Round" />
+        <Setter Property="StrokeEndLineCap" Value="Round" />
+        <Setter Property="StrokeLineJoin" Value="Round" />
+        <Setter Property="Width" Value="10" />
+        <Setter Property="Height" Value="6" />
+        <Setter Property="Stretch" Value="None" />
+        <Setter Property="HorizontalAlignment" Value="Center" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+        <Setter Property="RenderTransformOrigin" Value="0.5,0.5" />
+        <Setter Property="IsHitTestVisible" Value="False" />
+      </Style>
+      <!-- A calendar day: the cell less 2 DIP on each side (4 DIP gutters, the tile gutters), 12 px, a constant 1 DIP edge that
+           only today (when it is not the selected day) colours, and the flyouts' hover / focus / pressed washes over the fill. -->
       <Style x:Key="MetroCalendarDay" TargetType="{x:Type Button}">
         <Setter Property="Foreground" Value="{DynamicResource TB.DayInk}" />
         <Setter Property="Background" Value="#00FFFFFF" />
+        <Setter Property="BorderBrush" Value="#00FFFFFF" />
+        <Setter Property="BorderThickness" Value="1" />
         <Setter Property="FontFamily" Value="Segoe UI" />
-        <Setter Property="FontSize" Value="15" />
+        <Setter Property="FontSize" Value="12" />
+        <Setter Property="Margin" Value="2" />
+        <Setter Property="HorizontalAlignment" Value="Stretch" />
+        <Setter Property="VerticalAlignment" Value="Stretch" />
         <Setter Property="FrameworkElement.Cursor" Value="Hand" />
         <Setter Property="FrameworkElement.FocusVisualStyle" Value="{x:Null}" />
         <Setter Property="Padding" Value="0" />
         <Setter Property="Template">
           <Setter.Value>
             <ControlTemplate TargetType="{x:Type Button}">
-              <Border Name="Bd" Background="{TemplateBinding Control.Background}" SnapsToDevicePixels="True">
-                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
-              </Border>
+              <Grid SnapsToDevicePixels="True">
+                <Border Name="Bd" Background="{TemplateBinding Control.Background}" BorderBrush="{TemplateBinding Control.BorderBrush}" BorderThickness="{TemplateBinding Control.BorderThickness}" SnapsToDevicePixels="True" />
+                <Border Name="Wash" Background="#00FFFFFF" SnapsToDevicePixels="True" />
+                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,0,0,1" />
+              </Grid>
               <ControlTemplate.Triggers>
+                <Trigger Property="UIElement.IsKeyboardFocused" Value="True">
+                  <Setter TargetName="Wash" Property="Border.Background" Value="{DynamicResource TB.FlyoutHover}" />
+                </Trigger>
                 <Trigger Property="UIElement.IsMouseOver" Value="True">
-                  <Setter TargetName="Bd" Property="Border.Background" Value="#28FFFFFF" />
+                  <Setter TargetName="Wash" Property="Border.Background" Value="{DynamicResource TB.FlyoutHover}" />
                 </Trigger>
                 <Trigger Property="ButtonBase.IsPressed" Value="True">
-                  <Setter TargetName="Bd" Property="Border.Background" Value="#50FFFFFF" />
+                  <Setter TargetName="Wash" Property="Border.Background" Value="{DynamicResource TB.FlyoutPressed}" />
                 </Trigger>
                 <Trigger Property="UIElement.IsEnabled" Value="False">
                   <Setter Property="UIElement.Opacity" Value="0" />
@@ -410,39 +482,19 @@
           </Setter.Value>
         </Setter>
       </Style>
-      <Style x:Key="MetroClockSettings" TargetType="{x:Type Button}">
-        <Setter Property="Foreground" Value="{DynamicResource TB.ClockLink}" />
-        <Setter Property="Background" Value="#00FFFFFF" />
-        <Setter Property="FrameworkElement.Cursor" Value="Hand" />
-        <Setter Property="FrameworkElement.FocusVisualStyle" Value="{x:Null}" />
-        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
-        <Setter Property="VerticalContentAlignment" Value="Stretch" />
-        <Setter Property="Template">
-          <Setter.Value>
-            <ControlTemplate TargetType="{x:Type Button}">
-              <Border Name="Bd" Background="{TemplateBinding Control.Background}">
-                <ContentPresenter HorizontalAlignment="{TemplateBinding Control.HorizontalContentAlignment}" VerticalAlignment="{TemplateBinding Control.VerticalContentAlignment}" />
-              </Border>
-              <ControlTemplate.Triggers>
-                <Trigger Property="UIElement.IsMouseOver" Value="True">
-                  <Setter TargetName="Bd" Property="Border.Background" Value="#1FFFFFFF" />
-                </Trigger>
-                <Trigger Property="ButtonBase.IsPressed" Value="True">
-                  <Setter TargetName="Bd" Property="Border.Background" Value="#38FFFFFF" />
-                </Trigger>
-              </ControlTemplate.Triggers>
-            </ControlTemplate>
-          </Setter.Value>
-        </Setter>
-      </Style>
+      <!-- The flyouts' slider (the Action Center's: an 8 DIP track, the fill up to a 10 x 24 thumb). The whole row it is
+           stretched over is hit-testable (a transparent template root); arrows step 1, PageUp / PageDown 10. -->
       <Style x:Key="MetroSlider" TargetType="{x:Type Slider}">
         <Setter Property="Slider.IsMoveToPointEnabled" Value="True" />
         <Setter Property="MinHeight" Value="24" />
-        <Setter Property="Focusable" Value="False" />
+        <Setter Property="Focusable" Value="True" />
+        <Setter Property="SmallChange" Value="1" />
+        <Setter Property="LargeChange" Value="10" />
+        <Setter Property="FrameworkElement.FocusVisualStyle" Value="{x:Null}" />
         <Setter Property="Template">
           <Setter.Value>
             <ControlTemplate TargetType="{x:Type Slider}">
-              <Grid Height="24" VerticalAlignment="Center">
+              <Grid Name="SliderRoot" Background="#00FFFFFF" VerticalAlignment="Stretch" SnapsToDevicePixels="True">
                 <!-- Unfilled track: was #59FFFFFF (35% white) which read as a faint line on the dark flyout; raised to
                      ~60% white and 3px so the bar is clearly visible in every state (shared by the main + per-app sliders). -->
                 <Border Height="8" Background="{DynamicResource TB.SliderTrack}" VerticalAlignment="Center" />
@@ -477,6 +529,12 @@
                   </Track.Thumb>
                 </Track>
               </Grid>
+              <ControlTemplate.Triggers>
+                <!-- keyboard focus: the flyouts' focus wash over the slider's band -->
+                <Trigger Property="UIElement.IsKeyboardFocused" Value="True">
+                  <Setter TargetName="SliderRoot" Property="Panel.Background" Value="{DynamicResource TB.FlyoutHover}" />
+                </Trigger>
+              </ControlTemplate.Triggers>
             </ControlTemplate>
           </Setter.Value>
         </Setter>
@@ -827,198 +885,257 @@
         </Button>
         <Button Name="BatteryButton" Style="{StaticResource TrayIcon}" Content="{Binding BatteryGlyph}" ToolTip="{Binding BatteryTip}" Visibility="{Binding BatteryVisible, Converter={StaticResource B2V}}" Click="OnBatteryClick" MouseRightButtonUp="OnBatteryRightClick" />
         <Popup Name="VolumePopup" Placement="Custom" StaysOpen="True" AllowsTransparency="True" PopupAnimation="None" PlacementTarget="{Binding ElementName=VolumeButton}" Opened="OnVolumePopupOpened" Closed="OnVolumePopupClosed">
-          <Border Name="VolumeFlyoutRoot" Width="376" Height="480" Background="#00000000" BorderBrush="{DynamicResource TB.SoundBorder}" BorderThickness="1" SnapsToDevicePixels="True" UseLayoutRounding="True" TextOptions.TextFormattingMode="Display" TextOptions.TextRenderingMode="ClearType">
-            <Border.RenderTransform>
-              <TranslateTransform x:Name="VolumeFlyoutSlide" />
-            </Border.RenderTransform>
-            <Grid Background="{DynamicResource TB.SoundBackground}">
-              <Grid.RowDefinitions>
-                <RowDefinition x:Name="VolumeHeaderRow" Height="124" />
-                <RowDefinition Height="*" />
-                <RowDefinition x:Name="VolumeFooterRow" Height="104" />
-              </Grid.RowDefinitions>
-              <Border Grid.Row="0" Background="{DynamicResource TB.SoundHeader}" Padding="15,9,15,8" BorderBrush="#2AFFFFFF" BorderThickness="0,0,0,1">
-                <Grid>
-                  <Grid.RowDefinitions>
-                    <RowDefinition Height="Auto" />
-                    <RowDefinition Height="Auto" />
-                    <RowDefinition Height="*" />
-                  </Grid.RowDefinitions>
+          <!-- The volume flyout: a compact quick-settings panel in the Action Center family, 376 DIP wide and as tall as its
+               content (the master row, the output devices, the input device and the app volumes behind two disclosure rows,
+               the footer). The frame and body appear at once; only VolumeContent moves and fades. -->
+          <Border Name="VolumeFlyoutRoot" Width="376" Background="{DynamicResource TB.SoundBackground}" BorderBrush="{DynamicResource TB.SoundBorder}" BorderThickness="1" ClipToBounds="True" SnapsToDevicePixels="True" UseLayoutRounding="True" TextOptions.TextFormattingMode="Display" TextOptions.TextRenderingMode="Grayscale" KeyboardNavigation.TabNavigation="Cycle" KeyboardNavigation.DirectionalNavigation="Contained" PreviewKeyDown="OnVolumeFlyoutKeyDown">
+            <Grid ClipToBounds="True">
+              <Grid Name="VolumeContent">
+                <Grid.RenderTransform>
+                  <TranslateTransform x:Name="VolumeFlyoutSlide" />
+                </Grid.RenderTransform>
+                <Grid.RowDefinitions>
+                  <RowDefinition Height="Auto" />
+                  <RowDefinition Height="Auto" />
+                  <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+                <!-- the master row: the Action Center's volume row (32 icon | 8 | slider | 44 value) -->
+                <Grid Name="VolumeMasterRow" Grid.Row="0" Margin="11,6,11,0" Height="40">
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="32" />
+                    <ColumnDefinition Width="8" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="44" />
+                  </Grid.ColumnDefinitions>
+                  <Button Name="MuteToggle" Grid.Column="0" Style="{StaticResource FlyoutRow}" Width="32" Height="40" HorizontalContentAlignment="Center" VerticalContentAlignment="Center" Click="OnMuteToggle" ToolTip="Mute or unmute" AutomationProperties.Name="Mute or unmute">
+                    <Border Name="MuteToggleGlyph" Width="20" Height="20" IsHitTestVisible="False" />
+                  </Button>
+                  <Slider Name="VolumeSlider" Grid.Column="2" Minimum="0" Maximum="100" Style="{StaticResource MetroSlider}" VerticalAlignment="Stretch" Value="{Binding VolumePct, Mode=TwoWay}" ValueChanged="OnVolumeSliderChanged" AutomationProperties.Name="Volume" />
+                  <TextBlock Name="VolumePercent" Grid.Column="3" Foreground="{DynamicResource TB.FlyoutValueInk}" FontFamily="Segoe UI" FontSize="12" TextAlignment="Right" VerticalAlignment="Center" Margin="4,0,0,1" IsHitTestVisible="False" />
+                </Grid>
+                <ScrollViewer Name="VolumeBodyScroll" Grid.Row="1" ScrollChanged="OnFlyoutBodyScrollChanged" VerticalScrollBarVisibility="Disabled" HorizontalScrollBarVisibility="Disabled" CanContentScroll="False" IsDeferredScrollingEnabled="False" IsManipulationEnabled="True" Focusable="False" PanningMode="VerticalOnly" PanningDeceleration="0.0025" PanningRatio="1.0">
+                  <ScrollViewer.Resources>
+                    <!-- the Action Center's slim 10 DIP bar, over the rows' right padding (only while the body is clamped) -->
+                    <Style TargetType="{x:Type ScrollBar}">
+                      <Setter Property="Width" Value="10" />
+                      <Setter Property="MinWidth" Value="10" />
+                      <Setter Property="Background" Value="#00FFFFFF" />
+                      <Setter Property="Template">
+                        <Setter.Value>
+                          <ControlTemplate TargetType="{x:Type ScrollBar}">
+                            <Grid Width="10" Background="#00FFFFFF" SnapsToDevicePixels="True">
+                              <Track Name="PART_Track" Orientation="Vertical" IsDirectionReversed="True">
+                                <Track.DecreaseRepeatButton>
+                                  <RepeatButton Command="ScrollBar.PageUpCommand" Opacity="0" Focusable="False" />
+                                </Track.DecreaseRepeatButton>
+                                <Track.Thumb>
+                                  <Thumb MinHeight="24" Focusable="False" Cursor="Hand">
+                                    <Thumb.Template>
+                                      <ControlTemplate TargetType="{x:Type Thumb}">
+                                        <Grid Background="#00FFFFFF">
+                                          <Border Name="ThumbVisual" Width="4" Margin="0,1" Background="{DynamicResource Metro81.ScrollThumbBrushDark}" HorizontalAlignment="Center" />
+                                        </Grid>
+                                        <ControlTemplate.Triggers>
+                                          <Trigger Property="UIElement.IsMouseOver" Value="True">
+                                            <Setter TargetName="ThumbVisual" Property="Border.Background" Value="{DynamicResource Metro81.ScrollThumbHoverBrushDark}" />
+                                          </Trigger>
+                                          <Trigger Property="Thumb.IsDragging" Value="True">
+                                            <Setter TargetName="ThumbVisual" Property="Border.Background" Value="{DynamicResource Metro81.ScrollThumbPressedBrushDark}" />
+                                          </Trigger>
+                                        </ControlTemplate.Triggers>
+                                      </ControlTemplate>
+                                    </Thumb.Template>
+                                  </Thumb>
+                                </Track.Thumb>
+                                <Track.IncreaseRepeatButton>
+                                  <RepeatButton Command="ScrollBar.PageDownCommand" Opacity="0" Focusable="False" />
+                                </Track.IncreaseRepeatButton>
+                              </Track>
+                            </Grid>
+                          </ControlTemplate>
+                        </Setter.Value>
+                      </Setter>
+                    </Style>
+                  </ScrollViewer.Resources>
+                  <!-- the bar lies over the content (the rows keep their full width; the bar sits in their 11 DIP right padding) -->
+                  <ScrollViewer.Template>
+                    <ControlTemplate TargetType="{x:Type ScrollViewer}">
+                      <Grid Background="{TemplateBinding Control.Background}">
+                        <ScrollContentPresenter Name="PART_ScrollContentPresenter" CanContentScroll="{TemplateBinding ScrollViewer.CanContentScroll}" Margin="{TemplateBinding Control.Padding}" />
+                        <ScrollBar Name="PART_VerticalScrollBar" HorizontalAlignment="Right" Orientation="Vertical" Cursor="Arrow" Minimum="0" Maximum="{TemplateBinding ScrollViewer.ScrollableHeight}" ViewportSize="{TemplateBinding ScrollViewer.ViewportHeight}" Value="{Binding Path=VerticalOffset, RelativeSource={RelativeSource TemplatedParent}, Mode=OneWay}" Visibility="{TemplateBinding ScrollViewer.ComputedVerticalScrollBarVisibility}" />
+                      </Grid>
+                    </ControlTemplate>
+                  </ScrollViewer.Template>
+                  <StackPanel Name="VolumeBodyPanel">
+                    <!-- output devices: one full-bleed 32 DIP row each, the default one ticked -->
+                    <StackPanel Name="OutputList" Margin="0,4,0,0" KeyboardNavigation.DirectionalNavigation="Contained" />
+                    <!-- the input device: the default one on a disclosure row; the others behind it (code orders the list on the side
+                         away from the taskbar, so the row never moves under the pointer) -->
+                    <StackPanel Name="InputGroup" Margin="0,4,0,0">
+                      <Button Name="InputExpander" Style="{StaticResource FlyoutRow}" Height="32" Padding="11,0,11,0" Click="OnInputExpanderClick" AutomationProperties.Name="Input device">
+                        <Grid>
+                          <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="32" />
+                            <ColumnDefinition Width="8" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="24" />
+                          </Grid.ColumnDefinitions>
+                          <Viewbox Grid.Column="0" Style="{StaticResource FlyoutGlyph16}">
+                            <Canvas Width="24" Height="24">
+                              <Path Style="{StaticResource FlyoutStroke}" Data="M12,3 C10.3,3 9,4.3 9,6 L9,12 C9,13.7 10.3,15 12,15 C13.7,15 15,13.7 15,12 L15,6 C15,4.3 13.7,3 12,3 Z M6,11 C6,14.3 8.7,17 12,17 C15.3,17 18,14.3 18,11 M12,17 L12,21 M8.5,21 L15.5,21" />
+                            </Canvas>
+                          </Viewbox>
+                          <TextBlock Name="InputExpanderName" Grid.Column="2" Text="No input device" Foreground="{DynamicResource TB.Ink}" FontFamily="Segoe UI" FontSize="12" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Margin="0,0,0,1" />
+                          <Path Name="InputChevron" Grid.Column="3" Style="{StaticResource FlyoutChevron}">
+                            <Path.RenderTransform>
+                              <RotateTransform x:Name="InputChevronTurn" />
+                            </Path.RenderTransform>
+                          </Path>
+                        </Grid>
+                      </Button>
+                      <StackPanel Name="InputList" Visibility="Collapsed" KeyboardNavigation.DirectionalNavigation="Contained" />
+                    </StackPanel>
+                    <!-- app volume: a disclosure row with the session count; the 48 DIP app rows behind it -->
+                    <StackPanel Name="AppsGroup">
+                      <Button Name="AppsExpander" Style="{StaticResource FlyoutRow}" Height="32" Padding="11,0,11,0" Click="OnAppsExpanderClick" AutomationProperties.Name="App volume">
+                        <Grid>
+                          <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="32" />
+                            <ColumnDefinition Width="8" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="24" />
+                          </Grid.ColumnDefinitions>
+                          <Viewbox Grid.Column="0" Style="{StaticResource FlyoutGlyph16}">
+                            <Canvas Width="24" Height="24">
+                              <Path Style="{StaticResource FlyoutStroke}" Data="M6,3 L6,21 M12,3 L12,21 M18,3 L18,21 M4,14 L8,14 M10,7 L14,7 M16,11 L20,11" />
+                            </Canvas>
+                          </Viewbox>
+                          <TextBlock Grid.Column="2" Text="App volume" Foreground="{DynamicResource TB.Ink}" FontFamily="Segoe UI" FontSize="12" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Margin="0,0,0,1" />
+                          <TextBlock Name="AppsCount" Grid.Column="3" Text="None" Foreground="{DynamicResource TB.FlyoutSecondaryInk}" FontFamily="Segoe UI" FontSize="12" VerticalAlignment="Center" Margin="0,0,6,1" />
+                          <Path Name="AppsChevron" Grid.Column="4" Style="{StaticResource FlyoutChevron}">
+                            <Path.RenderTransform>
+                              <RotateTransform x:Name="AppsChevronTurn" />
+                            </Path.RenderTransform>
+                          </Path>
+                        </Grid>
+                      </Button>
+                      <ItemsControl Name="AppVolumeHost" Focusable="False" Visibility="Collapsed">
+                        <ItemsControl.ItemTemplate>
+                          <DataTemplate>
+                            <!-- one app: [32 icon (mute) | 8 | name over its slider | 44 value], 48 DIP -->
+                            <Grid Height="48" Margin="11,0,11,0">
+                              <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="32" />
+                                <ColumnDefinition Width="8" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="44" />
+                              </Grid.ColumnDefinitions>
+                              <Grid.RowDefinitions>
+                                <RowDefinition Height="4" />
+                                <RowDefinition Height="16" />
+                                <RowDefinition Height="24" />
+                                <RowDefinition Height="4" />
+                              </Grid.RowDefinitions>
+                              <Button Grid.Column="0" Grid.RowSpan="4" Style="{StaticResource FlyoutRow}" Width="32" Height="48" HorizontalContentAlignment="Center" VerticalContentAlignment="Center" Click="OnAppMuteClick" ToolTip="{Binding MuteTip}" AutomationProperties.Name="{Binding MuteTip}">
+                                <Grid x:Name="AppIconHost" Width="20" Height="20" IsHitTestVisible="False">
+                                  <Viewbox x:Name="AppFallback" Width="20" Height="20" Stretch="Uniform" Visibility="Collapsed" SnapsToDevicePixels="True">
+                                    <Canvas Width="24" Height="24">
+                                      <Path Fill="{DynamicResource TB.Ink}" Data="M 2,9.2 L 6.2,9.2 L 11,4.8 L 11,19.2 L 6.2,14.8 L 2,14.8 Z" />
+                                      <Path Style="{StaticResource FlyoutStroke}" Data="M 14,9.4 C 15.3,10.8 15.3,13.2 14,14.6 M 16.8,6.9 C 19.4,9.8 19.4,14.2 16.8,17.1" />
+                                    </Canvas>
+                                  </Viewbox>
+                                  <Image x:Name="AppIcon" Width="20" Height="20" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality" SnapsToDevicePixels="True" local:RestFlag.On="{DynamicResource TB.RestIcons}">
+                                    <Image.Source>
+                                      <MultiBinding Converter="{StaticResource RestIconEdge}">
+                                        <Binding Path="Icon" />
+                                        <Binding Path="(local:RestFlag.On)" RelativeSource="{RelativeSource Self}" />
+                                      </MultiBinding>
+                                    </Image.Source>
+                                  </Image>
+                                </Grid>
+                              </Button>
+                              <TextBlock Grid.Column="2" Grid.Row="1" Text="{Binding Name}" Foreground="{DynamicResource TB.FlyoutValueInk}" FontFamily="Segoe UI" FontSize="12" LineHeight="16" LineStackingStrategy="BlockLineHeight" TextTrimming="CharacterEllipsis" IsHitTestVisible="False" />
+                              <Slider Grid.Column="2" Grid.Row="2" Minimum="0" Maximum="100" Style="{StaticResource MetroSlider}" VerticalAlignment="Stretch" Value="{Binding VolumePct, Mode=TwoWay}" AutomationProperties.Name="{Binding Name}" />
+                              <TextBlock x:Name="AppValue" Grid.Column="3" Grid.Row="2" Text="{Binding VolumePct}" Foreground="{DynamicResource TB.FlyoutValueInk}" FontFamily="Segoe UI" FontSize="12" TextAlignment="Right" VerticalAlignment="Center" Margin="4,0,0,1" IsHitTestVisible="False" />
+                            </Grid>
+                            <DataTemplate.Triggers>
+                              <DataTrigger Binding="{Binding Icon}" Value="{x:Null}">
+                                <Setter TargetName="AppIcon" Property="UIElement.Visibility" Value="Collapsed" />
+                                <Setter TargetName="AppFallback" Property="UIElement.Visibility" Value="Visible" />
+                              </DataTrigger>
+                              <DataTrigger Binding="{Binding Muted}" Value="True">
+                                <Setter TargetName="AppIconHost" Property="UIElement.Opacity" Value="0.45" />
+                                <Setter TargetName="AppValue" Property="TextBlock.Text" Value="Muted" />
+                              </DataTrigger>
+                            </DataTemplate.Triggers>
+                          </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                      </ItemsControl>
+                    </StackPanel>
+                  </StackPanel>
+                </ScrollViewer>
+                <!-- more below: the last 16 DIP of a clamped body fade into the footer (shown only while it can scroll) -->
+                <Rectangle Name="VolumeBodyFade" Grid.Row="1" Height="16" VerticalAlignment="Bottom" Margin="0,0,10,0" Fill="{DynamicResource TB.SoundFooter}" IsHitTestVisible="False" Visibility="Collapsed">
+                  <Rectangle.OpacityMask>
+                    <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                      <GradientStop Color="#00000000" Offset="0" />
+                      <GradientStop Color="#FF000000" Offset="1" />
+                    </LinearGradientBrush>
+                  </Rectangle.OpacityMask>
+                </Rectangle>
+                <!-- the footer: Sound settings on the left (an error takes its label), four 40 DIP icon routes on the right -->
+                <Border Name="VolumeFooterBar" Grid.Row="2" Margin="0,6,0,0" Height="41" Background="{DynamicResource TB.SoundFooter}" BorderBrush="{DynamicResource TB.FlyoutDivider}" BorderThickness="0,1,0,0" SnapsToDevicePixels="True">
                   <Grid>
                     <Grid.ColumnDefinitions>
                       <ColumnDefinition Width="*" />
                       <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
-                    <TextBlock Name="VolumeTitle" Text="Volume" Foreground="{DynamicResource TB.Ink}" FontFamily="Segoe UI Light" FontSize="26" VerticalAlignment="Center" />
-                    <TextBlock Name="VolumePercent" Grid.Column="1" Foreground="{DynamicResource TB.Ink}" FontFamily="Segoe UI Light" FontSize="38" VerticalAlignment="Center">
-                      <Run Text="{Binding VolumePct, Mode=OneWay}" />
-                      <Run Text="%" FontSize="18" />
-                    </TextBlock>
+                    <Button Name="SoundSettingsLink" Grid.Column="0" Style="{StaticResource FlyoutFooterButton}" Click="OnOpenSoundSettings" ToolTip="Sound settings" AutomationProperties.Name="Sound settings">
+                      <Grid>
+                        <Grid.ColumnDefinitions>
+                          <ColumnDefinition Width="16" />
+                          <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Image Grid.Column="0" Width="16" Height="16" Stretch="Uniform" Source="{DynamicResource TB.SoundGear}" RenderOptions.BitmapScalingMode="HighQuality" SnapsToDevicePixels="True" VerticalAlignment="Center" />
+                        <TextBlock Name="SoundSettingsLabel" Grid.Column="1" Text="Sound settings" Foreground="{DynamicResource TB.SoundLink}" FontFamily="Segoe UI" FontSize="12" Margin="16,0,0,1" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                      </Grid>
+                    </Button>
+                    <StackPanel Name="SoundActionGrid" Grid.Column="1" Orientation="Horizontal">
+                      <Button Name="PlaybackDevicesButton" Style="{StaticResource FlyoutIconButton}" Click="OnOpenPlaybackDevices" ToolTip="Playback devices" AutomationProperties.Name="Playback devices">
+                        <Viewbox Style="{StaticResource FlyoutGlyph16}">
+                          <Canvas Width="24" Height="24">
+                            <Path Style="{StaticResource FlyoutStroke}" Data="M 6,3.5 L 19.5,12 L 6,20.5 Z" />
+                          </Canvas>
+                        </Viewbox>
+                      </Button>
+                      <Button Name="RecordingDevicesButton" Style="{StaticResource FlyoutIconButton}" Click="OnOpenRecordingDevices" ToolTip="Recording devices" AutomationProperties.Name="Recording devices">
+                        <Viewbox Style="{StaticResource FlyoutGlyph16}">
+                          <Canvas Width="24" Height="24">
+                            <Path Style="{StaticResource FlyoutStroke}" Data="M12,3 C10.3,3 9,4.3 9,6 L9,12 C9,13.7 10.3,15 12,15 C13.7,15 15,13.7 15,12 L15,6 C15,4.3 13.7,3 12,3 Z M6,11 C6,14.3 8.7,17 12,17 C15.3,17 18,14.3 18,11 M12,17 L12,21 M8.5,21 L15.5,21" />
+                          </Canvas>
+                        </Viewbox>
+                      </Button>
+                      <Button Name="SoundsButton" Style="{StaticResource FlyoutIconButton}" Click="OnOpenSounds" ToolTip="Sounds" AutomationProperties.Name="Sounds">
+                        <Viewbox Style="{StaticResource FlyoutGlyph16}">
+                          <Canvas Width="24" Height="24">
+                            <Path Style="{StaticResource FlyoutStroke}" Data="M 9,17.6 L 9,5.6 L 20,3.4 L 20,15.6 M 9,9.2 L 20,7" />
+                            <Ellipse Canvas.Left="3.4" Canvas.Top="15.4" Width="5.6" Height="4.4" Fill="{DynamicResource TB.Ink}" />
+                            <Ellipse Canvas.Left="14.4" Canvas.Top="13.4" Width="5.6" Height="4.4" Fill="{DynamicResource TB.Ink}" />
+                          </Canvas>
+                        </Viewbox>
+                      </Button>
+                      <Button Name="ClassicMixerButton" Style="{StaticResource FlyoutIconButton}" Click="OnOpenClassicVolumeMixer" ToolTip="Open volume mixer in classic view" AutomationProperties.Name="Open volume mixer in classic view">
+                        <Viewbox Style="{StaticResource FlyoutGlyph16}">
+                          <Canvas Width="24" Height="24">
+                            <Path Style="{StaticResource FlyoutStroke}" Data="M6,3 L6,21 M12,3 L12,21 M18,3 L18,21 M4,14 L8,14 M10,7 L14,7 M16,11 L20,11" />
+                          </Canvas>
+                        </Viewbox>
+                      </Button>
+                    </StackPanel>
                   </Grid>
-                  <TextBlock Name="VolDeviceName" Grid.Row="1" Foreground="#D2FFFFFF" FontFamily="Segoe UI" FontSize="12" TextTrimming="CharacterEllipsis" Margin="2,-2,0,3" />
-                  <Grid Grid.Row="2" VerticalAlignment="Stretch">
-                    <Grid.ColumnDefinitions>
-                      <ColumnDefinition Width="Auto" />
-                      <ColumnDefinition Width="*" />
-                    </Grid.ColumnDefinitions>
-                    <!-- Speaker SCALES to fill its row (Viewbox, Stretch=Uniform, capped 34) so it is ALWAYS whole and as large
-                         as the row allows — never clipped and never a sliver, whatever header height the code picks or DPI does.
-                         The button stretches to the row; its Padding gives the icon breathing room. -->
-                    <Button Name="MuteToggle" Grid.Column="0" Style="{StaticResource FlyoutGlyph}" Width="52" Padding="6,3" VerticalAlignment="Stretch" Click="OnMuteToggle" ToolTip="Mute or unmute">
-                      <Viewbox Stretch="Uniform" MaxHeight="34" MaxWidth="40" HorizontalAlignment="Center" VerticalAlignment="Center">
-                        <Grid Width="40" Height="40">
-                          <Image Name="VolumeHeroImage" Source="{Binding VolumeImage}" Visibility="{Binding VolumeImageVis}" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality" SnapsToDevicePixels="True" HorizontalAlignment="Center" VerticalAlignment="Center" />
-                          <TextBlock Name="MuteToggleGlyph" Text="{Binding VolumeGlyph}" Visibility="{Binding VolumeGlyphVis}" FontFamily="Segoe MDL2 Assets" FontSize="28" Foreground="{DynamicResource TB.Ink}" TextAlignment="Center" HorizontalAlignment="Center" VerticalAlignment="Center" ClipToBounds="False" TextOptions.TextFormattingMode="Ideal" />
-                        </Grid>
-                      </Viewbox>
-                    </Button>
-                    <Slider Name="VolumeSlider" Grid.Column="1" Minimum="0" Maximum="100" Style="{StaticResource MetroSlider}" VerticalAlignment="Center" Margin="12,0,3,0" Value="{Binding VolumePct, Mode=TwoWay}" ValueChanged="OnVolumeSliderChanged" />
-                  </Grid>
-                </Grid>
-              </Border>
-              <ScrollViewer Name="VolumeBodyScroll" Grid.Row="1" ScrollChanged="OnFlyoutBodyScrollChanged" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" CanContentScroll="False" IsDeferredScrollingEnabled="False" IsManipulationEnabled="True" Padding="12,6,9,5" PanningMode="VerticalOnly" PanningDeceleration="0.0025" PanningRatio="1.0">
-                <ScrollViewer.Resources>
-                  <Style TargetType="{x:Type ScrollBar}">
-                    <Setter Property="Width" Value="14" />
-                    <Setter Property="Background" Value="{DynamicResource Metro81.ScrollTrackBrushDark}" />
-                    <Setter Property="Template">
-                      <Setter.Value>
-                        <ControlTemplate TargetType="{x:Type ScrollBar}">
-                          <Grid Background="{DynamicResource Metro81.ScrollTrackBrushDark}" SnapsToDevicePixels="True">
-                            <Track Name="PART_Track" IsDirectionReversed="True">
-                              <Track.DecreaseRepeatButton>
-                                <RepeatButton Command="ScrollBar.PageUpCommand" Opacity="0" Focusable="False" />
-                              </Track.DecreaseRepeatButton>
-                              <Track.Thumb>
-                                <Thumb Focusable="False" Cursor="Hand">
-                                  <Thumb.Template>
-                                    <ControlTemplate TargetType="{x:Type Thumb}">
-                                      <Grid Background="Transparent">
-                                        <Border Name="ThumbVisual" Width="5" Background="{DynamicResource Metro81.ScrollThumbBrushDark}" HorizontalAlignment="Center" />
-                                      </Grid>
-                                      <ControlTemplate.Triggers>
-                                        <Trigger Property="UIElement.IsMouseOver" Value="True">
-                                          <Setter TargetName="ThumbVisual" Property="Border.Background" Value="{DynamicResource Metro81.ScrollThumbHoverBrushDark}" />
-                                        </Trigger>
-                                        <Trigger Property="Thumb.IsDragging" Value="True">
-                                          <Setter TargetName="ThumbVisual" Property="Border.Background" Value="{DynamicResource Metro81.ScrollThumbPressedBrushDark}" />
-                                        </Trigger>
-                                      </ControlTemplate.Triggers>
-                                    </ControlTemplate>
-                                  </Thumb.Template>
-                                </Thumb>
-                              </Track.Thumb>
-                              <Track.IncreaseRepeatButton>
-                                <RepeatButton Command="ScrollBar.PageDownCommand" Opacity="0" Focusable="False" />
-                              </Track.IncreaseRepeatButton>
-                            </Track>
-                          </Grid>
-                        </ControlTemplate>
-                      </Setter.Value>
-                    </Setter>
-                  </Style>
-                </ScrollViewer.Resources>
-                <StackPanel Name="VolumeBodyPanel">
-                  <Grid Margin="0,0,0,5">
-                    <TextBlock Text="Output" Foreground="{DynamicResource TB.HeadInk}" FontFamily="Segoe UI Semilight" FontSize="14" />
-                    <TextBlock Name="VolumeRefreshStatus" Text="Updating..." Foreground="#B8FFFFFF" FontFamily="Segoe UI" FontSize="12" HorizontalAlignment="Right" VerticalAlignment="Bottom" Visibility="Collapsed" />
-                  </Grid>
-                  <StackPanel Name="OutputList" />
-                  <TextBlock Text="Input" Foreground="{DynamicResource TB.HeadInk}" FontFamily="Segoe UI Semilight" FontSize="14" Margin="0,6,0,4" />
-                  <StackPanel Name="InputList" />
-                  <TextBlock Name="AppsHeader" Text="App volume" Foreground="{DynamicResource TB.HeadInk}" FontFamily="Segoe UI Semilight" FontSize="14" Margin="0,6,0,4" />
-                  <TextBlock Name="VolumeEmptyApps" Text="No active audio apps" Foreground="#A8FFFFFF" FontFamily="Segoe UI" FontSize="12" Margin="2,3,0,8" Visibility="Collapsed" />
-                  <ItemsControl Name="AppVolumeHost">
-                    <ItemsControl.ItemTemplate>
-                      <DataTemplate>
-                        <Border x:Name="SessionCard" Height="56" Margin="0,0,0,4" Background="{DynamicResource TB.SoundApp}" BorderBrush="#22FFFFFF" BorderThickness="1" SnapsToDevicePixels="True">
-                          <Grid>
-                            <Grid.ColumnDefinitions>
-                              <ColumnDefinition Width="44" />
-                              <ColumnDefinition Width="*" />
-                              <ColumnDefinition Width="46" />
-                            </Grid.ColumnDefinitions>
-                            <Grid Grid.Column="0" Background="#26000000">
-                              <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE767;" FontSize="20" Foreground="#D8FFFFFF" HorizontalAlignment="Center" VerticalAlignment="Center" />
-                              <Image Width="24" Height="24" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality" SnapsToDevicePixels="True" local:RestFlag.On="{DynamicResource TB.RestIcons}">
-                                <Image.Source>
-                                  <MultiBinding Converter="{StaticResource RestIconEdge}">
-                                    <Binding Path="Icon" />
-                                    <Binding Path="(local:RestFlag.On)" RelativeSource="{RelativeSource Self}" />
-                                  </MultiBinding>
-                                </Image.Source>
-                              </Image>
-                            </Grid>
-                            <Grid Grid.Column="1" Margin="10,4,7,4">
-                              <Grid.RowDefinitions>
-                                <RowDefinition Height="Auto" />
-                                <RowDefinition Height="*" />
-                              </Grid.RowDefinitions>
-                              <TextBlock Foreground="{DynamicResource TB.Ink}" FontFamily="Segoe UI" FontSize="12" TextTrimming="CharacterEllipsis" Text="{Binding Name}" />
-                              <Grid Grid.Row="1">
-                                <Grid.ColumnDefinitions>
-                                  <ColumnDefinition Width="Auto" />
-                                  <ColumnDefinition Width="*" />
-                                </Grid.ColumnDefinitions>
-                                <Button Grid.Column="0" FontFamily="Segoe MDL2 Assets" FontSize="14" Style="{StaticResource FlyoutGlyph}" Padding="3,0" Content="{Binding MuteGlyph}" Click="OnAppMuteClick" ToolTip="Mute or unmute app" />
-                                <Slider Grid.Column="1" Minimum="0" Maximum="100" VerticalAlignment="Center" Style="{StaticResource MetroSlider}" Margin="8,0,2,0" Value="{Binding VolumePct, Mode=TwoWay}" />
-                              </Grid>
-                            </Grid>
-                            <TextBlock Grid.Column="2" Foreground="#E8FFFFFF" FontFamily="Segoe UI" FontSize="12" HorizontalAlignment="Center" VerticalAlignment="Center">
-                              <Run Text="{Binding VolumePct, Mode=OneWay}" /><Run Text=" %" />
-                            </TextBlock>
-                          </Grid>
-                        </Border>
-                        <DataTemplate.Triggers>
-                          <DataTrigger Binding="{Binding Name}" Value="System sounds">
-                            <Setter TargetName="SessionCard" Property="Border.Background" Value="{DynamicResource TB.SoundSystemApp}" />
-                          </DataTrigger>
-                        </DataTemplate.Triggers>
-                      </DataTemplate>
-                    </ItemsControl.ItemTemplate>
-                  </ItemsControl>
-                </StackPanel>
-              </ScrollViewer>
-              <!-- more below: the last 16 DIP of the body fade into the footer (not over the scrollbar); shown only while scrollable -->
-              <Rectangle Name="VolumeBodyFade" Grid.Row="1" Height="16" VerticalAlignment="Bottom" Margin="0,0,14,0" Fill="{DynamicResource TB.SoundFooter}" IsHitTestVisible="False" Visibility="Collapsed">
-                <Rectangle.OpacityMask>
-                  <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
-                    <GradientStop Color="#00000000" Offset="0" />
-                    <GradientStop Color="#FF000000" Offset="1" />
-                  </LinearGradientBrush>
-                </Rectangle.OpacityMask>
-              </Rectangle>
-              <Border Grid.Row="2" Background="{DynamicResource TB.SoundFooter}" BorderBrush="#32FFFFFF" BorderThickness="0,1,0,0" Padding="11,6,11,4">
-                <Grid>
-                  <Grid.RowDefinitions>
-                    <RowDefinition Height="*" />
-                    <RowDefinition Height="25" />
-                  </Grid.RowDefinitions>
-                  <Grid Name="SoundActionGrid">
-                    <Grid.ColumnDefinitions>
-                      <ColumnDefinition Width="*" />
-                      <ColumnDefinition Width="*" />
-                      <ColumnDefinition Width="*" />
-                      <ColumnDefinition Width="*" />
-                    </Grid.ColumnDefinitions>
-                    <Button Name="PlaybackDevicesButton" Grid.Column="0" Style="{StaticResource MetroSoundActionTile}" Background="{DynamicResource TB.SoundPlaybackTile}" Margin="0,0,4,0" Click="OnOpenPlaybackDevices" ToolTip="Playback devices">
-                      <Grid Margin="6,5,6,5"><Grid.RowDefinitions><RowDefinition Height="*" /><RowDefinition Height="Auto" MinHeight="30" /></Grid.RowDefinitions><Viewbox Grid.Row="0" Style="{StaticResource MetroSoundActionIcon}"><Canvas Width="32" Height="32"><Path Data="M 8,4 L 26,16 L 8,28 Z" Fill="Transparent" Stroke="{DynamicResource TB.Ink}" StrokeThickness="2.3" StrokeLineJoin="Miter" /></Canvas></Viewbox><TextBlock Grid.Row="1" Text="Playback&#x0a;devices" FontFamily="Segoe UI" FontSize="12" LineHeight="15" VerticalAlignment="Bottom" Margin="0,0,10,0" /><Path Grid.Row="1" Style="{StaticResource MetroSoundActionChevron}" Margin="0,0,0,3" /></Grid>
-                    </Button>
-                    <Button Name="RecordingDevicesButton" Grid.Column="1" Style="{StaticResource MetroSoundActionTile}" Background="{DynamicResource TB.SoundRecordingTile}" Margin="0,0,4,0" Click="OnOpenRecordingDevices" ToolTip="Recording devices">
-                      <Grid Margin="6,5,6,5"><Grid.RowDefinitions><RowDefinition Height="*" /><RowDefinition Height="Auto" MinHeight="30" /></Grid.RowDefinitions><Viewbox Grid.Row="0" Style="{StaticResource MetroSoundActionIcon}"><Canvas Width="32" Height="32"><Path Data="M 16,3 C 12.9,3 11,5.3 11,8 L 11,16 C 11,19.1 13.1,21 16,21 C 18.9,21 21,19.1 21,16 L 21,8 C 21,5.3 19.1,3 16,3 Z M 7,15 C 7,21 10.8,25 16,25 C 21.2,25 25,21 25,15 M 16,25 L 16,29 M 11,29 L 21,29" Fill="Transparent" Stroke="{DynamicResource TB.Ink}" StrokeThickness="2.15" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" /></Canvas></Viewbox><TextBlock Grid.Row="1" Text="Recording&#x0a;devices" FontFamily="Segoe UI" FontSize="12" LineHeight="15" VerticalAlignment="Bottom" Margin="0,0,10,0" /><Path Grid.Row="1" Style="{StaticResource MetroSoundActionChevron}" Margin="0,0,0,3" /></Grid>
-                    </Button>
-                    <Button Name="SoundsButton" Grid.Column="2" Style="{StaticResource MetroSoundActionTile}" Background="{DynamicResource TB.SoundSoundsTile}" Margin="0,0,4,0" Click="OnOpenSounds" ToolTip="Sounds">
-                      <Grid Margin="6,5,6,5"><Grid.RowDefinitions><RowDefinition Height="*" /><RowDefinition Height="Auto" MinHeight="30" /></Grid.RowDefinitions><Viewbox Grid.Row="0" Style="{StaticResource MetroSoundActionIcon}"><Canvas Width="32" Height="32"><Path Data="M 13,8 L 26,5 L 26,20 M 13,8 L 13,23 M 13,11 L 26,8" Fill="Transparent" Stroke="{DynamicResource TB.Ink}" StrokeThickness="2.3" StrokeStartLineCap="Square" StrokeEndLineCap="Square" StrokeLineJoin="Miter" /><Ellipse Canvas.Left="5" Canvas.Top="20" Width="9" Height="6" Fill="{DynamicResource TB.Ink}" /><Ellipse Canvas.Left="18" Canvas.Top="17" Width="9" Height="6" Fill="{DynamicResource TB.Ink}" /></Canvas></Viewbox><TextBlock Grid.Row="1" Text="Sounds" FontFamily="Segoe UI" FontSize="12" VerticalAlignment="Bottom" Margin="0,0,10,1" /><Path Grid.Row="1" Style="{StaticResource MetroSoundActionChevron}" Margin="0,0,0,3" /></Grid>
-                    </Button>
-                    <Button Name="SoundSettingsButton" Grid.Column="3" Style="{StaticResource MetroSoundActionTile}" Background="{DynamicResource TB.SoundSettingsTile}" Click="OnOpenSoundSettings" ToolTip="Sound settings">
-                      <Grid Margin="6,5,6,5"><Grid.RowDefinitions><RowDefinition Height="*" /><RowDefinition Height="Auto" MinHeight="30" /></Grid.RowDefinitions><Viewbox Grid.Row="0" Style="{StaticResource MetroSoundActionIcon}"><Canvas Width="32" Height="32"><Path Data="F0 M 13,1 L 19,1 L 19.8,5.1 L 22.1,6 L 25.6,3.6 L 29.4,7.4 L 27,10.9 L 27.9,13.2 L 31,14 L 31,18 L 27.9,18.8 L 27,21.1 L 29.4,24.6 L 25.6,28.4 L 22.1,26 L 19.8,26.9 L 19,31 L 13,31 L 12.2,26.9 L 9.9,26 L 6.4,28.4 L 2.6,24.6 L 5,21.1 L 4.1,18.8 L 1,18 L 1,14 L 4.1,13.2 L 5,10.9 L 2.6,7.4 L 6.4,3.6 L 9.9,6 L 12.2,5.1 Z M 16,11 A 5,5 0 1 0 16,21 A 5,5 0 1 0 16,11 Z" Fill="{DynamicResource TB.Ink}" /></Canvas></Viewbox><TextBlock Grid.Row="1" Text="Sound&#x0a;settings" FontFamily="Segoe UI" FontSize="12" LineHeight="15" VerticalAlignment="Bottom" Margin="0,0,10,0" /><Path Grid.Row="1" Style="{StaticResource MetroSoundActionChevron}" Margin="0,0,0,3" /></Grid>
-                    </Button>
-                  </Grid>
-                  <Button Grid.Row="1" Style="{StaticResource MetroSoundFooterLink}" Click="OnOpenClassicVolumeMixer" ToolTip="Open classic volume mixer">
-                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right"><TextBlock Text="Open volume mixer in classic view" FontFamily="Segoe UI" FontSize="12" VerticalAlignment="Center" /><TextBlock Text="  →" FontFamily="Segoe UI Symbol" FontSize="14" VerticalAlignment="Center" /></StackPanel>
-                  </Button>
-                </Grid>
-              </Border>
+                </Border>
+              </Grid>
             </Grid>
           </Border>
         </Popup>
@@ -1066,64 +1183,65 @@
         <TextBlock Name="ClockDate" Foreground="#CCFFFFFF" FontFamily="Segoe UI" FontSize="11" HorizontalAlignment="Right" />
       </StackPanel>
       <Popup Name="ClockPopup" Placement="Custom" StaysOpen="True" AllowsTransparency="True" PopupAnimation="None" PlacementTarget="{Binding ElementName=ClockPanel}" Opened="OnClockPopupOpened" Closed="OnClockPopupClosed">
-        <Border Name="ClockFlyoutRoot" Width="304" Height="444" Background="{DynamicResource TB.ClockBackground}" BorderBrush="{DynamicResource TB.ClockBorder}" BorderThickness="1" SnapsToDevicePixels="True" UseLayoutRounding="True" TextOptions.TextFormattingMode="Display">
-          <Border.RenderTransform>
-            <TranslateTransform x:Name="ClockFlyoutSlide" />
-          </Border.RenderTransform>
-          <Grid>
-            <Grid.RowDefinitions>
-              <RowDefinition x:Name="ClockHeaderRow" Height="112" />
-              <RowDefinition Height="*" />
-              <RowDefinition x:Name="ClockFooterRow" Height="52" />
-            </Grid.RowDefinitions>
-            <Border Grid.Row="0" Background="{DynamicResource TB.ClockHeader}">
-              <StackPanel VerticalAlignment="Center" Margin="12,6">
-                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
-                  <TextBlock Name="ClockBig" Foreground="{DynamicResource TB.Ink}" FontFamily="Segoe UI Light" FontSize="50" FontWeight="Light" />
-                  <TextBlock Name="ClockSeconds" Foreground="#E8FFFFFF" FontFamily="Segoe UI Light" FontSize="23" FontWeight="Light" VerticalAlignment="Bottom" Margin="7,0,0,6" />
+        <!-- The clock and calendar: a compact quick-settings panel in the Action Center family, 376 x 357 DIP (the time and
+             the date, the month and its navigation, six week rows, the settings footer). The frame and body appear at once;
+             only ClockContent moves and fades. -->
+        <Border Name="ClockFlyoutRoot" Width="376" Height="357" Background="{DynamicResource TB.ClockBackground}" BorderBrush="{DynamicResource TB.ClockBorder}" BorderThickness="1" ClipToBounds="True" SnapsToDevicePixels="True" UseLayoutRounding="True" TextOptions.TextFormattingMode="Display" TextOptions.TextRenderingMode="Grayscale" KeyboardNavigation.TabNavigation="Cycle" PreviewKeyDown="OnClockFlyoutKeyDown">
+          <Grid ClipToBounds="True">
+            <Grid Name="ClockContent">
+              <Grid.RenderTransform>
+                <TranslateTransform x:Name="ClockFlyoutSlide" />
+              </Grid.RenderTransform>
+              <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="6" />
+                <RowDefinition Height="Auto" />
+              </Grid.RowDefinitions>
+              <!-- the time (Light 32, the seconds Light 15 on the same baseline: equal 40 DIP block lines) and the date -->
+              <StackPanel Name="ClockHeaderPanel" Grid.Row="0" Margin="11,12,11,0">
+                <StackPanel Orientation="Horizontal" Height="40">
+                  <TextBlock Name="ClockBig" Foreground="{DynamicResource TB.Ink}" FontFamily="Segoe UI Light" FontSize="32" FontWeight="Light" LineHeight="40" LineStackingStrategy="BlockLineHeight" VerticalAlignment="Top" />
+                  <TextBlock Name="ClockSeconds" Foreground="{DynamicResource TB.FlyoutValueInk}" FontFamily="Segoe UI Light" FontSize="15" FontWeight="Light" LineHeight="40" LineStackingStrategy="BlockLineHeight" VerticalAlignment="Top" Margin="6,0,0,0" />
                 </StackPanel>
-                <TextBlock Name="ClockFull" Foreground="{DynamicResource TB.Ink}" FontFamily="Segoe UI Semilight" FontSize="14" HorizontalAlignment="Center" TextAlignment="Center" Margin="0,-1,0,0" />
+                <TextBlock Name="ClockFull" Foreground="{DynamicResource TB.FlyoutValueInk}" FontFamily="Segoe UI" FontSize="12" LineHeight="16" LineStackingStrategy="BlockLineHeight" TextTrimming="CharacterEllipsis" />
               </StackPanel>
-            </Border>
-            <Border Grid.Row="1" Background="{DynamicResource TB.ClockBody}">
-              <Grid Name="ClockBodyLayout" Margin="12,9,12,9">
-                <Grid.RowDefinitions>
-                  <RowDefinition x:Name="CalendarNavRow" Height="38" />
-                  <RowDefinition Height="*" />
-                </Grid.RowDefinitions>
-                <Grid Grid.Row="0">
-                  <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto" />
-                    <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="Auto" />
-                  </Grid.ColumnDefinitions>
-                  <local:MetroDirectionalArrow81 x:Name="PrevMonth" Grid.Column="0" Width="36" Height="36" GlyphSize="28" Direction="Left" ToolTip="Previous month" AutomationProperties.Name="Previous month" Click="OnPrevMonth" />
-                  <TextBlock Name="MonthLabel" Grid.Column="1" Foreground="{DynamicResource TB.Ink}" FontFamily="Segoe UI Light" FontSize="21" FontWeight="Light" HorizontalAlignment="Center" VerticalAlignment="Center" TextAlignment="Center">
-                    <TextBlock.RenderTransform>
-                      <TranslateTransform x:Name="MonthLabelSlide" />
-                    </TextBlock.RenderTransform>
-                  </TextBlock>
-                  <local:MetroDirectionalArrow81 x:Name="NextMonth" Grid.Column="2" Width="36" Height="36" GlyphSize="28" Direction="Right" ToolTip="Next month" AutomationProperties.Name="Next month" Click="OnNextMonth" />
-                </Grid>
-                <Grid Name="MonthGrid" Grid.Row="1" Margin="0,3,0,0" ClipToBounds="True">
-                  <Grid.RenderTransform>
-                    <TranslateTransform x:Name="MonthGridSlide" />
-                  </Grid.RenderTransform>
-                </Grid>
+              <!-- the month (12 px SemiBold) and its 32 DIP arrows, the next one ending at x = 364 -->
+              <Grid Name="CalendarNav" Grid.Row="1" Margin="11,8,11,0" Height="32">
+                <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="*" />
+                  <ColumnDefinition Width="Auto" />
+                  <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Name="MonthLabel" Grid.Column="0" Foreground="{DynamicResource TB.Ink}" FontFamily="Segoe UI" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Margin="0,0,0,1">
+                  <TextBlock.RenderTransform>
+                    <TranslateTransform x:Name="MonthLabelSlide" />
+                  </TextBlock.RenderTransform>
+                </TextBlock>
+                <local:MetroDirectionalArrow81 x:Name="PrevMonth" Grid.Column="1" Width="32" Height="32" GlyphSize="20" Direction="Left" ToolTip="Previous month" AutomationProperties.Name="Previous month" Click="OnPrevMonth" />
+                <local:MetroDirectionalArrow81 x:Name="NextMonth" Grid.Column="2" Width="32" Height="32" GlyphSize="20" Direction="Right" ToolTip="Next month" AutomationProperties.Name="Next month" Click="OnNextMonth" />
               </Grid>
-            </Border>
-            <Border Grid.Row="2" Background="{DynamicResource TB.ClockFooter}" BorderBrush="{DynamicResource TB.ClockBorder}" BorderThickness="0,1,0,0">
-              <Button Style="{StaticResource MetroClockSettings}" ToolTip="Change date and time settings" AutomationProperties.Name="Change date and time settings" Click="OnOpenDateTimeSettings">
-                <Grid Margin="16,0">
-                  <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto" />
-                    <ColumnDefinition Width="*" />
-                  </Grid.ColumnDefinitions>
-                  <TextBlock Grid.Column="0" Text="&#xE787;" FontFamily="Segoe MDL2 Assets" FontSize="22" VerticalAlignment="Center" />
-                  <TextBlock Grid.Column="1" Text="Change date and time settings" FontFamily="Segoe UI Semilight" FontSize="14" VerticalAlignment="Center" Margin="12,0,0,0" TextTrimming="CharacterEllipsis" />
-                </Grid>
-              </Button>
-            </Border>
+              <!-- the weekdays (20 DIP) and six week rows; the day fills run from x = 12 to 364 with 4 DIP gutters -->
+              <Grid Name="MonthGrid" Grid.Row="2" Margin="9,0,9,0" Height="200" ClipToBounds="True" KeyboardNavigation.DirectionalNavigation="Contained" KeyboardNavigation.TabNavigation="Once">
+                <Grid.RenderTransform>
+                  <TranslateTransform x:Name="MonthGridSlide" />
+                </Grid.RenderTransform>
+              </Grid>
+              <!-- the footer: the Action Center's (1 DIP divider, 40 DIP row, the gear on the 32 DIP icon column, the label at x = 52) -->
+              <Border Name="ClockFooterBar" Grid.Row="4" Height="41" Background="{DynamicResource TB.ClockFooter}" BorderBrush="{DynamicResource TB.FlyoutDivider}" BorderThickness="0,1,0,0" SnapsToDevicePixels="True">
+                <Button Name="ClockSettingsLink" Style="{StaticResource FlyoutFooterButton}" ToolTip="Change date and time settings" AutomationProperties.Name="Change date and time settings" Click="OnOpenDateTimeSettings">
+                  <Grid>
+                    <Grid.ColumnDefinitions>
+                      <ColumnDefinition Width="16" />
+                      <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <Image Name="ClockSettingsGear" Grid.Column="0" Width="16" Height="16" Stretch="Uniform" Source="{DynamicResource TB.ClockGear}" RenderOptions.BitmapScalingMode="HighQuality" SnapsToDevicePixels="True" VerticalAlignment="Center" />
+                    <TextBlock Name="ClockSettingsLabel" Grid.Column="1" Text="Date and time settings" Foreground="{DynamicResource TB.ClockLink}" FontFamily="Segoe UI" FontSize="12" Margin="16,0,0,1" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                  </Grid>
+                </Button>
+              </Border>
+            </Grid>
           </Grid>
         </Border>
       </Popup>

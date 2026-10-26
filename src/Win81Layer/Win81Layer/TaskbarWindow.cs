@@ -34,7 +34,8 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 
 	private sealed record TaskSpec(string Key, nint Rep, string Title, List<nint> Members, bool ShowLabel);
 
-	private sealed record AudioFlyoutSnapshot(List<AudioDevice> Outputs, List<AudioDevice> Inputs, List<AudioSessionVm> Sessions, long EnumerateMs);
+	// ReadStartedMs: when the read began (Environment.TickCount64), so an app level the user set after it is kept.
+	private sealed record AudioFlyoutSnapshot(List<AudioDevice> Outputs, List<AudioDevice> Inputs, List<AudioSessionVm> Sessions, long EnumerateMs, long ReadStartedMs);
 
 	private sealed record NetworkFlyoutSnapshot(NetState81 State, NetInfo.LocalNet Local, string? PublicIp, long EnumerateMs);
 
@@ -335,9 +336,8 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 
 	private int _globalVolumeWheelDispatchQueued;
 
+	// A wheel the body could not take is never kept for later (always 0 outside a single routing; QA checks it).
 	private int _pendingVolumeWheelDelta;
-
-	private bool _pendingVolumeWheelFlushQueued;
 
 	private bool _volumeDiagnosticsMode;
 
@@ -595,8 +595,10 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		_groupTargetIdx = -1;
 		_clsSb = new StringBuilder(64);
 		InitializeComponent();
-		ClockPopup.CustomPopupPlacementCallback = PlaceClockPopup;
-		VolumePopup.CustomPopupPlacementCallback = PlaceVolumePopup;
+		// The clock and volume flyouts open where the Action Center does (the tray end of this bar's monitor); the right-click
+		// command popups and the network flyout stay anchored to their buttons.
+		ClockPopup.CustomPopupPlacementCallback = (popupSize, targetSize, offset) => PlaceTrayFlyout(ClockPanel, popupSize, targetSize);
+		VolumePopup.CustomPopupPlacementCallback = (popupSize, targetSize, offset) => PlaceTrayFlyout(VolumeButton, popupSize, targetSize);
 		NetPopup.CustomPopupPlacementCallback = PlaceNetworkPopup;
 		SoundCommandPopup.CustomPopupPlacementCallback = PlaceVolumePopup;
 		NetworkCommandPopup.CustomPopupPlacementCallback = PlaceNetworkPopup;
@@ -605,8 +607,9 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		NetworkBodyScroll.AddHandler(Mouse.PreviewMouseWheelEvent, new MouseWheelEventHandler(OnNetworkBodyPreviewMouseWheel), handledEventsToo: true);
 		NetworkBodyScroll.AddHandler(Mouse.PreviewMouseDownEvent, new MouseButtonEventHandler(OnNetworkBodyPreviewMouseLeftButtonDown), handledEventsToo: true);
 		AppVolumeHost.ItemsSource = _appSessions;
-		VolDeviceName.Text = "Audio device";
-		VolumeEmptyApps.Visibility = Visibility.Visible;
+		_tray.PropertyChanged += OnTrayVolumeStateChanged;
+		UpdateMasterVolumeVisuals();
+		ApplyVolumeFlyoutLayout(animate: false);
 		ApplyTaskbarSize();
 		TaskHost.ItemsSource = _visibleTasks;
 		TaskOverflowHost.ItemsSource = _overflowTasks;
@@ -1144,15 +1147,15 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 			SwapInk("TB.DayInk", rest ? DarkRestPalette.Ink : _tbDayInkNormal);
 			SwapInk("TB.ChevronInk", rest ? DarkRestPalette.Ink : _tbChevronInkNormal);
 			// The tray glyphs and running-app labels and the volume headers in the soft ink, the chevron of a toolbar
-			// softer still, the address box outlined in the control grey, the selected calendar day in the ink for
-			// accent fills, and the volume slider's track dark with an outline (its fill keeps 3:1 against it).
-			foreach ((string key, System.Windows.Media.Brush restInk) in new (string, System.Windows.Media.Brush)[7]
+			// softer still, the address box outlined in the control grey, and the volume slider's track dark with an
+			// outline (its fill keeps 3:1 against it). The selected calendar day's ink goes with its fill (the clock
+			// flyout's palette writes both).
+			foreach ((string key, System.Windows.Media.Brush restInk) in new (string, System.Windows.Media.Brush)[6]
 			{
 				("TB.GlyphInk", DarkRestPalette.Ink),
 				("TB.HeadInk", DarkRestPalette.Ink),
 				("TB.InkSoft", RestInkSoft),
 				("TB.AddressBorder", DarkRestPalette.Boundary),
-				("TB.DaySelectedInk", DarkRestPalette.InkOnAccent),
 				("TB.SliderTrack", DarkRestPalette.SliderTrackBrush),
 				("TB.SliderTrackBorder", DarkRestPalette.Boundary)
 			})
@@ -1170,10 +1173,10 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 			// outline for opaque dark app icons on the black bar
 			SwapInk("TB.SystemGlyphOpacity", rest ? RestSystemGlyphOpacity : NormalSystemGlyphOpacity);
 			SwapInk("TB.RestIcons", rest ? BoxedTrue : BoxedFalse);
-			// the white hero pictures of the network and volume flyouts at the soft ink's brightness
+			// the white hero picture of the network flyout at the soft ink's brightness (the volume flyout's speaker is a
+			// vector in TB.Ink)
 			double opacity = rest ? DarkRestPalette.GlyphOpacity : 1.0;
 			NetHeroImage.Opacity = opacity;
-			VolumeHeroImage.Opacity = opacity;
 		}
 		catch
 		{
@@ -1314,17 +1317,109 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		StartButton.UpdateLayout();
 	}
 
+	// ---- the clock and volume flyouts' surface: the Action Center's, from the same theme rule and the same tones ----
+
+	// One flyout surface: the body gradient, the footer band, the frame, the (contrast-raised) link, the calendar's selection
+	// fill and the ink of the selected day's number, the quiet tokens both flyouts share and the footer gear in the link ink.
+	private readonly record struct TrayFlyoutSurface(
+		System.Windows.Media.Brush Body,
+		SolidColorBrush Footer,
+		SolidColorBrush Border,
+		SolidColorBrush Link,
+		SolidColorBrush Selection,
+		System.Windows.Media.Brush SelectionInk,
+		SolidColorBrush Divider,
+		SolidColorBrush Hover,
+		SolidColorBrush Pressed,
+		SolidColorBrush ValueInk,
+		SolidColorBrush SecondaryInk,
+		ImageSource Gear);
+
+	private static readonly SolidColorBrush NormalFlyoutDivider = Fz(System.Windows.Media.Color.FromArgb(0x32, 255, 255, 255));
+
+	private static readonly SolidColorBrush NormalFlyoutHover = Fz(System.Windows.Media.Color.FromArgb(0x1A, 255, 255, 255));
+
+	private static readonly SolidColorBrush NormalFlyoutPressed = Fz(System.Windows.Media.Color.FromArgb(0x33, 255, 255, 255));
+
+	private static readonly SolidColorBrush NormalFlyoutValueInk = Fz(System.Windows.Media.Color.FromArgb(0xE8, 255, 255, 255));
+
+	private static readonly SolidColorBrush NormalFlyoutSecondaryInk = Fz(System.Windows.Media.Color.FromArgb(0xB8, 255, 255, 255));
+
+	// The selected day's number in Normal on a fill dark enough for white (TB.DaySelectedInk as the XAML declares it).
+	internal static readonly System.Windows.Media.Color NormalDaySelectedInk = System.Windows.Media.Color.FromArgb(0xF2, 255, 255, 255);
+
+	private static readonly SolidColorBrush NormalDaySelectedInkBrush = Fz(NormalDaySelectedInk);
+
+	private static readonly SolidColorBrush DarkDaySelectedInkBrush = Fz(FlyoutPalette.DarkDayInk);
+
+	// Normal: ActionCenter.NormalTones for the theme (the body from the Start background's tone to the accent's, or the base
+	// hue throughout in a season; the footer, frame and link the panel's own), and the selection fill raised until it stands
+	// at 3:1 against the body with its number at 4.5:1 (FlyoutPalette.SelectionFill). Dark rest: the Action Center's rest set
+	// (near-black body, the popup edge, the accent ink link, the accent fill for the selected day, the soft inks).
+	private static TrayFlyoutSurface TrayFlyoutTones(System.Windows.Media.Color themeBase, System.Windows.Media.Color accent, bool seasonal, bool rest)
+	{
+		if (rest)
+		{
+			return new TrayFlyoutSurface(
+				RestFlyoutBody(),
+				RestFlyoutFooter,
+				RestFlyoutBorder,
+				RestFlyoutLink,
+				RestFlyoutSelection,
+				DarkRestPalette.InkOnAccent,
+				(SolidColorBrush)DarkRestPalette.Separator,
+				(SolidColorBrush)DarkRestPalette.MenuHover,
+				(SolidColorBrush)DarkRestPalette.Pressed,
+				(SolidColorBrush)DarkRestPalette.Ink2,
+				(SolidColorBrush)DarkRestPalette.Ink2,
+				SettingsGlyph.Gear(DarkRestPalette.AccentInkColor));
+		}
+		ActionCenterTones tones = ActionCenter.NormalTones(themeBase, accent, seasonal);
+		LinearGradientBrush body = new LinearGradientBrush
+		{
+			StartPoint = new System.Windows.Point(0.0, 0.0),
+			EndPoint = new System.Windows.Point(1.0, 1.0)
+		};
+		body.GradientStops.Add(new GradientStop(tones.BodyTop, 0.0));
+		body.GradientStops.Add(new GradientStop(tones.BodyBottom, 1.0));
+		((Freezable)body).Freeze();
+		// the value ink (#E8FFFFFF) and the secondary ink (#B8FFFFFF), raised on a lighter (seasonal) body until they read
+		// at 4.5:1 on both body stops and the footer
+		System.Windows.Media.Color valueInk = FlyoutPalette.ReadableWhite(0xE8, tones.BodyTop, tones.BodyBottom, tones.Footer);
+		System.Windows.Media.Color secondaryInk = FlyoutPalette.ReadableWhite(0xB8, tones.BodyTop, tones.BodyBottom, tones.Footer);
+		(System.Windows.Media.Color selection, System.Windows.Media.Color selectionInk) = FlyoutPalette.SelectionFill(accent, NormalDaySelectedInk, tones.BodyTop, tones.BodyBottom);
+		return new TrayFlyoutSurface(
+			body,
+			Fz(tones.Footer),
+			Fz(tones.Border),
+			Fz(tones.Link),
+			Fz(selection),
+			selectionInk == NormalDaySelectedInk ? NormalDaySelectedInkBrush : DarkDaySelectedInkBrush,
+			NormalFlyoutDivider,
+			NormalFlyoutHover,
+			NormalFlyoutPressed,
+			valueInk.A == 0xE8 ? NormalFlyoutValueInk : Fz(valueInk),
+			secondaryInk.A == 0xB8 ? NormalFlyoutSecondaryInk : Fz(secondaryInk),
+			SettingsGlyph.Gear(tones.Link));
+	}
+
+	// The quiet tokens the two flyouts share (identical for the same theme, whichever flyout writes them).
+	private void ApplyTrayFlyoutTokens(TrayFlyoutSurface surface)
+	{
+		base.Resources["TB.FlyoutDivider"] = surface.Divider;
+		base.Resources["TB.FlyoutHover"] = surface.Hover;
+		base.Resources["TB.FlyoutPressed"] = surface.Pressed;
+		base.Resources["TB.FlyoutValueInk"] = surface.ValueInk;
+		base.Resources["TB.FlyoutSecondaryInk"] = surface.SecondaryInk;
+	}
+
 	private void ApplyClockCalendarTheme()
 	{
 		s_restTones = DarkRest.Visuals;
 		try
 		{
-			AppSettings settings = SettingsStore.Load();
-			System.Windows.Media.Color accent = StartAccent.Color();
-			System.Windows.Media.Color themeBase = settings.StartBgMode == "pattern"
-				? StartBackgroundFactory.Parse(settings.StartBgColor, accent)
-				: accent;
-			ApplyClockCalendarPalette(accent, themeBase);
+			FlyoutPalette.ReadTheme(out System.Windows.Media.Color themeBase, out System.Windows.Media.Color accent, out bool seasonal);
+			ApplyClockCalendarPalette(themeBase, accent, seasonal);
 		}
 		catch (Exception ex)
 		{
@@ -1332,39 +1427,18 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		}
 	}
 
-	private void ApplyClockCalendarPalette(System.Windows.Media.Color accent, System.Windows.Media.Color themeBase)
+	private void ApplyClockCalendarPalette(System.Windows.Media.Color themeBase, System.Windows.Media.Color accent, bool seasonal = false)
 	{
-		if (s_restTones)
-		{
-			// Dark rest: a near-black body, a quiet header, the popup edge and the accent family for links and today.
-			LinearGradientBrush restBody = RestFlyoutBody();
-			base.Resources["TB.ClockBackground"] = restBody;
-			base.Resources["TB.ClockHeader"] = RestFlyoutHeader;
-			base.Resources["TB.ClockBody"] = restBody;
-			base.Resources["TB.ClockFooter"] = RestFlyoutFooter;
-			base.Resources["TB.ClockBorder"] = RestFlyoutBorder;
-			base.Resources["TB.ClockLink"] = RestFlyoutLink;
-			base.Resources["TB.ClockSelection"] = RestFlyoutSelection;
-			return;
-		}
-		System.Windows.Media.Color bodyTop = SoundTone(themeBase, 0.0, 0.0, 0.23);
-		System.Windows.Media.Color bodyBottom = SoundTone(accent, 0.0, 0.0, 0.12);
-		LinearGradientBrush body = new LinearGradientBrush
-		{
-			StartPoint = new System.Windows.Point(0.0, 0.0),
-			EndPoint = new System.Windows.Point(1.0, 1.0)
-		};
-		body.GradientStops.Add(new GradientStop(bodyTop, 0.0));
-		body.GradientStops.Add(new GradientStop(bodyBottom, 1.0));
-		((Freezable)body).Freeze();
-
-		base.Resources["TB.ClockBackground"] = body;
-		base.Resources["TB.ClockHeader"] = Fz(SoundTone(accent, 0.0, 0.0, 0.32));
-		base.Resources["TB.ClockBody"] = body;
-		base.Resources["TB.ClockFooter"] = Fz(SoundTone(accent, 0.0, 0.0, 0.14));
-		base.Resources["TB.ClockBorder"] = Fz(SoundTone(accent, 0.0, 0.42, 0.48));
-		base.Resources["TB.ClockLink"] = Fz(SoundTone(accent, -0.01, 0.55, 0.68));
-		base.Resources["TB.ClockSelection"] = Fz(SoundTone(accent, 0.0, 0.62, 0.50));
+		TrayFlyoutSurface surface = TrayFlyoutTones(themeBase, accent, seasonal, s_restTones);
+		base.Resources["TB.ClockBackground"] = surface.Body;
+		base.Resources["TB.ClockBody"] = surface.Body;
+		base.Resources["TB.ClockFooter"] = surface.Footer;
+		base.Resources["TB.ClockBorder"] = surface.Border;
+		base.Resources["TB.ClockLink"] = surface.Link;
+		base.Resources["TB.ClockSelection"] = surface.Selection;
+		base.Resources["TB.DaySelectedInk"] = surface.SelectionInk;
+		base.Resources["TB.ClockGear"] = surface.Gear;
+		ApplyTrayFlyoutTokens(surface);
 	}
 
 	private void ApplySoundFlyoutTheme()
@@ -1372,39 +1446,8 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		s_restTones = DarkRest.Visuals;
 		try
 		{
-			AppSettings settings = SettingsStore.Load();
-			System.Windows.Media.Color accent = StartAccent.Color();
-			System.Windows.Media.Color themeBase = settings.StartBgMode == "pattern"
-				? StartBackgroundFactory.Parse(settings.StartBgColor, accent)
-				: accent;
-			if (s_restTones)
-			{
-				// Dark rest: the same near-black set as the clock flyout; the tiles are muted below.
-				base.Resources["TB.SoundBackground"] = RestFlyoutBody();
-				base.Resources["TB.SoundHeader"] = RestFlyoutHeader;
-				base.Resources["TB.SoundFooter"] = RestFlyoutFooter;
-				base.Resources["TB.SoundBorder"] = RestFlyoutBorder;
-				base.Resources["TB.SoundLink"] = RestFlyoutLink;
-				ApplySoundTileTones();
-				return;
-			}
-			System.Windows.Media.Color bodyTop = SoundTone(themeBase, 0.0, 0.0, 0.24);
-			System.Windows.Media.Color bodyBottom = SoundTone(accent, 0.0, 0.0, 0.14);
-			LinearGradientBrush background = new LinearGradientBrush
-			{
-				StartPoint = new System.Windows.Point(0.0, 0.0),
-				EndPoint = new System.Windows.Point(1.0, 1.0)
-			};
-			background.GradientStops.Add(new GradientStop(bodyTop, 0.0));
-			background.GradientStops.Add(new GradientStop(bodyBottom, 1.0));
-			((Freezable)background).Freeze();
-
-			base.Resources["TB.SoundBackground"] = background;
-			base.Resources["TB.SoundHeader"] = Fz(SoundTone(accent, 0.0, 0.0, 0.29));
-			base.Resources["TB.SoundFooter"] = Fz(SoundTone(accent, 0.0, 0.0, 0.16));
-			base.Resources["TB.SoundBorder"] = Fz(SoundTone(accent, 0.0, 0.42, 0.48));
-			base.Resources["TB.SoundLink"] = Fz(SoundTone(accent, -0.01, 0.55, 0.68));
-			ApplySoundTileTones();
+			FlyoutPalette.ReadTheme(out System.Windows.Media.Color themeBase, out System.Windows.Media.Color accent, out bool seasonal);
+			ApplySoundFlyoutPalette(themeBase, accent, seasonal);
 		}
 		catch (Exception ex)
 		{
@@ -1412,55 +1455,16 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		}
 	}
 
-	// The device, app and action tiles of the volume flyout keep their fixed Metro colours; Dark rest mutes them the
-	// way it mutes the Action Center tiles. The XAML brushes are kept so they can be put back exactly.
-	private static readonly string[] SoundTileKeys = new string[12]
+	// The volume flyout (and its right-click popup, which shares the background and the frame).
+	private void ApplySoundFlyoutPalette(System.Windows.Media.Color themeBase, System.Windows.Media.Color accent, bool seasonal = false)
 	{
-		"TB.SoundOutputDefault", "TB.SoundOutputOther", "TB.SoundInputDefault", "TB.SoundInputOther", "TB.SoundApp", "TB.SoundSystemApp",
-		"TB.SoundPlaybackTile", "TB.SoundRecordingTile", "TB.SoundSoundsTile", "TB.SoundSettingsTile", "TB.SoundRowEdgeDefault", "TB.SoundRowEdgeOther"
-	};
-
-	private Dictionary<string, object> _soundTileDefaults;
-
-	private void ApplySoundTileTones()
-	{
-		if (s_restTones)
-		{
-			if (_soundTileDefaults == null)
-			{
-				_soundTileDefaults = new Dictionary<string, object>(StringComparer.Ordinal);
-				foreach (string key in SoundTileKeys)
-				{
-					_soundTileDefaults[key] = base.Resources[key];
-				}
-			}
-			foreach (string key in SoundTileKeys)
-			{
-				if (_soundTileDefaults[key] is SolidColorBrush b)
-				{
-					base.Resources[key] = Fz(DarkRestPalette.Mute(b.Color));
-				}
-			}
-			// The device rows: the default device in the selection fill, any other on a dark field with the control
-			// outline (the two fills differ by 3.6:1; muted, they were nearly the same colour).
-			base.Resources["TB.SoundOutputDefault"] = DarkRestPalette.AccentFill;
-			base.Resources["TB.SoundInputDefault"] = DarkRestPalette.AccentFill;
-			base.Resources["TB.SoundOutputOther"] = DarkRestPalette.Field;
-			base.Resources["TB.SoundInputOther"] = DarkRestPalette.Field;
-			base.Resources["TB.SoundRowEdgeDefault"] = DarkRestPalette.AccentFill;
-			base.Resources["TB.SoundRowEdgeOther"] = DarkRestPalette.Boundary;
-			// The app cards on a neutral dark fill: on the muted teal the slider's accent fill and its track outline
-			// hardly stood out (2.1:1 and 1.3:1); here they keep 5:1 and 3:1.
-			base.Resources["TB.SoundApp"] = DarkRestPalette.Hover;
-			base.Resources["TB.SoundSystemApp"] = DarkRestPalette.Hover;
-		}
-		else if (_soundTileDefaults != null)
-		{
-			foreach (KeyValuePair<string, object> pair in _soundTileDefaults)
-			{
-				base.Resources[pair.Key] = pair.Value;
-			}
-		}
+		TrayFlyoutSurface surface = TrayFlyoutTones(themeBase, accent, seasonal, s_restTones);
+		base.Resources["TB.SoundBackground"] = surface.Body;
+		base.Resources["TB.SoundFooter"] = surface.Footer;
+		base.Resources["TB.SoundBorder"] = surface.Border;
+		base.Resources["TB.SoundLink"] = surface.Link;
+		base.Resources["TB.SoundGear"] = surface.Gear;
+		ApplyTrayFlyoutTokens(surface);
 	}
 
 	private void ApplyNetworkFlyoutTheme()
@@ -6195,19 +6199,107 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 
 	private void OnVolumeWheel(object sender, MouseWheelEventArgs e)
 	{
-		int nv = Math.Clamp(_tray.VolumePct + ((e.Delta > 0) ? 2 : (-2)), 0, 100);
-		_audio.SetVolume((float)nv / 100f);
+		WriteMasterVolume(_tray.VolumePct + ((e.Delta > 0) ? 2 : (-2)));
+		e.Handled = true;
+	}
+
+	// The master level as the user set it (the tray icon's wheel, the flyout's wheel): the tray model first (without echoing
+	// back through the slider), then the endpoint; a level above 0 unmutes, as Windows does.
+	private void WriteMasterVolume(int pct)
+	{
+		int nv = Math.Clamp(pct, 0, 100);
+		_volumeSyncing = true;
+		try
+		{
+			_tray.VolumePct = nv;
+		}
+		finally
+		{
+			_volumeSyncing = false;
+		}
+		AudioSetVolume(nv);
 		if (nv > 0 && _tray.Muted)
 		{
-			_audio.SetMute(mute: false);
+			AudioSetMute(mute: false);
 			_tray.Muted = false;
 		}
-		_tray.VolumePct = nv;
-		e.Handled = true;
+	}
+
+	// ---- the real audio writes of the volume flyout; diagnostics record them in QaAudioSink instead (never the endpoint) ----
+
+	// QA: when set, every master volume, mute and default endpoint write is recorded here and never reaches the audio stack.
+	internal List<string>? QaAudioSink;
+
+	// QA: the sink refuses a default endpoint switch (to see the rollback).
+	internal bool QaAudioSwitchFails;
+
+	private void AudioSetVolume(int pct)
+	{
+		if (QaAudioSink != null)
+		{
+			QaAudioSink.Add("volume:" + pct.ToString(CultureInfo.InvariantCulture));
+			return;
+		}
+		_audio.SetVolume((float)pct / 100f);
+	}
+
+	private void AudioSetMute(bool mute)
+	{
+		if (QaAudioSink != null)
+		{
+			QaAudioSink.Add("mute:" + (mute ? "on" : "off"));
+			return;
+		}
+		_audio.SetMute(mute);
+	}
+
+	private void AudioToggleMute()
+	{
+		if (QaAudioSink != null)
+		{
+			QaAudioSink.Add("mute:" + (!_tray.Muted ? "on" : "off"));
+			_tray.Muted = !_tray.Muted;
+			return;
+		}
+		_audio.ToggleMute();
+	}
+
+	// The tray flyouts' duplicate-press guard (the Action Center's rule): this mouse's switch chatter turns one press into two
+	// presses 33-53 ms apart, and the twin would close the flyout its first half just opened. Compared on the presses' own
+	// message times, so a stalled UI thread can neither fake nor hide the gap.
+	private const int DuplicateFlyoutPressMs = 120;
+
+	private static int s_clockPressTime;
+
+	private static bool s_clockPressed;
+
+	private static int s_volumePressTime;
+
+	private static bool s_volumePressed;
+
+	[DllImport("user32.dll")]
+	private static extern int GetMessageTime();
+
+	private static bool IsDuplicateFlyoutPress(ref int lastPressTime, ref bool pressed, string flyout)
+	{
+		int pressTime = GetMessageTime();
+		int sinceLast = unchecked(pressTime - lastPressTime);
+		if (pressed && sinceLast >= 0 && sinceLast < DuplicateFlyoutPressMs)
+		{
+			Logger.Log($"Tray {flyout} flyout: press ignored (duplicate press {sinceLast}ms after the previous one)");
+			return true;
+		}
+		pressed = true;
+		lastPressTime = pressTime;
+		return false;
 	}
 
 	private void OnVolumeClick(object sender, RoutedEventArgs e)
 	{
+		if (IsDuplicateFlyoutPress(ref s_volumePressTime, ref s_volumePressed, "volume"))
+		{
+			return;
+		}
 		CloseTrayCommandPopups();
 		if (VolumePopup.IsOpen)
 		{
@@ -6217,6 +6309,7 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 				_volumeAnimationToken++;
 				AnimateVolumeFlyoutIn();
 				StartVolumeTick();
+				SetKeyFlyout(KeyFlyoutVolume);
 			}
 			else
 			{
@@ -6229,37 +6322,227 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		OverflowPopup.IsOpen = false;
 		CloseNetworkFlyout(animate: false);
 		CloseClockFlyout(animate: false);
+		// the Action Center opens in the same place (the tray end)
+		ActionCenter.DismissIfOpen();
 		ApplySoundFlyoutTheme();
 		SyncMasterVolume();
-		ConfigureVolumeFlyoutSize();
+		ConfigureVolumeFlyout();
 		PrepareVolumeFlyoutEnter();
 		VolumePopup.IsOpen = true;
 	}
 
-	private void OnVolumeBodyPreviewMouseWheel(object sender, MouseWheelEventArgs e)
+	// ---- the keyboard of the clock and volume flyouts ----
+
+	// The flyouts never take the foreground (the taskbar answers MA_NOACTIVATE, so the app in front keeps its focus and its
+	// taskbar button), so WPF never routes a key to them: while one is open, the input hook offers it the keys
+	// (TryRouteGlobalFlyoutKey). Escape closes it; the volume flyout moves the master level with the arrows (1) and PageUp /
+	// PageDown (10); the clock moves the selected day with the arrows (a day, a week), the month with PageUp / PageDown and
+	// goes back to today with Home. Which flyout takes them: 0 none, else KeyFlyoutClock or KeyFlyoutVolume (written on the
+	// UI thread, read on the hook thread).
+	private int _keyFlyout;
+
+	private const int KeyFlyoutClock = 1;
+
+	private const int KeyFlyoutVolume = 2;
+
+	private const int VkEscape = 0x1B;
+
+	private const int VkPageUp = 0x21;
+
+	private const int VkPageDown = 0x22;
+
+	private const int VkHome = 0x24;
+
+	private const int VkLeft = 0x25;
+
+	private const int VkUp = 0x26;
+
+	private const int VkRight = 0x27;
+
+	private const int VkDown = 0x28;
+
+	private void SetKeyFlyout(int flyout)
 	{
-		if (RouteVolumeWheelDelta(e.Delta))
+		Volatile.Write(ref _keyFlyout, flyout);
+	}
+
+	// Only the flyout that holds the keys gives them up (closing one flyout never takes them from the one opening).
+	private void ClearKeyFlyout(int flyout)
+	{
+		Interlocked.CompareExchange(ref _keyFlyout, 0, flyout);
+	}
+
+	// Hook thread: true when this bar's open flyout takes the key (it is handled on the UI thread; the press and its release
+	// never reach the app in front).
+	public bool TryRouteGlobalFlyoutKey(int vk)
+	{
+		int flyout = Volatile.Read(ref _keyFlyout);
+		if (flyout == 0 || _stopped)
+		{
+			return false;
+		}
+		bool takes = vk is VkEscape or VkPageUp or VkPageDown or VkLeft or VkUp or VkRight or VkDown || (vk == VkHome && flyout == KeyFlyoutClock);
+		if (!takes)
+		{
+			return false;
+		}
+		try
+		{
+			Dispatcher.BeginInvoke((Action)delegate { HandleTrayFlyoutKey(flyout, vk); }, DispatcherPriority.Input);
+			return true;
+		}
+		catch
+		{
+			return false;
+		}
+	}
+
+	// UI thread: one key for the flyout that took it (nothing once that flyout is closing or closed).
+	private bool HandleTrayFlyoutKey(int flyout, int vk)
+	{
+		if (flyout == KeyFlyoutVolume)
+		{
+			if (!VolumePopup.IsOpen || _volumeClosing)
+			{
+				return false;
+			}
+			switch (vk)
+			{
+			case VkEscape:
+				CloseVolumeFlyout(animate: true);
+				return true;
+			case VkUp:
+			case VkRight:
+				WriteMasterVolume(_tray.VolumePct + 1);
+				return true;
+			case VkDown:
+			case VkLeft:
+				WriteMasterVolume(_tray.VolumePct - 1);
+				return true;
+			case VkPageUp:
+				WriteMasterVolume(_tray.VolumePct + 10);
+				return true;
+			case VkPageDown:
+				WriteMasterVolume(_tray.VolumePct - 10);
+				return true;
+			}
+			return false;
+		}
+		if (flyout == KeyFlyoutClock)
+		{
+			if (!ClockPopup.IsOpen || _clockClosing)
+			{
+				return false;
+			}
+			switch (vk)
+			{
+			case VkEscape:
+				CloseClockFlyout(animate: true);
+				return true;
+			case VkPageUp:
+				OnPrevMonth(this, new RoutedEventArgs());
+				return true;
+			case VkPageDown:
+				OnNextMonth(this, new RoutedEventArgs());
+				return true;
+			case VkHome:
+				ShowCalendarDate(_calendarToday);
+				return true;
+			case VkLeft:
+				MoveCalendarSelection(-1);
+				return true;
+			case VkRight:
+				MoveCalendarSelection(1);
+				return true;
+			case VkUp:
+				MoveCalendarSelection(-7);
+				return true;
+			case VkDown:
+				MoveCalendarSelection(7);
+				return true;
+			}
+		}
+		return false;
+	}
+
+	// The same keys if WPF ever routes one here (the volume flyout's sliders keep their own arrows): Escape closes.
+	private void OnVolumeFlyoutKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+	{
+		if (e.Key == Key.Escape && Keyboard.Modifiers == ModifierKeys.None && HandleTrayFlyoutKey(KeyFlyoutVolume, VkEscape))
 		{
 			e.Handled = true;
 		}
 	}
 
-	private bool RouteVolumeWheelDelta(int delta)
+	private void OnVolumeBodyPreviewMouseWheel(object sender, MouseWheelEventArgs e)
+	{
+		if (RouteVolumeWheel(e.OriginalSource as DependencyObject, e.Delta))
+		{
+			e.Handled = true;
+		}
+	}
+
+	// The one wheel rule of the volume flyout (the WPF route and the global hook's route): over the master or an app slider
+	// the level moves 2 per notch (the tray icon's step) and nothing scrolls; anywhere else the body scrolls while it is
+	// clamped, and otherwise the wheel is consumed (it never reaches the window under the flyout).
+	private bool RouteVolumeWheel(DependencyObject? source, int delta)
 	{
 		if (delta == 0 || _stopped)
 		{
 			return false;
 		}
 		_volumeWheelRouteCount++;
-		VolumeBodyScroll.UpdateLayout();
-		if (VolumeBodyScroll.ScrollableHeight <= 0.5)
+		// nothing is kept for later: a wheel the body cannot take now is gone (no surprise jump after an expand or a refresh)
+		_pendingVolumeWheelDelta = 0;
+		if (FindVolumeSlider(source) is Slider slider)
 		{
-			_pendingVolumeWheelDelta = Math.Clamp(_pendingVolumeWheelDelta + delta, -960, 960);
-			QueuePendingVolumeWheelFlush();
+			StepVolumeSlider(slider, delta);
 			return true;
 		}
-		ApplyVolumeWheelDelta(delta);
+		VolumeBodyScroll.UpdateLayout();
+		if (VolumeBodyScroll.ScrollableHeight > 0.5)
+		{
+			ApplyVolumeWheelDelta(delta);
+		}
 		return true;
+	}
+
+	private Slider? FindVolumeSlider(DependencyObject? d)
+	{
+		while (d != null && !ReferenceEquals(d, VolumeFlyoutRoot))
+		{
+			if (d is Slider slider)
+			{
+				return slider;
+			}
+			d = d is Visual || d is System.Windows.Media.Media3D.Visual3D ? VisualTreeHelper.GetParent(d) : LogicalTreeHelper.GetParent(d);
+		}
+		return null;
+	}
+
+	// Whole notches only (a precision touchpad's small deltas add up to one first), 2 points each.
+	private void StepVolumeSlider(Slider slider, int delta)
+	{
+		if (Math.Sign(_sliderWheelAccum) != Math.Sign(delta))
+		{
+			_sliderWheelAccum = 0;
+		}
+		_sliderWheelAccum += delta;
+		int notches = _sliderWheelAccum / 120;
+		if (notches == 0)
+		{
+			return;
+		}
+		_sliderWheelAccum -= notches * 120;
+		_volumeWheelSliderCount++;
+		if (ReferenceEquals(slider, VolumeSlider))
+		{
+			WriteMasterVolume(_tray.VolumePct + 2 * notches);
+		}
+		else if (slider.DataContext is AudioSessionVm session)
+		{
+			session.VolumePct = Math.Clamp(session.VolumePct + 2 * notches, 0, 100);
+		}
 	}
 
 	private void ApplyVolumeWheelDelta(int delta)
@@ -6267,27 +6550,6 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		double notches = (double)delta / 120.0;
 		double step = Math.Clamp(VolumeBodyScroll.ViewportHeight * 0.2, 48.0, 72.0);
 		SmoothScroll.ByVertical(VolumeBodyScroll, -notches * step);
-	}
-
-	private void QueuePendingVolumeWheelFlush()
-	{
-		if (_pendingVolumeWheelFlushQueued || _pendingVolumeWheelDelta == 0)
-		{
-			return;
-		}
-		_pendingVolumeWheelFlushQueued = true;
-		Dispatcher.BeginInvoke((Action)delegate
-		{
-			_pendingVolumeWheelFlushQueued = false;
-			VolumeBodyScroll.UpdateLayout();
-			if (VolumeBodyScroll.ScrollableHeight <= 0.5 || _pendingVolumeWheelDelta == 0)
-			{
-				return;
-			}
-			int pending = _pendingVolumeWheelDelta;
-			_pendingVolumeWheelDelta = 0;
-			ApplyVolumeWheelDelta(pending);
-		}, DispatcherPriority.Render);
 	}
 
 	public bool TryRouteGlobalFlyoutMouseWheel(int screenX, int screenY, int delta)
@@ -6305,6 +6567,9 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 			return false;
 		}
 
+		// the point decides what the wheel does (a slider or the body), so the drain hit-tests the last one of a burst
+		Volatile.Write(ref _globalWheelX, screenX);
+		Volatile.Write(ref _globalWheelY, screenY);
 		Interlocked.Add(ref _queuedGlobalVolumeWheelDelta, delta);
 		QueueGlobalVolumeWheelDrain();
 		return true;
@@ -6332,12 +6597,30 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		int delta = Interlocked.Exchange(ref _queuedGlobalVolumeWheelDelta, 0);
 		if (delta != 0 && VolumePopup.IsOpen && !_stopped)
 		{
-			RouteVolumeWheelDelta(delta);
+			RouteVolumeWheel(VolumeFlyoutHit(Volatile.Read(ref _globalWheelX), Volatile.Read(ref _globalWheelY)), delta);
 		}
 		Interlocked.Exchange(ref _globalVolumeWheelDispatchQueued, 0);
 		if (Volatile.Read(ref _queuedGlobalVolumeWheelDelta) != 0)
 		{
 			QueueGlobalVolumeWheelDrain();
+		}
+	}
+
+	// What the open flyout has under a screen point (physical pixels).
+	private DependencyObject? VolumeFlyoutHit(int sx, int sy)
+	{
+		if (VolumePopup.Child is not FrameworkElement child || PresentationSource.FromVisual(child) == null)
+		{
+			return null;
+		}
+		try
+		{
+			System.Windows.Point p = child.PointFromScreen(new System.Windows.Point(sx, sy));
+			return child.InputHitTest(p) as DependencyObject;
+		}
+		catch
+		{
+			return null;
 		}
 	}
 
@@ -6376,7 +6659,7 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		Interlocked.Exchange(ref _queuedGlobalVolumeWheelDelta, 0);
 		Interlocked.Exchange(ref _globalVolumeWheelDispatchQueued, 0);
 		_pendingVolumeWheelDelta = 0;
-		_pendingVolumeWheelFlushQueued = false;
+		_sliderWheelAccum = 0;
 	}
 
 	private void OnVolumeBodyPreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
@@ -6407,6 +6690,13 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		}
 		FlyoutOutside(OverflowPopup, OverflowChevron, sx, sy);
 		FlyoutOutside(TaskOverflowPopup, TaskOverflowButton, sx, sy);
+	}
+
+	// The clock and volume flyouts (they open where the Action Center does, which closes them before it shows).
+	internal void CloseTrayFlyouts(bool animate)
+	{
+		CloseClockFlyout(animate);
+		CloseVolumeFlyout(animate);
 	}
 
 	// Light-dismiss exclusion for the Action Center: a press on this bar's own Action Center button belongs to Toggle.
@@ -6493,7 +6783,7 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		_volumeInventoryBusy = true;
 		int token = _volumeRefreshToken;
 		bool failed = false;
-		DispatcherTimer? statusLater = ShowStatusLater(VolumeRefreshStatus, "Updating...", () => _volumeInventoryBusy && token == _volumeRefreshToken && VolumePopup.IsOpen && !_volumeSwitching);
+		long readStartedMs = Environment.TickCount64;
 		try
 		{
 			AudioFlyoutSnapshot snapshot = await Task.Run(delegate
@@ -6503,7 +6793,7 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 				List<AudioDevice> inputs = AudioDevices.Enumerate(capture: true);
 				List<AudioSessionVm> sessions = AudioSessions.Enumerate();
 				sw.Stop();
-				return new AudioFlyoutSnapshot(outputs, inputs, sessions, sw.ElapsedMilliseconds);
+				return new AudioFlyoutSnapshot(outputs, inputs, sessions, sw.ElapsedMilliseconds, readStartedMs);
 			});
 			if (token != _volumeRefreshToken || !VolumePopup.IsOpen || _stopped)
 			{
@@ -6518,19 +6808,17 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 			failed = true;
 			if (token == _volumeRefreshToken && VolumePopup.IsOpen)
 			{
-				VolumeRefreshStatus.Text = "Audio service unavailable";
-				VolumeRefreshStatus.Visibility = Visibility.Visible;
+				SetVolumeError("Audio service unavailable");
 			}
 		}
 		finally
 		{
-			statusLater?.Stop();
 			_volumeInventoryBusy = false;
-			// A refresh that worked clears whatever the line said ("Updating...", an earlier error), except the
-			// "Switching device..." of a switch still in progress (SwitchDefaultDeviceAsync clears that one).
+			// A refresh that worked clears an earlier error, except while a device switch is still in progress (the switch
+			// reports its own outcome).
 			if (token == _volumeRefreshToken && VolumePopup.IsOpen && !failed && !_volumeSwitching)
 			{
-				ResetVolumeStatus();
+				SetVolumeError(null);
 			}
 			if (_volumeRefreshPending && VolumePopup.IsOpen && !_stopped)
 			{
@@ -6546,32 +6834,46 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		bool defaultOutputChanged = !string.IsNullOrEmpty(_volumeDefaultOutputId)
 			&& !string.Equals(_volumeDefaultOutputId, nextDefaultOutputId, StringComparison.Ordinal);
 		_volumeDefaultOutputId = nextDefaultOutputId;
-		if (defaultOutputChanged)
+		if (defaultOutputChanged && QaAudioSink == null)
 		{
 			_audio.Reset();
 			SyncMasterVolume();
 		}
+		_volumeOutputs = snapshot.Outputs;
+		_volumeInputs = snapshot.Inputs;
 		BuildDeviceRows(OutputList, snapshot.Outputs, capture: false);
 		BuildDeviceRows(InputList, snapshot.Inputs, capture: true);
-		_appSessions.Clear();
-		foreach (AudioSessionVm session in snapshot.Sessions)
-		{
-			_appSessions.Add(session);
-		}
+		SyncAppSessions(snapshot.Sessions, snapshot.ReadStartedMs);
 		_volumeOutputCount = snapshot.Outputs.Count;
 		_volumeInputCount = snapshot.Inputs.Count;
 		_volumeInventoryMs = snapshot.EnumerateMs;
-		VolumeEmptyApps.Visibility = _appSessions.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
-		VolDeviceName.Text = DefaultDeviceName(snapshot.Outputs, "No output device");
-		// the header's device line is left out when it only repeats the single (default) output row below
-		VolDeviceName.Visibility = snapshot.Outputs.Count == 1 && string.Equals(snapshot.Outputs[0].Name, VolDeviceName.Text, StringComparison.Ordinal) ? Visibility.Collapsed : Visibility.Visible;
-		QueuePendingVolumeWheelFlush();
+		ApplyVolumeFlyoutLayout(animate: false);
 	}
 
-	private static string DefaultDeviceName(List<AudioDevice> devices, string fallback)
+	// The same sessions as shown (same names, same order) take the fresh level and mute in place, so a refresh never rebuilds
+	// an app row under the pointer or a slider being dragged (and a level the user set after the read began is kept); a
+	// different set replaces the rows.
+	private void SyncAppSessions(List<AudioSessionVm> sessions, long readStartedMs)
 	{
-		AudioDevice? selected = devices.FirstOrDefault(device => device.IsDefault) ?? devices.FirstOrDefault();
-		return selected?.Name ?? fallback;
+		bool same = sessions.Count == _appSessions.Count;
+		for (int i = 0; same && i < sessions.Count; i++)
+		{
+			same = string.Equals(sessions[i].Name, _appSessions[i].Name, StringComparison.Ordinal)
+				&& (sessions[i].Icon != null) == (_appSessions[i].Icon != null);
+		}
+		if (same)
+		{
+			for (int i = 0; i < sessions.Count; i++)
+			{
+				_appSessions[i].SyncFrom(sessions[i], readStartedMs);
+			}
+			return;
+		}
+		_appSessions.Clear();
+		foreach (AudioSessionVm session in sessions)
+		{
+			_appSessions.Add(session);
+		}
 	}
 
 	private void OnAppMuteClick(object sender, RoutedEventArgs e)
@@ -6582,195 +6884,393 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		}
 	}
 
-	private void PopulateDevices()
-	{
-		List<AudioDevice> outputs = AudioDevices.Enumerate(capture: false);
-		List<AudioDevice> inputs = AudioDevices.Enumerate(capture: true);
-		ApplyAudioSnapshot(new AudioFlyoutSnapshot(outputs, inputs, new List<AudioSessionVm>(), 0L));
-	}
-
 	// Map an output device name to the best authentic mmres endpoint semantic.
 	private static string OutputAudioSemantic(string name)
 	{
 		string n = (name ?? "").ToLowerInvariant();
 		if (n.Contains("headphone")) return "AudioDevice.Headphones";
 		if (n.Contains("headset")) return "AudioDevice.Headset";
-		if (n.Contains("hdmi") || n.Contains("display")) return "AudioDevice.Hdmi";
+		// a monitor's speakers: HDMI / DisplayPort audio (the GPU vendors' "High Definition Audio" endpoints carry the
+		// monitor's name, e.g. "LG HDR 4K (NVIDIA High Definition Audio)")
+		if (n.Contains("hdmi") || n.Contains("display") || n.Contains("nvidia high definition audio") || n.Contains("amd high definition audio")) return "AudioDevice.Hdmi";
 		if (n.Contains("digital") || n.Contains("spdif") || n.Contains("optical")) return "AudioDevice.Digital";
 		return "AudioDevice.Speakers";
 	}
 
+	// ---- the volume flyout's rows ----
+
+	// The disclosure state of the input and app sections: collapsed by default, kept for the process only (never written to
+	// the settings).
+	private static bool s_volumeInputsExpanded;
+
+	private static bool s_volumeAppsExpanded;
+
+	// The devices the rows show, and their signatures (ids, names, default flags): rows are rebuilt only when these change,
+	// so a refresh never flickers a hover wash or drops the keyboard focus.
+	private List<AudioDevice> _volumeOutputs = new List<AudioDevice>();
+
+	private List<AudioDevice> _volumeInputs = new List<AudioDevice>();
+
+	private string _volumeOutputSignature = "\0";
+
+	private string _volumeInputSignature = "\0";
+
+	// The tallest the flyout may be where it opens (DIP): the body scrolls when its content is taller.
+	private double _volumeMaxHeightDip = double.PositiveInfinity;
+
+	// An error the footer shows in place of the "Sound settings" label (null: none).
+	private string? _volumeError;
+
+	// The master speaker as last drawn (its waves, or muted), so a drag redraws it only when the level band changes.
+	private int _masterGlyphKey = -1;
+
+	// A precision touchpad's wheel deltas below a whole notch, for the slider step.
+	private int _sliderWheelAccum;
+
+	private int _volumeWheelSliderCount;
+
+	// The screen point of the last wheel the global hook routed to the flyout.
+	private int _globalWheelX;
+
+	private int _globalWheelY;
+
+	// The fixed part of the volume flyout: 1 + 6 + 40 (master row) + 6 + 41 (footer) + 1 = 95 DIP.
+	internal const double VolumeFixedDip = 95.0;
+
+	// The body for these counts: 4 + 32 per output (at least one row) + 4 + the input row (and its list when open) + the app
+	// row (and 48 per app when open).
+	internal static double VolumeBodyNaturalDip(int outputs, int inputs, int apps, bool inputsOpen, bool appsOpen)
+	{
+		return 4.0 + 32.0 * Math.Max(1, outputs) + 4.0 + 32.0 * (1 + (inputsOpen ? Math.Max(1, inputs) : 0)) + 32.0 + (appsOpen ? 48.0 * Math.Max(0, apps) : 0.0);
+	}
+
+	// A disclosure chevron: down (0) or up (180). The list opens on the side away from the taskbar, so on a bottom, left or
+	// right bar a closed section points up and an open one down; on a top bar the other way round.
+	internal static double DisclosureAngle(string edge, bool open)
+	{
+		bool top = string.Equals(ActionCenter.NormalizeEdge(edge), "Top", StringComparison.Ordinal);
+		return top == open ? 180.0 : 0.0;
+	}
+
+	private sealed class DeviceRowState
+	{
+		public required AudioDevice Device { get; init; }
+
+		public required TextBlock Name { get; init; }
+
+		public required System.Windows.Shapes.Path Tick { get; init; }
+
+		public bool Default { get; set; }
+	}
+
+	private static string DeviceListSignature(List<AudioDevice> devices)
+	{
+		return string.Join("|", devices.Select(d => d.Id + "\u0001" + d.Name + "\u0001" + (d.IsDefault ? "1" : "0")));
+	}
+
 	private void BuildDeviceRows(StackPanel panel, List<AudioDevice> devices, bool capture)
 	{
+		string signature = DeviceListSignature(devices);
+		if (capture)
+		{
+			if (string.Equals(signature, _volumeInputSignature, StringComparison.Ordinal))
+			{
+				return;
+			}
+			_volumeInputSignature = signature;
+		}
+		else
+		{
+			if (string.Equals(signature, _volumeOutputSignature, StringComparison.Ordinal))
+			{
+				return;
+			}
+			_volumeOutputSignature = signature;
+		}
 		panel.Children.Clear();
 		if (devices.Count == 0)
 		{
-			panel.Children.Add(new TextBlock
+			// no output: one quiet row says so (the input section says it on its own row)
+			if (!capture)
 			{
-				Text = capture ? "No input device available" : "No output device available",
-				Foreground = new SolidColorBrush(System.Windows.Media.Color.FromArgb(180, 255, 255, 255)),
-				FontFamily = new System.Windows.Media.FontFamily("Segoe UI"),
-				FontSize = 12.0,
-				Margin = new Thickness(2.0, 4.0, 0.0, 7.0)
-			});
+				panel.Children.Add(CreateDeviceRow(null, capture: false));
+			}
 			return;
 		}
-
-		// Dark rest: the default device sits in the selection fill with the ink for accent fills, the others on a dark field
-		// with soft ink (their outline comes from TB.SoundRowEdgeOther), so the chosen device reads apart from the rest.
-		bool rest = DarkRest.Visuals;
 		foreach (AudioDevice d in devices)
 		{
-			System.Windows.Media.Brush rowInk = !rest ? System.Windows.Media.Brushes.White : (d.IsDefault ? DarkRestPalette.InkOnAccent : DarkRestPalette.Ink);
-			// The status line ("Default device" / "Select device") in opaque white on the saturated Metro rows (a translucent
-			// ink fell to 2.4:1 on the blue row); the SemiBold name above keeps it apart.
-			System.Windows.Media.Brush rowInk2 = !rest ? System.Windows.Media.Brushes.White : (d.IsDefault ? DarkRestPalette.InkOnAccent : DarkRestPalette.Ink2);
-			Grid content = new Grid();
-			content.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(44.0) });
-			content.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.0) });
-			content.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.0, GridUnitType.Star) });
-			content.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-			// Authentic Win8.1 mmres device icon (speakers/headphones/headset/hdmi/digital, or microphone for inputs);
-			// falls back to the MDL2 glyph when the asset library is absent.
-			string audioSem = capture ? "AudioDevice.Microphone" : OutputAudioSemantic(d.Name);
-			System.Windows.Media.ImageSource audioImg = Win81AssetResolver.GetAsset(audioSem, 32);
-			FrameworkElement iconEl;
-			if (audioImg != null)
-			{
-				System.Windows.Controls.Image img = new System.Windows.Controls.Image
-				{
-					Width = 22.0,
-					Height = 22.0,
-					Stretch = System.Windows.Media.Stretch.Uniform,
-					Source = audioImg,
-					SnapsToDevicePixels = true,
-					HorizontalAlignment = System.Windows.HorizontalAlignment.Center,
-					VerticalAlignment = VerticalAlignment.Center
-				};
-				RenderOptions.SetBitmapScalingMode(img, BitmapScalingMode.HighQuality);
-				iconEl = img;
-			}
-			else
-			{
-				iconEl = new TextBlock
-				{
-					Text = char.ConvertFromUtf32(capture ? 59168 : 59239),
-					FontFamily = new System.Windows.Media.FontFamily("Segoe MDL2 Assets"),
-					FontSize = 22.0,
-					Foreground = rowInk,
-					HorizontalAlignment = System.Windows.HorizontalAlignment.Center,
-					VerticalAlignment = VerticalAlignment.Center
-				};
-			}
-			Grid.SetColumn(iconEl, 0);
-			content.Children.Add(iconEl);
-			Border separator = new Border
-			{
-				Background = new SolidColorBrush(System.Windows.Media.Color.FromArgb(110, 255, 255, 255)),
-				Margin = new Thickness(0.0, 8.0, 0.0, 8.0)
-			};
-			Grid.SetColumn(separator, 1);
-			content.Children.Add(separator);
-			StackPanel labels = new StackPanel
-			{
-				Margin = new Thickness(10.0, 5.0, 7.0, 5.0),
-				VerticalAlignment = VerticalAlignment.Center
-			};
-			labels.Children.Add(new TextBlock
-			{
-				Text = d.Name,
-				Foreground = rowInk,
-				FontFamily = new System.Windows.Media.FontFamily("Segoe UI"),
-				FontSize = 12.0,
-				FontWeight = FontWeights.SemiBold,
-				TextTrimming = TextTrimming.CharacterEllipsis
-			});
-			labels.Children.Add(new TextBlock
-			{
-				Text = d.IsDefault ? "Default device" : "Select device",
-				Foreground = rowInk2,
-				FontFamily = new System.Windows.Media.FontFamily("Segoe UI"),
-				FontSize = 12.0,
-				Margin = new Thickness(0.0, 0.0, 0.0, 0.0)
-			});
-			Grid.SetColumn(labels, 2);
-			content.Children.Add(labels);
-			// the shared stroke chevron (MenuGlyphs.Chevron) in the flyout chevron ink
-			System.Windows.Shapes.Path arrow = MenuGlyphs.ChevronPath(System.Windows.Media.Brushes.White);
-			arrow.SetResourceReference(System.Windows.Shapes.Shape.StrokeProperty, "TB.ChevronInk");
-			arrow.Margin = new Thickness(4.0, 0.0, 12.0, 0.0);
-			arrow.Visibility = d.IsDefault ? Visibility.Collapsed : Visibility.Visible;
-			Grid.SetColumn(arrow, 3);
-			content.Children.Add(arrow);
-			System.Windows.Controls.Button btn = new System.Windows.Controls.Button
-			{
-				Content = content,
-				Style = (Style)base.Resources["DeviceRow"],
-				Margin = new Thickness(0.0, 0.0, 0.0, 4.0),
-				ToolTip = d.IsDefault ? d.Name + " (default)" : "Use " + d.Name
-			};
-			string resourceKey = capture
-				? (d.IsDefault ? "TB.SoundInputDefault" : "TB.SoundInputOther")
-				: (d.IsDefault ? "TB.SoundOutputDefault" : "TB.SoundOutputOther");
-			btn.SetResourceReference(System.Windows.Controls.Control.BackgroundProperty, resourceKey);
-			btn.SetResourceReference(System.Windows.Controls.Control.BorderBrushProperty, d.IsDefault ? "TB.SoundRowEdgeDefault" : "TB.SoundRowEdgeOther");
-			string id = d.Id;
-			btn.Click += async delegate
-			{
-				if (!d.IsDefault)
-				{
-					await SwitchDefaultDeviceAsync(id);
-				}
-			};
-			panel.Children.Add(btn);
+			panel.Children.Add(CreateDeviceRow(d, capture));
 		}
+	}
+
+	// A device row: full-bleed 32 DIP, [32 icon | 8 | name | 24 tick] inside 11 DIP of padding; the default device is
+	// SemiBold and ticked, any other is one click from being the default.
+	private System.Windows.Controls.Button CreateDeviceRow(AudioDevice? d, bool capture)
+	{
+		Grid content = new Grid();
+		content.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(32.0) });
+		content.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(8.0) });
+		content.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.0, GridUnitType.Star) });
+		content.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(24.0) });
+		FrameworkElement icon = DeviceGlyph(capture ? "mic" : OutputAudioSemantic(d?.Name ?? string.Empty), 16.0);
+		Grid.SetColumn(icon, 0);
+		content.Children.Add(icon);
+		bool isDefault = d?.IsDefault == true;
+		TextBlock name = new TextBlock
+		{
+			Text = d?.Name ?? (capture ? "No input device" : "No output device"),
+			FontFamily = new System.Windows.Media.FontFamily("Segoe UI"),
+			FontSize = 12.0,
+			FontWeight = isDefault ? FontWeights.SemiBold : FontWeights.Normal,
+			VerticalAlignment = VerticalAlignment.Center,
+			TextTrimming = TextTrimming.CharacterEllipsis,
+			Margin = new Thickness(0.0, 0.0, 0.0, 1.0),
+			IsHitTestVisible = false
+		};
+		name.SetResourceReference(TextBlock.ForegroundProperty, d == null ? "TB.FlyoutSecondaryInk" : "TB.Ink");
+		Grid.SetColumn(name, 2);
+		content.Children.Add(name);
+		System.Windows.Shapes.Path tick = new System.Windows.Shapes.Path
+		{
+			Data = MenuGlyphs.Tick,
+			Width = 12.0,
+			Height = 10.0,
+			Stretch = Stretch.None,
+			StrokeThickness = MenuGlyphs.Stroke,
+			StrokeStartLineCap = PenLineCap.Round,
+			StrokeEndLineCap = PenLineCap.Round,
+			StrokeLineJoin = PenLineJoin.Round,
+			HorizontalAlignment = System.Windows.HorizontalAlignment.Center,
+			VerticalAlignment = VerticalAlignment.Center,
+			IsHitTestVisible = false,
+			Visibility = isDefault ? Visibility.Visible : Visibility.Collapsed
+		};
+		tick.SetResourceReference(System.Windows.Shapes.Shape.StrokeProperty, "TB.Ink");
+		Grid.SetColumn(tick, 3);
+		content.Children.Add(tick);
+		System.Windows.Controls.Button row = new System.Windows.Controls.Button
+		{
+			Content = content,
+			Style = (Style)base.Resources["FlyoutRow"],
+			Height = 32.0,
+			Padding = new Thickness(11.0, 0.0, 11.0, 0.0)
+		};
+		if (d == null)
+		{
+			row.IsEnabled = false;
+			System.Windows.Automation.AutomationProperties.SetName(row, name.Text);
+			return row;
+		}
+		DeviceRowState state = new DeviceRowState { Device = d, Name = name, Tick = tick, Default = isDefault };
+		row.Tag = state;
+		row.ToolTip = isDefault ? d.Name + " (default)" : "Use " + d.Name;
+		System.Windows.Automation.AutomationProperties.SetName(row, d.Name);
+		System.Windows.Automation.AutomationProperties.SetItemStatus(row, isDefault ? "Default device" : string.Empty);
+		row.Click += async delegate
+		{
+			await SwitchDefaultDeviceAsync(row, capture);
+		};
+		return row;
+	}
+
+	// The 16 DIP line glyph of a device: a speaker, headphones (also a headset), a monitor (HDMI or a display) or a
+	// microphone, in the flyout ink.
+	private static FrameworkElement DeviceGlyph(string semantic, double size)
+	{
+		switch (semantic)
+		{
+		case "mic":
+			return LineGlyph(MicGlyphData, size);
+		case "AudioDevice.Headphones":
+		case "AudioDevice.Headset":
+			return LineGlyph(HeadphonesGlyphData, size);
+		case "AudioDevice.Hdmi":
+			return InkTinted(ActionCenter.CreateMetroIcon("project", size));
+		default:
+			return LineGlyph(SpeakerGlyphData, size);
+		}
+	}
+
+	// The Action Center's speaker drawn as a line (the device rows' glyphs are all strokes; the master row keeps the filled
+	// speaker of the panel's volume slider).
+	private const string SpeakerGlyphData = "M 3,9.2 L 6.8,9.2 L 11.4,5 L 11.4,19 L 6.8,14.8 L 3,14.8 Z M 14.8,9.3 C 16.2,10.8 16.2,13.2 14.8,14.7 M 17.6,6.7 C 20.3,9.8 20.3,14.2 17.6,17.3";
+
+	private const string MicGlyphData = "M12,3 C10.3,3 9,4.3 9,6 L9,12 C9,13.7 10.3,15 12,15 C13.7,15 15,13.7 15,12 L15,6 C15,4.3 13.7,3 12,3 Z M6,11 C6,14.3 8.7,17 12,17 C15.3,17 18,14.3 18,11 M12,17 L12,21 M8.5,21 L15.5,21";
+
+	private const string HeadphonesGlyphData = "M4,14 L4,12 C4,7.6 7.6,4 12,4 C16.4,4 20,7.6 20,12 L20,14 M4,14 L7,14 L7,20 L4,20 Z M20,14 L17,14 L17,20 L20,20 Z";
+
+	// A stroke glyph on the 24-unit grid (1.6 stroke, round caps and joins) in TB.Ink, at the given size.
+	private static FrameworkElement LineGlyph(string data, double size)
+	{
+		Geometry geometry = Geometry.Parse(data);
+		geometry.Freeze();
+		System.Windows.Shapes.Path path = new System.Windows.Shapes.Path
+		{
+			Data = geometry,
+			StrokeThickness = 1.6,
+			StrokeStartLineCap = PenLineCap.Round,
+			StrokeEndLineCap = PenLineCap.Round,
+			StrokeLineJoin = PenLineJoin.Round
+		};
+		path.SetResourceReference(System.Windows.Shapes.Shape.StrokeProperty, "TB.Ink");
+		Canvas canvas = new Canvas { Width = 24.0, Height = 24.0, SnapsToDevicePixels = true };
+		canvas.Children.Add(path);
+		return new Viewbox
+		{
+			Width = size,
+			Height = size,
+			Stretch = Stretch.Uniform,
+			SnapsToDevicePixels = true,
+			UseLayoutRounding = true,
+			IsHitTestVisible = false,
+			HorizontalAlignment = System.Windows.HorizontalAlignment.Center,
+			VerticalAlignment = VerticalAlignment.Center,
+			Child = canvas
+		};
+	}
+
+	// An Action Center vector glyph (white strokes and fills) re-inked with TB.Ink, so it follows Dark rest's soft ink.
+	private static FrameworkElement InkTinted(FrameworkElement glyph)
+	{
+		static void Walk(DependencyObject d)
+		{
+			if (d is System.Windows.Shapes.Shape shape)
+			{
+				if (shape.Stroke is SolidColorBrush stroke && stroke.Color == Colors.White)
+				{
+					shape.SetResourceReference(System.Windows.Shapes.Shape.StrokeProperty, "TB.Ink");
+				}
+				if (shape.Fill is SolidColorBrush fill && fill.Color == Colors.White)
+				{
+					shape.SetResourceReference(System.Windows.Shapes.Shape.FillProperty, "TB.Ink");
+				}
+			}
+			else if (d is Viewbox { Child: not null } viewbox)
+			{
+				Walk(viewbox.Child);
+			}
+			else if (d is System.Windows.Controls.Panel panel)
+			{
+				foreach (UIElement child in panel.Children)
+				{
+					Walk(child);
+				}
+			}
+		}
+		Walk(glyph);
+		glyph.IsHitTestVisible = false;
+		glyph.HorizontalAlignment = System.Windows.HorizontalAlignment.Center;
+		glyph.VerticalAlignment = VerticalAlignment.Center;
+		return glyph;
 	}
 
 	private bool _volumeSwitching;
 
-	private async Task SwitchDefaultDeviceAsync(string id)
+	private static void MarkDefault(DeviceRowState? state, bool isDefault)
 	{
-		VolumeRefreshStatus.Text = "Switching device...";
-		VolumeRefreshStatus.Visibility = Visibility.Visible;
+		if (state == null)
+		{
+			return;
+		}
+		state.Default = isDefault;
+		state.Tick.Visibility = isDefault ? Visibility.Visible : Visibility.Collapsed;
+		state.Name.FontWeight = isDefault ? FontWeights.SemiBold : FontWeights.Normal;
+	}
+
+	// A click on another device: the tick moves at once and the row dims while Windows switches; a failure puts the tick
+	// back and says so in the footer. No row changes its height, so nothing moves under the pointer.
+	private async Task SwitchDefaultDeviceAsync(System.Windows.Controls.Button row, bool capture)
+	{
+		if (row.Tag is not DeviceRowState state || state.Default || _volumeSwitching)
+		{
+			return;
+		}
+		StackPanel list = capture ? InputList : OutputList;
+		DeviceRowState? previous = list.Children.OfType<System.Windows.Controls.Button>().Select(b => b.Tag as DeviceRowState).FirstOrDefault(s => s?.Default == true);
+		MarkDefault(previous, false);
+		MarkDefault(state, true);
+		if (capture)
+		{
+			UpdateInputExpanderLabel(InputList.Visibility == Visibility.Visible);
+		}
+		row.Opacity = 0.6;
 		_volumeSwitching = true;
+		SetVolumeError(null);
+		bool switched = false;
 		try
 		{
-			await Task.Run(delegate { AudioDevices.SetDefault(id); });
-			await Task.Delay(120);
-			_audio.Reset();
-			SyncMasterVolume();
-			_volumeLastInventoryMs = 0L;
-			await RefreshVolumeInventoryAsync(force: true);
+			string id = state.Device.Id;
+			if (QaAudioSink != null)
+			{
+				if (QaAudioSwitchFails)
+				{
+					throw new InvalidOperationException("QA: the switch was refused");
+				}
+				QaAudioSink.Add("default:" + id);
+			}
+			else
+			{
+				await Task.Run(delegate { AudioDevices.SetDefault(id); });
+			}
+			switched = true;
+			// a refresh already reading the devices may have read them before the switch: its snapshot would put the tick
+			// back on the old device until the next one. The token turns it away (the refresh below, or the one it leaves
+			// pending, reads the new default).
+			_volumeRefreshToken++;
+			if (QaAudioSink == null)
+			{
+				await Task.Delay(120);
+				_audio.Reset();
+				SyncMasterVolume();
+				_volumeLastInventoryMs = 0L;
+				// the next snapshot rebuilds the rows from what Windows now reports, whatever the switch did
+				if (capture)
+				{
+					_volumeInputSignature = "\0";
+				}
+				else
+				{
+					_volumeOutputSignature = "\0";
+				}
+				await RefreshVolumeInventoryAsync(force: true);
+			}
 		}
 		catch (Exception ex)
 		{
 			Logger.Log("Switch audio device failed: " + ex.Message);
-			if (VolumePopup.IsOpen)
-			{
-				VolumeRefreshStatus.Text = "Could not switch device";
-			}
 		}
 		finally
 		{
 			_volumeSwitching = false;
-			// done: the line goes away unless it now reports an error (the switch's or the refresh's)
-			if (VolumeRefreshStatus.Text == "Switching device...")
+			row.Opacity = 1.0;
+			if (!switched)
 			{
-				ResetVolumeStatus();
+				MarkDefault(state, false);
+				MarkDefault(previous, true);
+				if (capture)
+				{
+					UpdateInputExpanderLabel(InputList.Visibility == Visibility.Visible);
+				}
+				if (VolumePopup.IsOpen || QaAudioSink != null)
+				{
+					SetVolumeError("Could not switch device");
+				}
 			}
 		}
 	}
 
-	// The status line hidden, with its default text for the next slow refresh.
-	private void ResetVolumeStatus()
+	// The footer's message slot: an error replaces the "Sound settings" label (in the secondary ink); the link keeps its
+	// tooltip, its name and its route.
+	private void SetVolumeError(string? text)
 	{
-		VolumeRefreshStatus.Visibility = Visibility.Collapsed;
-		VolumeRefreshStatus.Text = "Updating...";
+		_volumeError = string.IsNullOrEmpty(text) ? null : text;
+		SoundSettingsLabel.Text = _volumeError ?? "Sound settings";
+		SoundSettingsLabel.SetResourceReference(TextBlock.ForegroundProperty, _volumeError == null ? "TB.SoundLink" : "TB.FlyoutSecondaryInk");
 	}
 
 	private void OnMuteToggle(object sender, RoutedEventArgs e)
 	{
-		_audio.ToggleMute();
+		AudioToggleMute();
 		SyncMasterVolume();
 	}
 
@@ -6779,10 +7279,10 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		if (VolumePopup.IsOpen && !_volumeSyncing)
 		{
 			int v = (int)Math.Round(e.NewValue);
-			_audio.SetVolume((float)v / 100f);
+			AudioSetVolume(v);
 			if (v > 0 && _tray.Muted)
 			{
-				_audio.SetMute(mute: false);
+				AudioSetMute(mute: false);
 				_tray.Muted = false;
 			}
 		}
@@ -6790,6 +7290,11 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 
 	private void SyncMasterVolume()
 	{
+		if (QaAudioSink != null)
+		{
+			// diagnostics keep their fixture level (the real endpoint is never read into the QA render)
+			return;
+		}
 		_volumeSyncing = true;
 		try
 		{
@@ -6802,10 +7307,41 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		}
 	}
 
+	// The master row follows the tray model: the value ("73" or "Muted") and the speaker (0 to 3 waves, a cross when muted),
+	// redrawn only when its band changes.
+	private void OnTrayVolumeStateChanged(object? sender, PropertyChangedEventArgs e)
+	{
+		if (e.PropertyName is not ("VolumePct" or "Muted"))
+		{
+			return;
+		}
+		if (!CheckAccess())
+		{
+			Dispatcher.BeginInvoke((Action)UpdateMasterVolumeVisuals);
+			return;
+		}
+		UpdateMasterVolumeVisuals();
+	}
+
+	private void UpdateMasterVolumeVisuals()
+	{
+		int pct = _tray.VolumePct;
+		bool muted = _tray.Muted;
+		VolumePercent.Text = muted ? "Muted" : pct.ToString(CultureInfo.CurrentCulture);
+		int waves = ActionCenter.VolumeWaves(pct, muted);
+		int key = muted ? 100 : waves;
+		if (key != _masterGlyphKey || MuteToggleGlyph.Child == null)
+		{
+			_masterGlyphKey = key;
+			MuteToggleGlyph.Child = InkTinted(ActionCenter.CreateVolumeGlyph(waves, muted, 20.0));
+		}
+	}
+
 	private void OnVolumePopupOpened(object sender, EventArgs e)
 	{
 		_volumeClosing = false;
 		_volumeRefreshToken++;
+		SetKeyFlyout(KeyFlyoutVolume);
 		ActivateVolumeWheelRouting();
 		if (_volumeDiagnosticsMode)
 		{
@@ -6818,6 +7354,7 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 
 	private void OnVolumePopupClosed(object sender, EventArgs e)
 	{
+		ClearKeyFlyout(KeyFlyoutVolume);
 		DeactivateVolumeWheelRouting();
 		StopVolumeTick();
 		SmoothScroll.StopVertical(VolumeBodyScroll);
@@ -6826,15 +7363,21 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		_volumeRefreshPending = false;
 		_volumeEntering = false;
 		_volumeEnterPending = null;
-		VolumeFlyoutRoot.BeginAnimation(UIElement.OpacityProperty, null);
-		VolumeFlyoutSlide.BeginAnimation(TranslateTransform.XProperty, null);
-		VolumeFlyoutSlide.BeginAnimation(TranslateTransform.YProperty, null);
-		VolumeFlyoutRoot.Opacity = 1.0;
-		VolumeFlyoutSlide.X = 0.0;
-		VolumeFlyoutSlide.Y = 0.0;
-		VolumeFlyoutRoot.CacheMode = null;
-		// a message never outlives the flyout: the next open starts with an empty status line
-		ResetVolumeStatus();
+		ResetFlyoutContent(VolumeContent, VolumeFlyoutSlide);
+		// a message never outlives the flyout: the next open starts with the plain footer
+		SetVolumeError(null);
+	}
+
+	// The content back at rest (opacity 1, no offset, no clocks), for a closed flyout and before a QA render.
+	private static void ResetFlyoutContent(FrameworkElement content, TranslateTransform slide)
+	{
+		content.BeginAnimation(UIElement.OpacityProperty, null);
+		slide.BeginAnimation(TranslateTransform.XProperty, null);
+		slide.BeginAnimation(TranslateTransform.YProperty, null);
+		content.Opacity = 1.0;
+		slide.X = 0.0;
+		slide.Y = 0.0;
+		content.CacheMode = null;
 	}
 
 	private void StartVolumeTick()
@@ -6864,40 +7407,198 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		_volumeTick?.Stop();
 	}
 
-	private void ConfigureVolumeFlyoutSize(double? forcedWidthDiu = null, double? forcedHeightDiu = null)
+	// Before the flyout opens: the Action Center's width for this monitor and the tallest the flyout may be there, then the
+	// layout for the content it has (the refresh that follows re-places it once if the content changes its height).
+	private void ConfigureVolumeFlyout(double? widthDiu = null, double? maxHeightDiu = null, string? edge = null)
 	{
-		double dpiX = 1.0;
-		double dpiY = 1.0;
+		(double width, double maxHeight) = TrayFlyoutBox();
+		VolumeFlyoutRoot.Width = widthDiu ?? width;
+		_volumeMaxHeightDip = maxHeightDiu ?? maxHeight;
+		ApplyVolumeFlyoutLayout(animate: false, edge);
+	}
+
+	// Orders, shows and sizes the flyout for its content: each disclosure list on the side away from the taskbar (so the
+	// row that opens it never moves under the pointer), the chevrons turned to match, the input and app rows' texts, and the
+	// body's height: its natural height, or what is left under the tallest the flyout may be (it then scrolls; the master
+	// row and the footer always stay whole). No height animation: revealed rows fade in. A height change re-places the
+	// open flyout once, so its bottom (or top, on a top bar) stays where it is.
+	private void ApplyVolumeFlyoutLayout(bool animate, string? edge = null)
+	{
+		string side = ActionCenter.NormalizeEdge(edge ?? _position ?? "Bottom");
+		bool listsFirst = !string.Equals(side, "Top", StringComparison.Ordinal);
+		OrderDisclosure(InputGroup, InputList, listsFirst);
+		OrderDisclosure(AppsGroup, AppVolumeHost, listsFirst);
+		int outputs = _volumeOutputs.Count;
+		int inputs = _volumeInputs.Count;
+		int apps = _appSessions.Count;
+		bool canOpenInputs = inputs >= 2;
+		bool inputsOpen = s_volumeInputsExpanded && canOpenInputs;
+		bool appsOpen = s_volumeAppsExpanded && apps > 0;
+
+		// the input row names the default input while its list is closed and the section over the open list (which ticks the
+		// default, so the name is never shown twice); it opens only when there is another input to choose
+		UpdateInputExpanderLabel(inputsOpen);
+		InputChevron.Visibility = canOpenInputs ? Visibility.Visible : Visibility.Collapsed;
+		InputExpander.IsHitTestVisible = canOpenInputs;
+		InputExpander.Focusable = canOpenInputs;
+		System.Windows.Automation.AutomationProperties.SetName(InputExpander, "Input device: " + (DefaultInputName() ?? "none"));
+		System.Windows.Automation.AutomationProperties.SetItemStatus(InputExpander, canOpenInputs ? (inputsOpen ? "Expanded" : "Collapsed") : string.Empty);
+		Reveal(InputList, inputsOpen, animate);
+
+		// the app row counts the sessions ("None" disables it)
+		AppsCount.Text = apps == 0 ? "None" : (apps == 1 ? "1 app" : apps.ToString(CultureInfo.CurrentCulture) + " apps");
+		AppsExpander.IsEnabled = apps > 0;
+		AppsChevron.Visibility = apps > 0 ? Visibility.Visible : Visibility.Hidden;
+		System.Windows.Automation.AutomationProperties.SetItemStatus(AppsExpander, apps > 0 ? (appsOpen ? "Expanded" : "Collapsed") : string.Empty);
+		Reveal(AppVolumeHost, appsOpen, animate);
+
+		TurnChevron(InputChevronTurn, DisclosureAngle(side, inputsOpen), animate);
+		TurnChevron(AppsChevronTurn, DisclosureAngle(side, appsOpen), animate);
+
+		double natural = VolumeBodyNaturalDip(outputs, inputs, apps, inputsOpen, appsOpen);
+		double max = _volumeMaxHeightDip;
+		bool clamped = !double.IsNaN(max) && !double.IsInfinity(max) && natural + VolumeFixedDip > max + 0.01;
+		double body = clamped ? Math.Max(32.0, max - VolumeFixedDip) : natural;
+		double before = VolumeBodyScroll.Height;
+		VolumeBodyScroll.Height = body;
+		VolumeBodyScroll.VerticalScrollBarVisibility = clamped ? ScrollBarVisibility.Auto : ScrollBarVisibility.Disabled;
+		_pendingVolumeWheelDelta = 0;
+		if (!clamped)
+		{
+			SmoothScroll.StopVertical(VolumeBodyScroll);
+			VolumeBodyScroll.ScrollToVerticalOffset(0.0);
+		}
+		if (VolumePopup.IsOpen && (double.IsNaN(before) || Math.Abs(before - body) > 0.1))
+		{
+			RePlaceTrayFlyout(VolumePopup);
+		}
+	}
+
+	// The input row's text: the default input while the list is closed (as the rows mark it, so a switch in progress shows
+	// the device being switched to), "Input devices" over the open list.
+	private void UpdateInputExpanderLabel(bool inputsOpen)
+	{
+		string? name = DefaultInputName();
+		InputExpanderName.Text = inputsOpen ? "Input devices" : (name ?? "No input device");
+		InputExpanderName.SetResourceReference(TextBlock.ForegroundProperty, name == null && !inputsOpen ? "TB.FlyoutSecondaryInk" : "TB.Ink");
+	}
+
+	private string? DefaultInputName()
+	{
+		return InputList.Children.OfType<System.Windows.Controls.Button>().Select(b => b.Tag as DeviceRowState).FirstOrDefault(s => s?.Default == true)?.Device.Name
+			?? (_volumeInputs.FirstOrDefault(d => d.IsDefault) ?? _volumeInputs.FirstOrDefault())?.Name;
+	}
+
+	// The list of a disclosure group before its row (the list opens away from a bottom, left or right bar) or after it (top).
+	private static void OrderDisclosure(StackPanel group, UIElement list, bool listFirst)
+	{
+		int want = listFirst ? 0 : 1;
+		int at = group.Children.IndexOf(list);
+		if (at >= 0 && at != want)
+		{
+			group.Children.RemoveAt(at);
+			group.Children.Insert(want, list);
+		}
+	}
+
+	// Shows or hides a disclosed list at once (no height animation); a revealed list fades in over 83 ms.
+	private static void Reveal(UIElement list, bool show, bool animate)
+	{
+		Visibility want = show ? Visibility.Visible : Visibility.Collapsed;
+		if (list.Visibility == want)
+		{
+			if (!animate && list.HasAnimatedProperties)
+			{
+				list.BeginAnimation(UIElement.OpacityProperty, null);
+				list.Opacity = 1.0;
+			}
+			return;
+		}
+		list.BeginAnimation(UIElement.OpacityProperty, null);
+		list.Opacity = 1.0;
+		list.Visibility = want;
+		if (show && animate && Motion.Enabled)
+		{
+			list.BeginAnimation(UIElement.OpacityProperty, Motion.Anim(0.0, 1.0, Motion.Tok.FadeInShort), HandoffBehavior.SnapshotAndReplace);
+		}
+	}
+
+	// The chevron turns 180 degrees over 167 ms (MoveMicro, DECELERATE); with motion off it is set at once.
+	private static void TurnChevron(RotateTransform turn, double angle, bool animate)
+	{
+		if (Math.Abs(turn.Angle - angle) < 0.01 && !turn.HasAnimatedProperties)
+		{
+			return;
+		}
+		double from = turn.Angle;
+		turn.BeginAnimation(RotateTransform.AngleProperty, null);
+		turn.Angle = angle;
+		if (animate && Motion.Enabled && Math.Abs(from - angle) > 0.01)
+		{
+			turn.BeginAnimation(RotateTransform.AngleProperty, Motion.Anim(from, angle, Motion.Tok.MoveMicro), HandoffBehavior.SnapshotAndReplace);
+		}
+	}
+
+	private void OnInputExpanderClick(object sender, RoutedEventArgs e)
+	{
+		if (_volumeInputs.Count < 2)
+		{
+			return;
+		}
+		ToggleVolumeDisclosure(InputExpander, delegate { s_volumeInputsExpanded = !s_volumeInputsExpanded; });
+	}
+
+	private void OnAppsExpanderClick(object sender, RoutedEventArgs e)
+	{
+		if (_appSessions.Count == 0)
+		{
+			return;
+		}
+		ToggleVolumeDisclosure(AppsExpander, delegate { s_volumeAppsExpanded = !s_volumeAppsExpanded; });
+	}
+
+	// An expand or a collapse keeps the row that was clicked where it is: the lists open away from the taskbar, so a body that
+	// fits grows or shrinks on the far side; a clamped (scrolling) body is scrolled by what the list added or took above the
+	// row. No wheel delta survives it.
+	private void ToggleVolumeDisclosure(FrameworkElement expander, Action toggle)
+	{
+		double before = VolumeBodyOffsetOf(expander);
+		toggle();
+		_pendingVolumeWheelDelta = 0;
+		ApplyVolumeFlyoutLayout(animate: true);
+		if (double.IsNaN(before) || VolumeBodyScroll.VerticalScrollBarVisibility == ScrollBarVisibility.Disabled)
+		{
+			return;
+		}
+		VolumeBodyScroll.UpdateLayout();
+		double after = VolumeBodyOffsetOf(expander);
+		if (double.IsNaN(after) || Math.Abs(after - before) < 0.5)
+		{
+			return;
+		}
+		SmoothScroll.StopVertical(VolumeBodyScroll);
+		VolumeBodyScroll.ScrollToVerticalOffset(Math.Clamp(VolumeBodyScroll.VerticalOffset + after - before, 0.0, VolumeBodyScroll.ScrollableHeight));
+		VolumeBodyScroll.UpdateLayout();
+	}
+
+	// Where a row of the body sits in its viewport (DIP from the viewport's top), NaN before it is laid out.
+	private double VolumeBodyOffsetOf(FrameworkElement row)
+	{
+		if (row.ActualHeight <= 0.0)
+		{
+			return double.NaN;
+		}
 		try
 		{
-			DpiScale dpi = VisualTreeHelper.GetDpi(this);
-			dpiX = Math.Max(0.5, dpi.DpiScaleX);
-			dpiY = Math.Max(0.5, dpi.DpiScaleY);
+			return row.TranslatePoint(new System.Windows.Point(0.0, 0.0), VolumeBodyScroll).Y;
 		}
 		catch
 		{
+			return double.NaN;
 		}
-		double availableWidth = _screen.WorkingArea.Width / dpiX;
-		double availableHeight = _screen.WorkingArea.Height / dpiY;
-		double width = forcedWidthDiu ?? Math.Max(320.0, Math.Min(376.0, availableWidth - 10.0));
-		double height = forcedHeightDiu ?? Math.Max(400.0, Math.Min(480.0, availableHeight - 10.0));
-		bool veryCompact = width < 344.0 || height < 440.0;
-		bool compact = veryCompact || width < 376.0 || height < 480.0;
-
-		VolumeFlyoutRoot.Width = width;
-		VolumeFlyoutRoot.Height = height;
-		// The header keeps real room for the speaker+slider row (the '*' row after the title and device name): the speaker
-		// Viewbox scales to whatever this row gives it, so it is always whole.
-		VolumeHeaderRow.Height = new GridLength(veryCompact ? 110.0 : (compact ? 118.0 : 124.0));
-		// The footer tiles keep their labels whole in every tier (Auto label row); the icon above takes what is left
-		// (26 / 22 / 18 DIP).
-		VolumeFooterRow.Height = new GridLength(veryCompact ? 94.0 : (compact ? 98.0 : 104.0));
-		VolumeBodyScroll.Padding = veryCompact ? new Thickness(9.0, 4.0, 6.0, 4.0) : (compact ? new Thickness(11.0, 5.0, 8.0, 4.0) : new Thickness(12.0, 6.0, 9.0, 5.0));
-		VolumeTitle.FontSize = veryCompact ? 22.0 : (compact ? 24.0 : 26.0);
-		VolumePercent.FontSize = veryCompact ? 32.0 : (compact ? 35.0 : 38.0);
-		MuteToggle.FontSize = veryCompact ? 20.0 : (compact ? 21.0 : 22.0);
 	}
 
+	// The right-click command popup keeps this button-anchored placement (the flyout itself opens at the tray end).
 	private CustomPopupPlacement[] PlaceVolumePopup(System.Windows.Size popupSize, System.Windows.Size targetSize, System.Windows.Point offset)
 	{
 		const double gap = 6.0;
@@ -6910,9 +7611,133 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		};
 	}
 
+	// ---- the tray-end placement of the clock and volume flyouts (identical to the Action Center's) ----
+
+	// QA: the flyouts open next to the offscreen QA bar instead of at a real monitor's tray end.
+	private bool _qaOffscreenPlacement;
+
+	private bool _trayFlyoutDpiMismatchLogged;
+
+	// The scale this bar's popups use (a popup takes the DPI of its target's monitor, the bar's own).
+	private double TrayFlyoutScale()
+	{
+		double s = 1.0;
+		try
+		{
+			s = VisualTreeHelper.GetDpi(this).DpiScaleX;
+		}
+		catch
+		{
+		}
+		return s > 0.0 && !double.IsNaN(s) ? s : 1.0;
+	}
+
+	// This bar's monitor: its work area (the reserved one when known), the bar's rect while it is shown (auto-hide too) and
+	// the monitor bounds, in physical pixels.
+	private (System.Drawing.Rectangle Work, System.Drawing.Rectangle? Bar, System.Drawing.Rectangle Monitor) TrayFlyoutFrame()
+	{
+		Screen screen = _screen ?? Screen.PrimaryScreen;
+		System.Drawing.Rectangle work = TaskbarWorkArea.Current(screen);
+		if (work.IsEmpty)
+		{
+			work = screen.WorkingArea;
+		}
+		System.Drawing.Rectangle? bar = TryGetBarRect(out System.Drawing.Rectangle barPx) ? barPx : null;
+		return (work, bar, screen.Bounds);
+	}
+
+	// The flyouts' width (the Action Center's: 376, or the monitor less 12 down to 320) and the tallest one may be where it
+	// opens on this bar (DIP).
+	private (double Width, double MaxHeight) TrayFlyoutBox()
+	{
+		try
+		{
+			double s = TrayFlyoutScale();
+			(System.Drawing.Rectangle work, System.Drawing.Rectangle? bar, System.Drawing.Rectangle monitor) = TrayFlyoutFrame();
+			if (!_trayFlyoutDpiMismatchLogged && Math.Abs(MonitorDpi.ScaleFor(work) - s) > 0.01)
+			{
+				_trayFlyoutDpiMismatchLogged = true;
+				Logger.Log($"Tray flyouts: bar scale {s:0.##} differs from the monitor's {MonitorDpi.ScaleFor(work):0.##} (DPI change in progress?)");
+			}
+			double width = ActionCenter.PanelWidthFor(work.Width / s);
+			ActionCenterPlacement probe = ActionCenter.PlacePanel(work, bar, _position, s, width, 1.0, monitor);
+			return (width, probe.MaxHeightPx / s);
+		}
+		catch (Exception ex)
+		{
+			Logger.Log("Tray flyouts: size probe failed: " + ex.Message);
+			return (ActionCenter.PanelWidthDip, double.PositiveInfinity);
+		}
+	}
+
+	// The clock and volume flyouts' placement callback: exactly where the Action Center opens (ActionCenter.PlacePanel: the
+	// tray end, 6 DIP from the bar and from the screen edge, clamped inside the monitor), returned in the target's DIP.
+	private CustomPopupPlacement[] PlaceTrayFlyout(FrameworkElement target, System.Windows.Size popupSize, System.Windows.Size targetSize)
+	{
+		if (_qaOffscreenPlacement)
+		{
+			return new[] { new CustomPopupPlacement(new System.Windows.Point(targetSize.Width - popupSize.Width, -popupSize.Height - 6.0), PopupPrimaryAxis.None) };
+		}
+		try
+		{
+			double s = TrayFlyoutScale();
+			(System.Drawing.Rectangle work, System.Drawing.Rectangle? bar, System.Drawing.Rectangle monitor) = TrayFlyoutFrame();
+			System.Windows.Point targetPx = target.PointToScreen(new System.Windows.Point(0.0, 0.0));
+			System.Windows.Point offset = TrayFlyoutOffset(work, bar, _position, s, popupSize, monitor, targetPx, out _);
+			return new[] { new CustomPopupPlacement(offset, PopupPrimaryAxis.None) };
+		}
+		catch (Exception ex)
+		{
+			Logger.Log("Tray flyout placement failed, anchored to its button instead: " + ex.Message);
+			return PlaceVolumePopup(popupSize, targetSize, default);
+		}
+	}
+
+	// Pure: the target-relative DIP offset that puts a popup of popupDip at the Action Center's placement for this monitor
+	// (physical pixels in, DIP out, with the bar's own scale both ways).
+	internal static System.Windows.Point TrayFlyoutOffset(System.Drawing.Rectangle workPx, System.Drawing.Rectangle? barPx, string edge, double scale, System.Windows.Size popupDip, System.Drawing.Rectangle monitorPx, System.Windows.Point targetPx, out ActionCenterPlacement placement)
+	{
+		if (scale <= 0.0 || double.IsNaN(scale))
+		{
+			scale = 1.0;
+		}
+		placement = ActionCenter.PlacePanel(workPx, barPx, edge, scale, popupDip.Width, popupDip.Height, monitorPx);
+		return new System.Windows.Point((placement.Px.Left - targetPx.X) / scale, (placement.Px.Top - targetPx.Y) / scale);
+	}
+
+	// QA: where a popup of sizeDip lands through that callback (the target's pixel origin plus the returned offset).
+	internal static System.Drawing.Rectangle QaFlyoutPlacement(string edge, System.Drawing.Rectangle workPx, System.Drawing.Rectangle? barPx, double scale, System.Windows.Size sizeDip, System.Drawing.Rectangle monitorPx, System.Windows.Point targetPx)
+	{
+		System.Windows.Point offset = TrayFlyoutOffset(workPx, barPx, edge, scale, sizeDip, monitorPx, targetPx, out _);
+		int x = (int)Math.Round(targetPx.X + offset.X * scale, MidpointRounding.AwayFromZero);
+		int y = (int)Math.Round(targetPx.Y + offset.Y * scale, MidpointRounding.AwayFromZero);
+		return new System.Drawing.Rectangle(x, y, ActionCenter.ToPx(sizeDip.Width, scale), ActionCenter.ToPx(sizeDip.Height, scale));
+	}
+
+	// After the open flyout's content changed its height: the popup is placed again once (an offset nudged and put back),
+	// after layout, so it grows away from the taskbar instead of over it.
+	private void RePlaceTrayFlyout(Popup popup)
+	{
+		Dispatcher.BeginInvoke(DispatcherPriority.Loaded, (Action)delegate
+		{
+			if (!popup.IsOpen || _stopped)
+			{
+				return;
+			}
+			(popup.Child as UIElement)?.UpdateLayout();
+			double h = popup.HorizontalOffset;
+			popup.HorizontalOffset = h + 0.001;
+			popup.HorizontalOffset = h;
+			if (ReferenceEquals(popup, VolumePopup))
+			{
+				UpdateVolumeWheelScreenBounds();
+			}
+		});
+	}
+
 	private void PrepareVolumeFlyoutEnter()
 	{
-		FlyoutPrepare(VolumeFlyoutRoot, VolumeFlyoutSlide);
+		FlyoutPrepare(VolumeContent, VolumeFlyoutSlide);
 	}
 
 	private void AnimateVolumeFlyoutIn()
@@ -6924,7 +7749,7 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		_volumeClosing = false;
 		int token = ++_volumeAnimationToken;
 		_volumeEntering = Motion.Enabled;
-		FlyoutEnter(VolumeFlyoutRoot, VolumeFlyoutSlide, () => token == _volumeAnimationToken && VolumePopup.IsOpen && !_volumeClosing, FlushVolumeEntrance);
+		FlyoutEnter(VolumeContent, VolumeFlyoutSlide, () => token == _volumeAnimationToken && VolumePopup.IsOpen && !_volumeClosing, FlushVolumeEntrance);
 	}
 
 	private void CloseVolumeFlyout(bool animate)
@@ -6934,6 +7759,8 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 			return;
 		}
 		StopVolumeTick();
+		// the keys go back to the app in front at once (not after the exit animation)
+		ClearKeyFlyout(KeyFlyoutVolume);
 		int token = ++_volumeAnimationToken;
 		_volumeEntering = false;
 		_volumeEnterPending = null;
@@ -6943,7 +7770,7 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 			return;
 		}
 		_volumeClosing = true;
-		FlyoutExit(VolumeFlyoutRoot, VolumeFlyoutSlide, delegate
+		FlyoutExit(VolumeContent, VolumeFlyoutSlide, delegate
 		{
 			if (token == _volumeAnimationToken && _volumeClosing)
 			{
@@ -7412,58 +8239,97 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 
 	private void OnClockClick(object sender, MouseButtonEventArgs e)
 	{
+		e.Handled = true;
+		if (IsDuplicateFlyoutPress(ref s_clockPressTime, ref s_clockPressed, "clock"))
+		{
+			return;
+		}
 		if (ClockPopup.IsOpen)
 		{
 			if (_clockClosing)
 			{
 				AnimateClockFlyoutIn();
 				StartClockTick();
+				SetKeyFlyout(KeyFlyoutClock);
 			}
 			else
 			{
 				CloseClockFlyout(animate: true);
 			}
-			e.Handled = true;
 			return;
 		}
 
 		TaskOverflowPopup.IsOpen = false;
 		OverflowPopup.IsOpen = false;
 		CloseNetworkFlyout(animate: false);
-		VolumePopup.IsOpen = false;
+		CloseVolumeFlyout(animate: false);
+		// the Action Center opens in the same place (the tray end)
+		ActionCenter.DismissIfOpen();
 		DateTime now = DateTime.Now;
 		ApplyClockCalendarTheme();
 		_calendarToday = now.Date;
 		_calendarSelection = now.Date;
 		_calMonth = new DateTime(now.Year, now.Month, 1);
 		UpdateClockDisplay(now);
+		(double width, double maxHeight) = TrayFlyoutBox();
+		LayoutClockFlyout(width, maxHeight);
 		BuildMonth(_calMonth);
-		ConfigureClockFlyoutSize();
 		PrepareClockFlyoutEnter();
 		ClockPopup.IsOpen = true;
-		e.Handled = true;
 	}
 
 	private void OnClockPopupOpened(object sender, EventArgs e)
 	{
 		OnBarPopupOpened(sender, e);
 		_clockClosing = false;
+		SetKeyFlyout(KeyFlyoutClock);
 		StartClockTick();
 		Dispatcher.BeginInvoke((Action)AnimateClockFlyoutIn, DispatcherPriority.Render);
 	}
 
 	private void OnClockPopupClosed(object sender, EventArgs e)
 	{
+		ClearKeyFlyout(KeyFlyoutClock);
 		StopClockTick();
 		_clockClosing = false;
 		_clockAnimationToken++;
-		ClockFlyoutRoot.BeginAnimation(UIElement.OpacityProperty, null);
-		ClockFlyoutSlide.BeginAnimation(TranslateTransform.XProperty, null);
-		ClockFlyoutSlide.BeginAnimation(TranslateTransform.YProperty, null);
-		ClockFlyoutRoot.Opacity = 1.0;
-		ClockFlyoutSlide.X = 0.0;
-		ClockFlyoutSlide.Y = 0.0;
-		ClockFlyoutRoot.CacheMode = null;
+		ResetFlyoutContent(ClockContent, ClockFlyoutSlide);
+	}
+
+	// The same keys if WPF ever routes one here (the input hook normally brings them: HandleTrayFlyoutKey).
+	private void OnClockFlyoutKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+	{
+		if (Keyboard.Modifiers == ModifierKeys.None && HandleTrayFlyoutKey(KeyFlyoutClock, KeyInterop.VirtualKeyFromKey(e.Key)))
+		{
+			e.Handled = true;
+		}
+	}
+
+	// The arrows: the selected day moves by a day or a week (into the month before or after, which then shows). After the
+	// month was paged away from the selection, the first arrow selects the same day of the month shown.
+	private void MoveCalendarSelection(int days)
+	{
+		bool shown = _calendarSelection.Year == _calMonth.Year && _calendarSelection.Month == _calMonth.Month;
+		DateTime target = shown
+			? _calendarSelection.AddDays(days)
+			: new DateTime(_calMonth.Year, _calMonth.Month, Math.Min(_calendarSelection.Day, DateTime.DaysInMonth(_calMonth.Year, _calMonth.Month)));
+		ShowCalendarDate(target);
+	}
+
+	// Selects a date and shows its month (which slides in from its side when it changes).
+	private void ShowCalendarDate(DateTime date)
+	{
+		_calendarSelection = date.Date;
+		DateTime month = new DateTime(date.Year, date.Month, 1);
+		if (month == _calMonth)
+		{
+			BuildMonth(_calMonth);
+			return;
+		}
+		int direction = month > _calMonth ? 1 : -1;
+		_calMonth = month;
+		BuildMonth(_calMonth);
+		AnimateMonthChange(direction);
 	}
 
 	private void UpdateClockDisplay(DateTime now)
@@ -7560,27 +8426,41 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 				dayButton.IsEnabled = false;
 				dayButton.Visibility = Visibility.Hidden;
 				dayButton.Background = System.Windows.Media.Brushes.Transparent;
+				dayButton.ClearValue(System.Windows.Controls.Control.BorderBrushProperty);
 				continue;
 			}
 
 			DateTime date = new DateTime(month.Year, month.Month, day);
 			bool selected = date == _calendarSelection;
+			bool today = date == _calendarToday;
 			dayButton.Content = day.ToString(ci);
 			dayButton.Tag = date;
 			dayButton.IsEnabled = true;
 			dayButton.Visibility = Visibility.Visible;
-			dayButton.FontWeight = (selected || date == _calendarToday) ? FontWeights.SemiBold : FontWeights.Normal;
+			dayButton.FontWeight = (selected || today) ? FontWeights.SemiBold : FontWeights.Normal;
 			System.Windows.Automation.AutomationProperties.SetName(dayButton, date.ToString("D", ci));
 			if (selected)
 			{
 				dayButton.SetResourceReference(System.Windows.Controls.Control.BackgroundProperty, "TB.ClockSelection");
-				// the day's number on the selection fill (TB.DayInk normally; the ink for accent fills in Dark rest)
+				// the day's number in the ink the palette chose for the fill (dark on a light fill, white on a deep one; the
+				// ink for accent fills in Dark rest)
 				dayButton.SetResourceReference(System.Windows.Controls.Control.ForegroundProperty, "TB.DaySelectedInk");
+				dayButton.ClearValue(System.Windows.Controls.Control.BorderBrushProperty);
 			}
 			else
 			{
 				dayButton.Background = System.Windows.Media.Brushes.Transparent;
 				dayButton.ClearValue(System.Windows.Controls.Control.ForegroundProperty);
+				// today, when another day is selected: a 1 DIP outline in the selection colour, which stands at 3:1 or more
+				// against the body (the edge is always 1 DIP thick, so nothing moves)
+				if (today)
+				{
+					dayButton.SetResourceReference(System.Windows.Controls.Control.BorderBrushProperty, "TB.ClockSelection");
+				}
+				else
+				{
+					dayButton.ClearValue(System.Windows.Controls.Control.BorderBrushProperty);
+				}
 			}
 		}
 	}
@@ -7600,23 +8480,25 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		{
 			MonthGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.0, GridUnitType.Star) });
 		}
-		MonthGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(0.72, GridUnitType.Star) });
+		// the weekday row and always six week rows, so a month never changes the flyout's height
+		MonthGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(CalendarWeekdayRowDip) });
 		for (int r = 1; r < 7; r++)
 		{
-			MonthGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1.0, GridUnitType.Star) });
+			MonthGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(_clockWeekRowDip) });
 		}
 
 		for (int i = 0; i < 7; i++)
 		{
 			TextBlock header = new TextBlock
 			{
-				Foreground = new SolidColorBrush(System.Windows.Media.Color.FromArgb(190, byte.MaxValue, byte.MaxValue, byte.MaxValue)),
 				FontFamily = new System.Windows.Media.FontFamily("Segoe UI"),
-				FontSize = 14.0,
+				FontSize = 12.0,
 				FontWeight = FontWeights.SemiBold,
 				HorizontalAlignment = System.Windows.HorizontalAlignment.Center,
-				VerticalAlignment = VerticalAlignment.Center
+				VerticalAlignment = VerticalAlignment.Center,
+				IsHitTestVisible = false
 			};
+			header.SetResourceReference(TextBlock.ForegroundProperty, "TB.FlyoutSecondaryInk");
 			_calendarHeaderLabels[i] = header;
 			Grid.SetColumn(header, i);
 			Grid.SetRow(header, 0);
@@ -7629,10 +8511,6 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 			System.Windows.Controls.Button dayButton = new System.Windows.Controls.Button
 			{
 				Style = dayStyle,
-				Width = 44.0,
-				Height = 42.0,
-				HorizontalAlignment = System.Windows.HorizontalAlignment.Center,
-				VerticalAlignment = VerticalAlignment.Center,
 				Visibility = Visibility.Hidden,
 				IsEnabled = false
 			};
@@ -7660,15 +8538,7 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 	private void AnimateMonthChange(int direction)
 	{
 		int token = ++_monthAnimationToken;
-		MonthGrid.BeginAnimation(UIElement.OpacityProperty, null);
-		MonthLabel.BeginAnimation(UIElement.OpacityProperty, null);
-		MonthGridSlide.BeginAnimation(TranslateTransform.XProperty, null);
-		MonthLabelSlide.BeginAnimation(TranslateTransform.XProperty, null);
-		MonthGrid.Opacity = 1.0;
-		MonthLabel.Opacity = 1.0;
-		MonthGridSlide.X = 0.0;
-		MonthLabelSlide.X = 0.0;
-		MonthGrid.CacheMode = null;
+		SettleMonthMotion();
 		if (!Motion.Enabled || token != _monthAnimationToken)
 		{
 			return;
@@ -7685,74 +8555,62 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		MonthLabelSlide.BeginAnimation(TranslateTransform.XProperty, Motion.Anim(from * 0.6, 0.0, Motion.Tok.MoveMicro), HandoffBehavior.SnapshotAndReplace);
 	}
 
-	private void ConfigureClockFlyoutSize(double? forcedWidthDiu = null, double? forcedHeightDiu = null)
+	// The month at rest (no fade or slide running).
+	private void SettleMonthMotion()
 	{
-		double dpiX = 1.0;
-		double dpiY = 1.0;
-		try
-		{
-			DpiScale dpi = VisualTreeHelper.GetDpi(this);
-			dpiX = Math.Max(0.5, dpi.DpiScaleX);
-			dpiY = Math.Max(0.5, dpi.DpiScaleY);
-		}
-		catch
-		{
-		}
-		double availableWidth = _screen.WorkingArea.Width / dpiX;
-		double availableHeight = _screen.WorkingArea.Height / dpiY;
-		double width = forcedWidthDiu ?? Math.Max(272.0, Math.Min(304.0, availableWidth - 10.0));
-		double height = forcedHeightDiu ?? Math.Max(392.0, Math.Min(444.0, availableHeight - 10.0));
-		bool veryCompact = height < 404.0;
-		bool compact = height < 444.0;
-
-		ClockFlyoutRoot.Width = width;
-		ClockFlyoutRoot.Height = height;
-		ClockHeaderRow.Height = new GridLength(veryCompact ? 96.0 : (compact ? 104.0 : 112.0));
-		ClockFooterRow.Height = new GridLength(veryCompact ? 44.0 : (compact ? 48.0 : 52.0));
-		CalendarNavRow.Height = new GridLength(veryCompact ? 32.0 : (compact ? 34.0 : 38.0));
-		ClockBodyLayout.Margin = veryCompact ? new Thickness(8.0, 5.0, 8.0, 5.0) : (compact ? new Thickness(10.0, 7.0, 10.0, 7.0) : new Thickness(12.0, 9.0, 12.0, 9.0));
-		MonthGrid.Margin = veryCompact ? new Thickness(0.0, 2.0, 0.0, 0.0) : (compact ? new Thickness(0.0, 2.0, 0.0, 0.0) : new Thickness(0.0, 3.0, 0.0, 0.0));
-		ClockBig.FontSize = veryCompact ? 42.0 : (compact ? 46.0 : 50.0);
-		ClockSeconds.FontSize = veryCompact ? 20.0 : (compact ? 21.0 : 23.0);
-		ClockFull.FontSize = veryCompact ? 13.0 : (compact ? 13.0 : 14.0);
-		MonthLabel.FontSize = veryCompact ? 20.0 : (compact ? 20.0 : 21.0);
-		for (int i = 0; i < _calendarHeaderLabels.Length; i++)
-		{
-			TextBlock header = _calendarHeaderLabels[i];
-			if (header != null)
-			{
-				// weekday labels never go below 12 px
-				header.FontSize = 12.0;
-			}
-		}
-		for (int i = 0; i < _calendarDayButtons.Length; i++)
-		{
-			System.Windows.Controls.Button dayButton = _calendarDayButtons[i];
-			if (dayButton == null)
-			{
-				continue;
-			}
-			dayButton.Width = veryCompact ? 28.0 : (compact ? 28.0 : 30.0);
-			dayButton.Height = veryCompact ? 26.0 : (compact ? 26.0 : 28.0);
-			dayButton.FontSize = veryCompact ? 13.0 : (compact ? 13.0 : 14.0);
-		}
+		MonthGrid.BeginAnimation(UIElement.OpacityProperty, null);
+		MonthLabel.BeginAnimation(UIElement.OpacityProperty, null);
+		MonthGridSlide.BeginAnimation(TranslateTransform.XProperty, null);
+		MonthLabelSlide.BeginAnimation(TranslateTransform.XProperty, null);
+		MonthGrid.Opacity = 1.0;
+		MonthLabel.Opacity = 1.0;
+		MonthGridSlide.X = 0.0;
+		MonthLabelSlide.X = 0.0;
+		MonthGrid.CacheMode = null;
 	}
 
-	private CustomPopupPlacement[] PlaceClockPopup(System.Windows.Size popupSize, System.Windows.Size targetSize, System.Windows.Point offset)
+	// The clock flyout's metrics (DIP): 1 frame + 12 + 40 (time) + 16 (date) + 8 + 32 (month row) + 20 (weekdays) + six week
+	// rows + 6 + 41 (footer) + 1 frame: H = 177 + 6R, 357 at R = 30 (the Action Center's laptop panel).
+	internal const double ClockFixedDip = 177.0;
+
+	internal const double CalendarWeekdayRowDip = 20.0;
+
+	internal const int ClockWeekRowDip = 30;
+
+	internal const int ClockMinWeekRowDip = 24;
+
+	private int _clockWeekRowDip = ClockWeekRowDip;
+
+	// R = 30, or what fits under the tallest the flyout may be (whole DIP, at least 24: 321 DIP).
+	internal static int ClockWeekRowFor(double maxHeightDip)
 	{
-		const double gap = 6.0;
-		return _position switch
+		if (double.IsNaN(maxHeightDip) || double.IsInfinity(maxHeightDip) || maxHeightDip >= ClockFixedDip + 6.0 * ClockWeekRowDip)
 		{
-			"Top" => new[] { new CustomPopupPlacement(new System.Windows.Point(targetSize.Width - popupSize.Width, targetSize.Height + gap), PopupPrimaryAxis.Horizontal) },
-			"Left" => new[] { new CustomPopupPlacement(new System.Windows.Point(targetSize.Width + gap, targetSize.Height - popupSize.Height), PopupPrimaryAxis.Vertical) },
-			"Right" => new[] { new CustomPopupPlacement(new System.Windows.Point(-popupSize.Width - gap, targetSize.Height - popupSize.Height), PopupPrimaryAxis.Vertical) },
-			_ => new[] { new CustomPopupPlacement(new System.Windows.Point(targetSize.Width - popupSize.Width, -popupSize.Height - gap), PopupPrimaryAxis.Horizontal) }
-		};
+			return ClockWeekRowDip;
+		}
+		return Math.Clamp((int)Math.Floor((maxHeightDip - ClockFixedDip) / 6.0 + 1e-9), ClockMinWeekRowDip, ClockWeekRowDip);
+	}
+
+	// The flyout at the Action Center's width for this monitor, as tall as its content (the week rows compress on a short
+	// work area).
+	private void LayoutClockFlyout(double width, double maxHeightDip)
+	{
+		EnsureCalendarVisuals();
+		int r = ClockWeekRowFor(maxHeightDip);
+		_clockWeekRowDip = r;
+		ClockFlyoutRoot.Width = width;
+		ClockFlyoutRoot.Height = ClockFixedDip + 6.0 * r;
+		MonthGrid.Height = CalendarWeekdayRowDip + 6.0 * r;
+		MonthGrid.RowDefinitions[0].Height = new GridLength(CalendarWeekdayRowDip);
+		for (int i = 1; i < MonthGrid.RowDefinitions.Count; i++)
+		{
+			MonthGrid.RowDefinitions[i].Height = new GridLength(r);
+		}
 	}
 
 	private void PrepareClockFlyoutEnter()
 	{
-		FlyoutPrepare(ClockFlyoutRoot, ClockFlyoutSlide);
+		FlyoutPrepare(ClockContent, ClockFlyoutSlide);
 	}
 
 	private void AnimateClockFlyoutIn()
@@ -7763,7 +8621,7 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		}
 		int token = ++_clockAnimationToken;
 		_clockClosing = false;
-		FlyoutEnter(ClockFlyoutRoot, ClockFlyoutSlide, () => token == _clockAnimationToken && ClockPopup.IsOpen && !_clockClosing, null);
+		FlyoutEnter(ClockContent, ClockFlyoutSlide, () => token == _clockAnimationToken && ClockPopup.IsOpen && !_clockClosing, null);
 	}
 
 	private void CloseClockFlyout(bool animate)
@@ -7777,6 +8635,8 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 			return;
 		}
 		StopClockTick();
+		// the keys go back to the app in front at once (not after the exit animation)
+		ClearKeyFlyout(KeyFlyoutClock);
 		int token = ++_clockAnimationToken;
 		if (!animate || !Motion.Enabled)
 		{
@@ -7785,7 +8645,7 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		}
 
 		_clockClosing = true;
-		FlyoutExit(ClockFlyoutRoot, ClockFlyoutSlide, delegate
+		FlyoutExit(ClockContent, ClockFlyoutSlide, delegate
 		{
 			if (token == _clockAnimationToken && _clockClosing)
 			{
@@ -7925,11 +8785,8 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 
 	public void QaRenderFlyouts(string volumePath, string clockPath, string? networkPath = null)
 	{
-		_tray.VolumePct = 100;
-		_tray.Muted = false;
-		PopulateDevices();
-		RenderDetached((FrameworkElement)VolumePopup.Child, _tray, volumePath);
-		QaRenderClockCalendar(clockPath, DateTime.Now, 304.0, 444.0);
+		QaRenderSoundFlyout(volumePath, probes: false);
+		QaRenderClockCalendar(clockPath, DateTime.Now);
 		if (networkPath != null)
 		{
 			ApplyNetworkFlyoutTheme();
@@ -7973,29 +8830,50 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		Dispatcher.Invoke(delegate { }, DispatcherPriority.Render);
 	}
 
-	private (bool Ready, bool Routed, bool Reached, long SettleMs) QaProbeGlobalVolumeWheel()
+	// QA: the global hook's wheel route on the open popup (placed next to the offscreen QA bar, never on a real monitor):
+	// over the master slider it moves the level by 2 without scrolling; over the body's left padding it scrolls a clamped
+	// body to the first step.
+	private (bool Ready, bool Routed, bool Reached, long SettleMs, bool SliderRouted) QaProbeGlobalVolumeWheel()
 	{
-		if (VolumeBodyScroll.ScrollableHeight <= 0.5)
+		if (!VolumePopup.IsOpen)
 		{
-			return (false, false, false, 0L);
+			(bool Ready, bool Routed, bool Reached, long SettleMs, bool SliderRouted) result = default;
+			QaWithOpenVolumePopup(delegate
+			{
+				result = QaProbeGlobalVolumeWheel();
+			});
+			return result;
 		}
-		bool wasOpen = VolumePopup.IsOpen;
-		_volumeDiagnosticsMode = true;
 		try
 		{
-			VolumePopup.IsOpen = true;
-			Dispatcher.Invoke(delegate { }, DispatcherPriority.Render);
 			UpdateVolumeWheelScreenBounds();
 			bool ready = Volatile.Read(ref _volumeWheelRoutingActive) == 1
 				&& Volatile.Read(ref _volumeWheelRight) > Volatile.Read(ref _volumeWheelLeft)
 				&& Volatile.Read(ref _volumeWheelBottom) > Volatile.Read(ref _volumeWheelTop);
+			bool sliderRouted = false;
+			if (ready)
+			{
+				QaSetVolumeScrollOffset(0.0);
+				int level = _tray.VolumePct;
+				System.Windows.Point over = VolumeSlider.PointToScreen(new System.Windows.Point(VolumeSlider.ActualWidth / 2.0, VolumeSlider.ActualHeight / 2.0));
+				bool captured = TryRouteGlobalFlyoutMouseWheel((int)Math.Round(over.X), (int)Math.Round(over.Y), -120);
+				Dispatcher.Invoke(delegate { }, DispatcherPriority.Input);
+				sliderRouted = captured
+					&& _tray.VolumePct == Math.Max(0, level - 2)
+					&& VolumeBodyScroll.VerticalOffset <= 0.5
+					&& !SmoothScroll.IsVerticalActive(VolumeBodyScroll);
+				WriteMasterVolume(level);
+			}
+			if (!ready || VolumeBodyScroll.ScrollableHeight <= 0.5)
+			{
+				return (ready, false, false, 0L, sliderRouted);
+			}
 			QaSetVolumeScrollOffset(0.0);
 			int before = _volumeWheelRouteCount;
-			int x = (Volatile.Read(ref _volumeWheelLeft) + Volatile.Read(ref _volumeWheelRight)) / 2;
-			int y = (Volatile.Read(ref _volumeWheelTop) + Volatile.Read(ref _volumeWheelBottom)) / 2;
-			bool captured = ready && TryRouteGlobalFlyoutMouseWheel(x, y, -120);
+			System.Windows.Point body = VolumeBodyScroll.PointToScreen(new System.Windows.Point(5.0, VolumeBodyScroll.ActualHeight / 2.0));
+			bool routedIn = TryRouteGlobalFlyoutMouseWheel((int)Math.Round(body.X), (int)Math.Round(body.Y), -120);
 			Dispatcher.Invoke(delegate { }, DispatcherPriority.Input);
-			bool routed = captured
+			bool routed = routedIn
 				&& _volumeWheelRouteCount == before + 1
 				&& SmoothScroll.IsVerticalActive(VolumeBodyScroll);
 			long settleMs = QaWaitForVolumeScrollSettle();
@@ -8003,7 +8881,34 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 			bool reached = routed
 				&& !SmoothScroll.IsVerticalActive(VolumeBodyScroll)
 				&& Math.Abs(VolumeBodyScroll.VerticalOffset - target) <= 1.0;
-			return (ready, routed, reached, settleMs);
+			return (ready, routed, reached, settleMs, sliderRouted);
+		}
+		finally
+		{
+			SmoothScroll.StopVertical(VolumeBodyScroll);
+			QaSetVolumeScrollOffset(0.0);
+		}
+	}
+
+	// QA: runs a probe on the open volume popup without showing it: diagnostics mode (no refresh, no entrance), placed next
+	// to the offscreen QA bar, and fully transparent (WPF keeps a popup on a monitor, so it may land on one; a transparent
+	// layered window neither shows nor takes clicks). Closed again afterwards.
+	private void QaWithOpenVolumePopup(Action probe)
+	{
+		bool wasOpen = VolumePopup.IsOpen;
+		bool diagnostics = _volumeDiagnosticsMode;
+		bool offscreen = _qaOffscreenPlacement;
+		double opacity = VolumeFlyoutRoot.Opacity;
+		_volumeDiagnosticsMode = true;
+		_qaOffscreenPlacement = true;
+		VolumeFlyoutRoot.Opacity = 0.0;
+		try
+		{
+			VolumePopup.IsOpen = true;
+			Dispatcher.Invoke(delegate { }, DispatcherPriority.Render);
+			VolumeFlyoutRoot.UpdateLayout();
+			UpdateVolumeWheelScreenBounds();
+			probe();
 		}
 		finally
 		{
@@ -8011,10 +8916,131 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 			{
 				VolumePopup.IsOpen = false;
 			}
-			_volumeDiagnosticsMode = false;
-			SmoothScroll.StopVertical(VolumeBodyScroll);
-			QaSetVolumeScrollOffset(0.0);
+			_volumeDiagnosticsMode = diagnostics;
+			_qaOffscreenPlacement = offscreen;
+			VolumeFlyoutRoot.Opacity = opacity;
 		}
+	}
+
+	// QA: offers one key as the input hook does (TryRouteGlobalFlyoutKey on this thread stands for the hook thread) and lets
+	// the UI thread handle it; the step passes when the route answered as expected and the state is as expected after it.
+	private bool QaFlyoutKey(List<string> trace, int vk, string name, bool wantTaken, Func<bool> expect, Func<string> state)
+	{
+		bool taken = TryRouteGlobalFlyoutKey(vk);
+		Dispatcher.Invoke(delegate { }, DispatcherPriority.Input);
+		bool hit = taken == wantTaken && expect();
+		trace.Add($"{(hit ? "PASS" : "FAIL")} {name}: taken={taken} {state()}");
+		return hit;
+	}
+
+	// QA: the volume flyout's keys on the open popup (the level writes land in QaAudioSink): the arrows step 1, PageUp /
+	// PageDown 10, Home and a letter are left to the app in front, Escape closes the flyout and gives the keys back at once.
+	private (bool Passed, string[] Trace) QaProbeVolumeKeys()
+	{
+		List<string> trace = new List<string>();
+		// the popup's opening runs first
+		Dispatcher.Invoke(delegate { }, DispatcherPriority.Background);
+		int start = Math.Clamp(_tray.VolumePct, 11, 99);
+		WriteMasterVolume(start);
+		string Level() => $"level={_tray.VolumePct} last={QaAudioSink?.LastOrDefault()}";
+		bool Wrote(int pct) => _tray.VolumePct == pct && QaAudioSink?.LastOrDefault() == "volume:" + pct.ToString(CultureInfo.InvariantCulture);
+		bool ok = Volatile.Read(ref _keyFlyout) == KeyFlyoutVolume;
+		trace.Add($"{(ok ? "PASS" : "FAIL")} the open flyout holds the keys");
+		ok &= QaFlyoutKey(trace, VkDown, "Down", true, () => Wrote(start - 1), Level);
+		ok &= QaFlyoutKey(trace, VkPageDown, "PageDown", true, () => Wrote(start - 11), Level);
+		ok &= QaFlyoutKey(trace, VkPageUp, "PageUp", true, () => Wrote(start - 1), Level);
+		ok &= QaFlyoutKey(trace, VkRight, "Right", true, () => Wrote(start), Level);
+		ok &= QaFlyoutKey(trace, VkLeft, "Left", true, () => Wrote(start - 1), Level);
+		ok &= QaFlyoutKey(trace, VkUp, "Up", true, () => Wrote(start), Level);
+		ok &= QaFlyoutKey(trace, VkHome, "Home (not the volume flyout's)", false, () => _tray.VolumePct == start, Level);
+		ok &= QaFlyoutKey(trace, 0x41, "A (never a flyout's)", false, () => _tray.VolumePct == start, Level);
+		ok &= QaFlyoutKey(trace, VkEscape, "Escape", true, () => (!VolumePopup.IsOpen || _volumeClosing) && Volatile.Read(ref _keyFlyout) == 0, () => $"open={VolumePopup.IsOpen} closing={_volumeClosing}");
+		ok &= QaFlyoutKey(trace, VkDown, "Down after Escape (back to the app)", false, () => _tray.VolumePct == start, Level);
+		return (ok, trace.ToArray());
+	}
+
+	// QA: the clock flyout's keys on the open popup (placed next to the offscreen QA bar and fully transparent, so nothing
+	// shows; the clock's second tick is stopped so the sample date stays "today"): the arrows move the selected day by a day
+	// or a week across months, PageUp / PageDown the month, Home back to today, Escape closes it and gives the keys back.
+	internal (bool Passed, string[] Trace) QaProbeClockKeys(DateTime sample)
+	{
+		List<string> trace = new List<string>();
+		bool offscreen = _qaOffscreenPlacement;
+		double opacity = ClockFlyoutRoot.Opacity;
+		bool wasOpen = ClockPopup.IsOpen;
+		DateTime today = sample.Date;
+		string State() => $"selected={_calendarSelection:yyyy-MM-dd} month={_calMonth:yyyy-MM} open={ClockPopup.IsOpen} closing={_clockClosing}";
+		// the date selected, its month shown and its day drawn with the selection fill
+		bool At(DateTime selected) => _calendarSelection == selected && _calMonth == new DateTime(selected.Year, selected.Month, 1)
+			&& _calendarDayButtons.Any(b => b.Tag is DateTime d && d == selected && b.Background is SolidColorBrush fill
+				&& fill.Color == ((base.Resources["TB.ClockSelection"] as SolidColorBrush)?.Color ?? Colors.Transparent));
+		bool ok;
+		try
+		{
+			_qaOffscreenPlacement = true;
+			ClockFlyoutRoot.Opacity = 0.0;
+			ok = QaFlyoutKey(trace, VkEscape, "Escape while closed (never taken)", false, () => true, State);
+			ClockPopup.IsOpen = true;
+			// the popup's opening (and its entrance) run first; then the second tick stops and the sample date is "today"
+			Dispatcher.Invoke(delegate { }, DispatcherPriority.Background);
+			StopClockTick();
+			_calendarToday = today;
+			_calendarSelection = today;
+			_calMonth = new DateTime(today.Year, today.Month, 1);
+			BuildMonth(_calMonth);
+			bool holds = Volatile.Read(ref _keyFlyout) == KeyFlyoutClock;
+			trace.Add($"{(holds ? "PASS" : "FAIL")} the open flyout holds the keys");
+			ok &= holds;
+			DateTime next = today.AddDays(1);
+			ok &= QaFlyoutKey(trace, VkRight, "Right", true, () => At(next), State);
+			ok &= QaFlyoutKey(trace, VkLeft, "Left", true, () => At(today), State);
+			DateTime weekBefore = today.AddDays(-7);
+			ok &= QaFlyoutKey(trace, VkUp, "Up", true, () => At(weekBefore), State);
+			ok &= QaFlyoutKey(trace, VkDown, "Down", true, () => At(today), State);
+			DateTime nextMonth = new DateTime(today.Year, today.Month, 1).AddMonths(1);
+			ok &= QaFlyoutKey(trace, VkPageDown, "PageDown", true, () => _calMonth == nextMonth && _calendarSelection == today, State);
+			DateTime sameDay = new DateTime(nextMonth.Year, nextMonth.Month, Math.Min(today.Day, DateTime.DaysInMonth(nextMonth.Year, nextMonth.Month)));
+			ok &= QaFlyoutKey(trace, VkRight, "Right in a paged month (same day there)", true, () => At(sameDay), State);
+			ok &= QaFlyoutKey(trace, VkHome, "Home", true, () => At(today), State);
+			DateTime monthBefore = new DateTime(today.Year, today.Month, 1).AddMonths(-1);
+			ok &= QaFlyoutKey(trace, VkPageUp, "PageUp", true, () => _calMonth == monthBefore, State);
+			ok &= QaFlyoutKey(trace, VkHome, "Home again", true, () => At(today), State);
+			ok &= QaFlyoutKey(trace, 0x23, "End (never a flyout's)", false, () => At(today), State);
+			ok &= QaFlyoutKey(trace, VkEscape, "Escape", true, () => (!ClockPopup.IsOpen || _clockClosing) && Volatile.Read(ref _keyFlyout) == 0, State);
+			ok &= QaFlyoutKey(trace, VkLeft, "Left after Escape (back to the app)", false, () => _calendarSelection == today, State);
+		}
+		finally
+		{
+			if (!wasOpen)
+			{
+				ClockPopup.IsOpen = false;
+			}
+			StopClockTick();
+			SettleMonthMotion();
+			_qaOffscreenPlacement = offscreen;
+			ClockFlyoutRoot.Opacity = opacity;
+		}
+		return (ok, trace.ToArray());
+	}
+
+	// QA: how many laid-out, shown text blocks under an element draw this text.
+	private static int QaCountShownText(DependencyObject under, string text, Visual root)
+	{
+		int count = 0;
+		void Walk(DependencyObject d)
+		{
+			if (d is TextBlock tb && tb.Text == text && !QaRectIn(tb, root).IsEmpty)
+			{
+				count++;
+			}
+			int n = VisualTreeHelper.GetChildrenCount(d);
+			for (int i = 0; i < n; i++)
+			{
+				Walk(VisualTreeHelper.GetChild(d, i));
+			}
+		}
+		Walk(under);
+		return count;
 	}
 
 	// QA only: lets layout run again below a closed popup whose window was released (the step WPF itself takes when the
@@ -8031,255 +9057,580 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		}
 	}
 
-	// QA: where a device row (or an app volume card) of the last volume render sits in that render.
+	// QA: where a device row (or an app row) of the last volume render sits in that render. Rows of a collapsed section are
+	// not laid out (empty).
 	internal Rect QaVolumeRowBounds(bool capture, int index)
 	{
 		StackPanel list = capture ? InputList : OutputList;
 		return index >= 0 && index < list.Children.Count && list.Children[index] is FrameworkElement row && VolumePopup.Child is Visual root
-			? row.TransformToAncestor(root).TransformBounds(new Rect(row.RenderSize))
+			? QaRectIn(row, root)
 			: Rect.Empty;
 	}
 
 	internal Rect QaVolumeSessionBounds(int index)
 	{
 		return AppVolumeHost.ItemContainerGenerator.ContainerFromIndex(index) is FrameworkElement card && VolumePopup.Child is Visual root
-			? card.TransformToAncestor(root).TransformBounds(new Rect(card.RenderSize))
+			? QaRectIn(card, root)
 			: Rect.Empty;
 	}
 
-	public SoundFlyoutQaMetrics QaRenderSoundFlyout(string screenshotPath, double widthDiu = 376.0, double heightDiu = 480.0, string? commandScreenshotPath = null, ImageSource? qaSessionIcon = null)
+	// QA: an element's rect in the flyout render, when it is laid out and shown (Visibility up to the root; a closed popup's
+	// content is never "IsVisible").
+	private static Rect QaRectIn(FrameworkElement element, Visual root)
+	{
+		try
+		{
+			for (DependencyObject? d = element; d != null && !ReferenceEquals(d, root); d = VisualTreeHelper.GetParent(d))
+			{
+				if (d is UIElement u && u.Visibility != Visibility.Visible)
+				{
+					return Rect.Empty;
+				}
+			}
+			if (element.ActualWidth <= 0.0 || element.ActualHeight <= 0.0)
+			{
+				return Rect.Empty;
+			}
+			return element.TransformToAncestor(root).TransformBounds(new Rect(0.0, 0.0, element.ActualWidth, element.ActualHeight));
+		}
+		catch
+		{
+			return Rect.Empty;
+		}
+	}
+
+	// QA: the left padding strip of a flyout's body (nothing is drawn there; Dark rest's region check samples it).
+	internal Rect QaFlyoutBodyProbe(string kind)
+	{
+		if (string.Equals(kind, "clock", StringComparison.OrdinalIgnoreCase))
+		{
+			Rect header = QaRectIn(ClockHeaderPanel, ClockFlyoutRoot);
+			Rect footer = QaRectIn(ClockFooterBar, ClockFlyoutRoot);
+			return header.IsEmpty || footer.IsEmpty ? Rect.Empty : new Rect(1.0, header.Top, 10.0, Math.Max(1.0, footer.Top - header.Top - 1.0));
+		}
+		Rect master = QaRectIn(VolumeMasterRow, VolumeFlyoutRoot);
+		Rect bottom = QaRectIn(VolumeFooterBar, VolumeFlyoutRoot);
+		return master.IsEmpty || bottom.IsEmpty ? Rect.Empty : new Rect(1.0, master.Top, 10.0, Math.Max(1.0, bottom.Top - 6.0 - master.Top));
+	}
+
+	// QA: every text the flyout draws is 12 px (except the clock's time and seconds).
+	private static bool QaTextIsTwelve(DependencyObject root, params FrameworkElement[] except)
+	{
+		bool ok = true;
+		void Walk(DependencyObject d)
+		{
+			if (d is TextBlock tb && !except.Contains(tb) && !string.IsNullOrEmpty(tb.Text) && Math.Abs(tb.FontSize - 12.0) > 0.01)
+			{
+				ok = false;
+			}
+			int n = VisualTreeHelper.GetChildrenCount(d);
+			for (int i = 0; i < n; i++)
+			{
+				Walk(VisualTreeHelper.GetChild(d, i));
+			}
+		}
+		Walk(root);
+		return ok;
+	}
+
+	private static T? QaFindChild<T>(DependencyObject root) where T : DependencyObject
+	{
+		int n = VisualTreeHelper.GetChildrenCount(root);
+		for (int i = 0; i < n; i++)
+		{
+			DependencyObject child = VisualTreeHelper.GetChild(root, i);
+			if (child is T hit)
+			{
+				return hit;
+			}
+			T? deeper = QaFindChild<T>(child);
+			if (deeper != null)
+			{
+				return deeper;
+			}
+		}
+		return null;
+	}
+
+	// A 20/16 DIP white-or-ink vector: a Viewbox over a 24-unit canvas of shapes only (no font glyph, no bitmap).
+	private static bool QaIsVectorGlyph(object? content, double size)
+	{
+		return content is Viewbox { Child: Canvas canvas } box
+			&& Math.Abs(box.Width - size) < 0.1 && Math.Abs(box.Height - size) < 0.1
+			&& canvas.Children.Count > 0
+			&& canvas.Children.OfType<UIElement>().All(e => e is System.Windows.Shapes.Shape);
+	}
+
+	// QA: the volume flyout as it opens, rendered offscreen with a fixed fixture (one output, two inputs, "System sounds",
+	// plus a "Player" app when an icon is given). Never reads or writes the real endpoint: every audio write goes to
+	// QaAudioSink. widthDiu/maxHeightDiu stand for the monitor; edge orders the disclosure lists; tones renders a given theme
+	// (default: the live Start theme).
+	public SoundFlyoutQaMetrics QaRenderSoundFlyout(string screenshotPath, double widthDiu = 376.0, double maxHeightDiu = double.PositiveInfinity, bool expandInputs = false, bool expandApps = false, string edge = "Bottom", string? commandScreenshotPath = null, ImageSource? qaSessionIcon = null, (System.Windows.Media.Color ThemeBase, System.Windows.Media.Color Accent, bool Seasonal)? tones = null, bool probes = true, bool manyDevices = false)
 	{
 		StopVolumeTick();
-		Stopwatch total = Stopwatch.StartNew();
-		// Once the popup's window has been closed and released, WPF suspends layout below it until the popup opens
-		// again (live, the rows are always built while it is open), so rows built for this offscreen render would never
-		// be measured or drawn. Layout is resumed for the content first, the same step opening the popup takes.
-		FrameworkElement volumeContent = (FrameworkElement)VolumePopup.Child;
-		if (!VolumePopup.IsOpen && PresentationSource.FromVisual(volumeContent) == null)
+		List<string>? sinkBefore = QaAudioSink;
+		QaAudioSink = sinkBefore ?? new List<string>();
+		bool inputsBefore = s_volumeInputsExpanded;
+		bool appsBefore = s_volumeAppsExpanded;
+		s_volumeInputsExpanded = expandInputs;
+		s_volumeAppsExpanded = expandApps;
+		string side = ActionCenter.NormalizeEdge(edge);
+		try
 		{
-			QaResumeLayout(volumeContent);
-		}
-		ApplySoundFlyoutTheme();
-		_tray.VolumePct = 100;
-		_tray.Muted = false;
-		List<AudioDevice> outputs = new List<AudioDevice>
-		{
-			new AudioDevice { Id = "qa-output", Name = "RAZER AKOUSTIKA (Realtek(R) Audio)", IsDefault = true }
-		};
-		List<AudioDevice> inputs = new List<AudioDevice>
-		{
-			new AudioDevice { Id = "qa-input-default", Name = "Mic ακουστικων (Realtek(R) Audio)", IsDefault = true },
-			new AudioDevice { Id = "qa-input-alternate", Name = "Microphone (Razer Seiren Mini)", IsDefault = false }
-		};
-		List<AudioSessionVm> sessions = new List<AudioSessionVm>
-		{
-			AudioSessionVm.Preview("System sounds", 73)
-		};
-		if (qaSessionIcon != null)
-		{
-			sessions.Add(AudioSessionVm.Preview("Player", 40, icon: qaSessionIcon));
-		}
-		Stopwatch build = Stopwatch.StartNew();
-		ApplyAudioSnapshot(new AudioFlyoutSnapshot(outputs, inputs, sessions, 0L));
-		build.Stop();
-		ConfigureVolumeFlyoutSize(widthDiu, heightDiu);
-		VolumeRefreshStatus.Visibility = Visibility.Collapsed;
-		VolumeBodyScroll.ScrollToTop();
-		VolumeFlyoutRoot.BeginAnimation(UIElement.OpacityProperty, null);
-		VolumeFlyoutSlide.BeginAnimation(TranslateTransform.XProperty, null);
-		VolumeFlyoutSlide.BeginAnimation(TranslateTransform.YProperty, null);
-		VolumeFlyoutRoot.Opacity = 1.0;
-		VolumeFlyoutSlide.X = 0.0;
-		VolumeFlyoutSlide.Y = 0.0;
-		VolumeFlyoutRoot.CacheMode = null;
-		RenderDetached(volumeContent, _tray, screenshotPath);
-		if (!string.IsNullOrWhiteSpace(commandScreenshotPath))
-		{
-			RenderDetached((FrameworkElement)SoundCommandPopup.Child, null, commandScreenshotPath);
-		}
-		total.Stop();
-		bool smoothWheelCyclePassed = false;
-		bool smoothWheelReachedTarget = false;
-		bool wheelOverContentRouted = false;
-		bool wheelOverHeaderRouted = false;
-		bool wheelOverFooterRouted = false;
-		bool wheelOverScrollBarRouted = false;
-		bool handledWheelOverScrollBarRouted = false;
-		bool rapidWheelReversalPassed = false;
-		long smoothWheelSettleMs = 0L;
-		if (VolumeBodyScroll.ScrollableHeight > 0.5)
-		{
-			double wheelStep = Math.Clamp(VolumeBodyScroll.ViewportHeight * 0.2, 48.0, 72.0);
-			double targetOffset = Math.Min(wheelStep, VolumeBodyScroll.ScrollableHeight);
-			(bool Routed, bool Reached, long SettleMs) ProbeWheel(UIElement source, bool alreadyHandled = false)
+			Stopwatch total = Stopwatch.StartNew();
+			// Once the popup's window has been closed and released, WPF suspends layout below it until the popup opens
+			// again (live, the rows are always built while it is open), so rows built for this offscreen render would never
+			// be measured or drawn. Layout is resumed for the content first, the same step opening the popup takes.
+			FrameworkElement volumeContent = (FrameworkElement)VolumePopup.Child;
+			if (!VolumePopup.IsOpen && PresentationSource.FromVisual(volumeContent) == null)
 			{
-				QaSetVolumeScrollOffset(0.0);
-				int before = _volumeWheelRouteCount;
-				MouseWheelEventArgs wheel = new MouseWheelEventArgs(Mouse.PrimaryDevice, Environment.TickCount, -120)
-				{
-					RoutedEvent = Mouse.PreviewMouseWheelEvent,
-					Source = source,
-					Handled = alreadyHandled
-				};
-				source.RaiseEvent(wheel);
-				bool routed = wheel.Handled
-					&& _volumeWheelRouteCount == before + 1
-					&& SmoothScroll.IsVerticalActive(VolumeBodyScroll);
-				long settle = QaWaitForVolumeScrollSettle();
-				bool reached = !SmoothScroll.IsVerticalActive(VolumeBodyScroll)
-					&& Math.Abs(VolumeBodyScroll.VerticalOffset - targetOffset) <= 1.0;
-				return (routed, reached, settle);
+				QaResumeLayout(volumeContent);
 			}
-
-			var contentProbe = ProbeWheel(VolumeBodyPanel);
-			wheelOverContentRouted = contentProbe.Routed;
-			var headerProbe = ProbeWheel(MuteToggleGlyph);
-			wheelOverHeaderRouted = headerProbe.Routed;
-			var footerProbe = ProbeWheel(SoundActionGrid);
-			wheelOverFooterRouted = footerProbe.Routed;
-
-			VolumeBodyScroll.ApplyTemplate();
-			System.Windows.Controls.Primitives.ScrollBar? verticalScrollBar = VolumeBodyScroll.Template.FindName("PART_VerticalScrollBar", VolumeBodyScroll) as System.Windows.Controls.Primitives.ScrollBar;
-			long scrollBarSettleMs = 0L;
-			bool scrollBarReached = false;
-			if (verticalScrollBar != null)
+			ApplySoundFlyoutTheme();
+			if (tones is { } fixedTones)
 			{
-				var scrollBarProbe = ProbeWheel(verticalScrollBar, alreadyHandled: true);
-				handledWheelOverScrollBarRouted = scrollBarProbe.Routed;
-				wheelOverScrollBarRouted = scrollBarProbe.Routed;
-				scrollBarSettleMs = scrollBarProbe.SettleMs;
-				scrollBarReached = scrollBarProbe.Reached;
+				ApplySoundFlyoutPalette(fixedTones.ThemeBase, fixedTones.Accent, fixedTones.Seasonal);
 			}
-
-			QaSetVolumeScrollOffset(targetOffset);
-			int routeBefore = _volumeWheelRouteCount;
-			MouseWheelEventArgs reverseDown = new MouseWheelEventArgs(Mouse.PrimaryDevice, Environment.TickCount, -120)
+			// the sliders' fill is the bar's TB.Accent (ApplyTaskbarColor: the brightened Start accent, the Action Center's
+			// slider fill); the offscreen QA bar never ran that, so the render sets it for the theme it shows
+			if (!s_restTones)
 			{
-				RoutedEvent = Mouse.PreviewMouseWheelEvent,
-				Source = VolumeBodyPanel
-			};
-			MouseWheelEventArgs reverseUp = new MouseWheelEventArgs(Mouse.PrimaryDevice, Environment.TickCount, 120)
+				base.Resources["TB.Accent"] = Fz(Brighten(tones?.Accent ?? StartAccent.Color()));
+			}
+			_volumeSyncing = true;
+			try
 			{
-				RoutedEvent = Mouse.PreviewMouseWheelEvent,
-				Source = VolumeBodyPanel
+				_tray.VolumePct = 100;
+				_tray.Muted = false;
+			}
+			finally
+			{
+				_volumeSyncing = false;
+			}
+			UpdateMasterVolumeVisuals();
+			List<AudioDevice> outputs = new List<AudioDevice>
+			{
+				new AudioDevice { Id = "qa-output", Name = "RAZER AKOUSTIKA (Realtek(R) Audio)", IsDefault = true }
 			};
-			VolumeBodyPanel.RaiseEvent(reverseDown);
-			VolumeBodyPanel.RaiseEvent(reverseUp);
-			bool reversalRouted = _volumeWheelRouteCount == routeBefore + 2
-				&& SmoothScroll.IsVerticalActive(VolumeBodyScroll);
-			long reversalSettleMs = QaWaitForVolumeScrollSettle();
-			rapidWheelReversalPassed = reversalRouted
-				&& !SmoothScroll.IsVerticalActive(VolumeBodyScroll)
-				&& VolumeBodyScroll.VerticalOffset <= 1.0;
-
-			smoothWheelSettleMs = new[] { contentProbe.SettleMs, headerProbe.SettleMs, footerProbe.SettleMs, scrollBarSettleMs, reversalSettleMs }.Max();
-			smoothWheelReachedTarget = contentProbe.Reached && headerProbe.Reached && footerProbe.Reached && scrollBarReached;
-			smoothWheelCyclePassed = wheelOverContentRouted
-				&& wheelOverHeaderRouted
-				&& wheelOverFooterRouted
-				&& wheelOverScrollBarRouted
-				&& rapidWheelReversalPassed
-				&& !SmoothScroll.IsVerticalActive(VolumeBodyScroll);
+			List<AudioDevice> inputs = new List<AudioDevice>
+			{
+				new AudioDevice { Id = "qa-input-default", Name = "Mic ακουστικων (Realtek(R) Audio)", IsDefault = true },
+				new AudioDevice { Id = "qa-input-alternate", Name = "Microphone (Razer Seiren Mini)", IsDefault = false }
+			};
+			List<AudioSessionVm> sessions = new List<AudioSessionVm>
+			{
+				AudioSessionVm.Preview("System sounds", 73)
+			};
+			if (qaSessionIcon != null)
+			{
+				sessions.Add(AudioSessionVm.Preview("Player", 40, icon: qaSessionIcon));
+			}
+			if (manyDevices)
+			{
+				// three outputs of three kinds (speakers, headphones, a display) and a muted third app
+				outputs.Add(new AudioDevice { Id = "qa-output-headphones", Name = "Headphones (USB Audio Device)", IsDefault = false });
+				outputs.Add(new AudioDevice { Id = "qa-output-display", Name = "LG HDR 4K (NVIDIA High Definition Audio)", IsDefault = false });
+				sessions.Add(AudioSessionVm.Preview("Discord", 55, muted: true));
+			}
+			Stopwatch build = Stopwatch.StartNew();
+			VolumeFlyoutRoot.Width = widthDiu;
+			_volumeMaxHeightDip = maxHeightDiu;
+			ApplyAudioSnapshot(new AudioFlyoutSnapshot(outputs, inputs, sessions, 0L, Environment.TickCount64));
+			ApplyVolumeFlyoutLayout(animate: false, side);
+			build.Stop();
+			SetVolumeError(null);
 			SmoothScroll.StopVertical(VolumeBodyScroll);
-			QaSetVolumeScrollOffset(0.0);
-		}
-		(bool globalWheelReady, bool globalWheelRouted, bool globalWheelReached, long globalWheelSettleMs) = QaProbeGlobalVolumeWheel();
-		double scrollBarHitWidth = 0.0;
-		if (VolumeBodyScroll.Resources[typeof(System.Windows.Controls.Primitives.ScrollBar)] is Style scrollBarStyle)
-		{
-			Setter? widthSetter = scrollBarStyle.Setters.OfType<Setter>().FirstOrDefault(setter => setter.Property == FrameworkElement.WidthProperty);
-			if (widthSetter?.Value != null)
+			VolumeBodyScroll.ScrollToTop();
+			ResetFlyoutContent(VolumeContent, VolumeFlyoutSlide);
+			RenderDetached(volumeContent, _tray, screenshotPath);
+			if (!string.IsNullOrWhiteSpace(commandScreenshotPath))
 			{
-				scrollBarHitWidth = Convert.ToDouble(widthSetter.Value, CultureInfo.InvariantCulture);
+				RenderDetached((FrameworkElement)SoundCommandPopup.Child, null, commandScreenshotPath);
 			}
+			total.Stop();
+			Visual root = volumeContent;
+
+			// layout as rendered
+			bool inputsOpen = InputList.Visibility == Visibility.Visible;
+			bool appsOpen = AppVolumeHost.Visibility == Visibility.Visible;
+			double height = VolumeFlyoutRoot.ActualHeight;
+			double natural = VolumeFixedDip + VolumeBodyNaturalDip(outputs.Count, inputs.Count, sessions.Count, inputsOpen, appsOpen);
+			Rect masterRect = QaRectIn(VolumeMasterRow, root);
+			Rect footerRect = QaRectIn(VolumeFooterBar, root);
+			Rect bodyRect = QaRectIn(VolumeBodyScroll, root);
+			Rect gearRect = SoundSettingsLink.Content is Grid linkGrid && linkGrid.Children.OfType<System.Windows.Controls.Image>().FirstOrDefault() is { } gear ? QaRectIn(gear, root) : Rect.Empty;
+			Rect labelRect = QaRectIn(SoundSettingsLabel, root);
+			List<Rect> outputRects = OutputList.Children.OfType<FrameworkElement>().Select(r => QaRectIn(r, root)).ToList();
+			List<Rect> inputRects = InputList.Children.OfType<FrameworkElement>().Select(r => QaRectIn(r, root)).ToList();
+			List<Rect> appRects = Enumerable.Range(0, _appSessions.Count).Select(QaVolumeSessionBounds).ToList();
+			Rect inputExpanderRect = QaRectIn(InputExpander, root);
+			Rect appsExpanderRect = QaRectIn(AppsExpander, root);
+			IEnumerable<DeviceRowState> rowStates = OutputList.Children.OfType<System.Windows.Controls.Button>().Concat(InputList.Children.OfType<System.Windows.Controls.Button>())
+				.Select(b => b.Tag).OfType<DeviceRowState>();
+			bool ticksOnDefaultOnly = rowStates.All(s => (s.Tick.Visibility == Visibility.Visible) == s.Device.IsDefault
+				&& (s.Name.FontWeight == FontWeights.SemiBold) == s.Device.IsDefault);
+			bool listsAway = !string.Equals(side, "Top", StringComparison.Ordinal);
+			bool orderOk = (InputGroup.Children.IndexOf(InputList) < InputGroup.Children.IndexOf(InputExpander)) == listsAway
+				&& (AppsGroup.Children.IndexOf(AppVolumeHost) < AppsGroup.Children.IndexOf(AppsExpander)) == listsAway;
+			if (orderOk && inputsOpen && inputRects.Count > 0 && !inputRects[0].IsEmpty && !inputExpanderRect.IsEmpty)
+			{
+				orderOk = listsAway ? inputRects[^1].Bottom <= inputExpanderRect.Top + 0.5 : inputRects[0].Top >= inputExpanderRect.Bottom - 0.5;
+			}
+			if (orderOk && appsOpen && appRects.Count > 0 && !appRects[0].IsEmpty && !appsExpanderRect.IsEmpty)
+			{
+				orderOk = listsAway ? appRects[^1].Bottom <= appsExpanderRect.Top + 0.5 : appRects[0].Top >= appsExpanderRect.Bottom - 0.5;
+			}
+			bool chevronsOk = Math.Abs(InputChevronTurn.Angle - DisclosureAngle(side, inputsOpen)) < 0.01
+				&& Math.Abs(AppsChevronTurn.Angle - DisclosureAngle(side, appsOpen)) < 0.01
+				&& InputChevron.Visibility == (inputs.Count >= 2 ? Visibility.Visible : Visibility.Collapsed);
+			bool rowHeightsOk = outputRects.Concat(inputRects).All(r => r.IsEmpty || Math.Abs(r.Height - 32.0) < 0.5)
+				&& appRects.All(r => r.IsEmpty || Math.Abs(r.Height - 48.0) < 0.5)
+				&& Math.Abs(inputExpanderRect.Height - 32.0) < 0.5 && Math.Abs(appsExpanderRect.Height - 32.0) < 0.5;
+			// the default input's name is drawn once: on the input row while the list is closed, on its ticked row in the open list
+			string defaultInputName = inputs.FirstOrDefault(d => d.IsDefault)?.Name ?? string.Empty;
+			int defaultInputNameShown = QaCountShownText(VolumeBodyPanel, defaultInputName, root);
+
+			// the footer: Sound settings plus four 40 DIP icon routes, each named
+			System.Windows.Controls.Button[] iconButtons = SoundActionGrid.Children.OfType<System.Windows.Controls.Button>().ToArray();
+			System.Windows.Controls.Button[] routes = new[] { SoundSettingsLink }.Concat(iconButtons).ToArray();
+			bool routesNamed = routes.All(b => b.ToolTip is string tip && tip.Length > 0
+				&& !string.IsNullOrEmpty(System.Windows.Automation.AutomationProperties.GetName(b)));
+			bool iconsOk = iconButtons.Length == 4 && iconButtons.All(b => Math.Abs(b.ActualWidth - 40.0) < 0.5 && Math.Abs(b.ActualHeight - 40.0) < 0.5 && QaIsVectorGlyph(b.Content, 16.0));
+			// the error slot: the label shows the message in the secondary ink; the tooltip and the name stay "Sound settings"
+			SetVolumeError("Audio service unavailable");
+			bool errorShown = SoundSettingsLabel.Text == "Audio service unavailable"
+				&& ReferenceEquals(SoundSettingsLabel.Foreground, base.Resources["TB.FlyoutSecondaryInk"])
+				&& SoundSettingsLink.ToolTip as string == "Sound settings"
+				&& System.Windows.Automation.AutomationProperties.GetName(SoundSettingsLink) == "Sound settings";
+			SetVolumeError(null);
+			bool errorCleared = SoundSettingsLabel.Text == "Sound settings" && ReferenceEquals(SoundSettingsLabel.Foreground, base.Resources["TB.SoundLink"]);
+
+			// the master row: the Action Center's 20 DIP speaker in a 32 x 40 box; 3 waves at 100 %, none at 0, a cross muted
+			bool masterIconOk = Math.Abs(MuteToggle.ActualWidth - 32.0) < 0.5 && Math.Abs(MuteToggle.ActualHeight - 40.0) < 0.5
+				&& QaIsVectorGlyph(MuteToggleGlyph.Child, 20.0) && _masterGlyphKey == 3
+				&& ActionCenter.VolumeWaves(100, false) == 3 && ActionCenter.VolumeWaves(0, false) == 0;
+			_tray.Muted = true;
+			bool mutedShown = VolumePercent.Text == "Muted" && _masterGlyphKey == 100 && QaIsVectorGlyph(MuteToggleGlyph.Child, 20.0);
+			_tray.Muted = false;
+			masterIconOk &= mutedShown && VolumePercent.Text == "100";
+
+			// the optimistic switch (the QA sink completes it at once; a refused one rolls back)
+			bool switchMovesTick = true;
+			bool refusedSwitchRollsBack = true;
+			if (probes && OutputList.Children.Count >= 2)
+			{
+				List<System.Windows.Controls.Button> outputRows = OutputList.Children.OfType<System.Windows.Controls.Button>().ToList();
+				System.Windows.Controls.Button? from = outputRows.FirstOrDefault(r => (r.Tag as DeviceRowState)?.Default == true);
+				System.Windows.Controls.Button? to = outputRows.FirstOrDefault(r => r.Tag is DeviceRowState { Default: false });
+				if (from?.Tag is DeviceRowState fromState && to?.Tag is DeviceRowState toState)
+				{
+					// a switch that went through turns away every read begun before it (the refresh token moves on)
+					int tokenBefore = _volumeRefreshToken;
+					SwitchDefaultDeviceAsync(to, capture: false).GetAwaiter().GetResult();
+					switchMovesTick = toState.Default && toState.Tick.Visibility == Visibility.Visible && !fromState.Default && fromState.Tick.Visibility != Visibility.Visible
+						&& QaAudioSink.LastOrDefault() == "default:" + toState.Device.Id && _volumeError == null && to.Opacity == 1.0
+						&& _volumeRefreshToken != tokenBefore;
+					QaAudioSwitchFails = true;
+					try
+					{
+						SwitchDefaultDeviceAsync(from, capture: false).GetAwaiter().GetResult();
+					}
+					finally
+					{
+						QaAudioSwitchFails = false;
+					}
+					refusedSwitchRollsBack = toState.Default && toState.Tick.Visibility == Visibility.Visible && !fromState.Default && fromState.Tick.Visibility != Visibility.Visible
+						&& _volumeError == "Could not switch device" && from.Opacity == 1.0;
+					SetVolumeError(null);
+					// the rows again as the fixture says
+					_volumeOutputSignature = "\0";
+					BuildDeviceRows(OutputList, outputs, capture: false);
+					volumeContent.UpdateLayout();
+				}
+			}
+
+			// wheel probes (all writes land in QaAudioSink)
+			bool masterWheelOk = true;
+			bool appWheelOk = true;
+			bool consumedOk = true;
+			bool pendingClearedOnExpand = true;
+			bool smoothWheelCyclePassed = false;
+			bool smoothWheelReachedTarget = false;
+			bool wheelOverContentRouted = false;
+			bool wheelOverMasterRouted = false;
+			bool wheelOverFooterRouted = false;
+			bool wheelOverScrollBarRouted = false;
+			bool rapidWheelReversalPassed = false;
+			long smoothWheelSettleMs = 0L;
+			bool expanderStaysPut = true;
+			List<string> wheelTrace = new List<string>();
+			(bool Ready, bool Routed, bool Reached, long SettleMs, bool SliderRouted) global = (false, false, false, 0L, false);
+			(bool Passed, string[] Trace) keys = (false, Array.Empty<string>());
+			bool scrollable = VolumeBodyScroll.ScrollableHeight > 0.5;
+			if (probes)
+			{
+				MouseWheelEventArgs Wheel(UIElement source, int delta, bool handled = false)
+				{
+					MouseWheelEventArgs wheel = new MouseWheelEventArgs(Mouse.PrimaryDevice, Environment.TickCount, delta)
+					{
+						RoutedEvent = Mouse.PreviewMouseWheelEvent,
+						Source = source,
+						Handled = handled
+					};
+					source.RaiseEvent(wheel);
+					return wheel;
+				}
+				// over the master slider: 2 down, nothing scrolls, the write recorded (never sent)
+				QaSetVolumeScrollOffset(0.0);
+				int writes = QaAudioSink.Count;
+				MouseWheelEventArgs onSlider = Wheel(VolumeSlider, -120);
+				masterWheelOk = onSlider.Handled && _tray.VolumePct == 98 && QaAudioSink.Count > writes && QaAudioSink[writes] == "volume:98"
+					&& VolumeBodyScroll.VerticalOffset <= 0.5 && !SmoothScroll.IsVerticalActive(VolumeBodyScroll);
+				WriteMasterVolume(100);
+				// over an app's slider: that app 2 down
+				if (appsOpen && _appSessions.Count > 0 && AppVolumeHost.ItemContainerGenerator.ContainerFromIndex(0) is DependencyObject app0 && QaFindChild<Slider>(app0) is Slider appSlider)
+				{
+					int appBefore = _appSessions[0].VolumePct;
+					MouseWheelEventArgs onApp = Wheel(appSlider, -120);
+					appWheelOk = onApp.Handled && _appSessions[0].VolumePct == appBefore - 2 && VolumeBodyScroll.VerticalOffset <= 0.5;
+					_appSessions[0].VolumePct = appBefore;
+				}
+				if (!scrollable)
+				{
+					// a body that fits takes the wheel and does nothing with it (and keeps nothing for later)
+					MouseWheelEventArgs onBody = Wheel(VolumeBodyPanel, -120);
+					consumedOk = onBody.Handled && VolumeBodyScroll.VerticalOffset <= 0.5 && _pendingVolumeWheelDelta == 0 && !SmoothScroll.IsVerticalActive(VolumeBodyScroll);
+				}
+				// an expand or a collapse leaves no wheel delta behind
+				if (inputs.Count >= 2)
+				{
+					_pendingVolumeWheelDelta = 240;
+					OnInputExpanderClick(InputExpander, new RoutedEventArgs());
+					pendingClearedOnExpand = _pendingVolumeWheelDelta == 0;
+					OnInputExpanderClick(InputExpander, new RoutedEventArgs());
+					pendingClearedOnExpand &= _pendingVolumeWheelDelta == 0 && s_volumeInputsExpanded == expandInputs;
+					ApplyVolumeFlyoutLayout(animate: false, side);
+					volumeContent.UpdateLayout();
+				}
+				// the body scrolls and the global route on the open popup (layout and the frame hook run only for a shown
+				// popup; QA keeps it fully transparent and next to the offscreen bar)
+				QaWithOpenVolumePopup(delegate
+				{
+					if (scrollable)
+					{
+						double wheelStep = Math.Clamp(VolumeBodyScroll.ViewportHeight * 0.2, 48.0, 72.0);
+						double targetOffset = Math.Min(wheelStep, VolumeBodyScroll.ScrollableHeight);
+						(bool Routed, bool Reached, long SettleMs) ProbeWheel(UIElement source, bool alreadyHandled = false)
+						{
+							QaSetVolumeScrollOffset(0.0);
+							int before = _volumeWheelRouteCount;
+							MouseWheelEventArgs wheel = Wheel(source, -120, alreadyHandled);
+							bool routed = wheel.Handled
+								&& _volumeWheelRouteCount == before + 1
+								&& SmoothScroll.IsVerticalActive(VolumeBodyScroll);
+							long settle = QaWaitForVolumeScrollSettle();
+							bool reached = !SmoothScroll.IsVerticalActive(VolumeBodyScroll)
+								&& Math.Abs(VolumeBodyScroll.VerticalOffset - targetOffset) <= 1.0;
+							wheelTrace.Add($"{(source as FrameworkElement)?.Name ?? source.GetType().Name}: routed={routed} offset={VolumeBodyScroll.VerticalOffset:0.#}/{targetOffset:0.#} settle={settle}ms");
+							return (routed, reached, settle);
+						}
+						var contentProbe = ProbeWheel(VolumeBodyPanel);
+						wheelOverContentRouted = contentProbe.Routed;
+						var masterProbe = ProbeWheel(MuteToggle);
+						wheelOverMasterRouted = masterProbe.Routed;
+						var footerProbe = ProbeWheel(SoundActionGrid);
+						wheelOverFooterRouted = footerProbe.Routed;
+						VolumeBodyScroll.ApplyTemplate();
+						long scrollBarSettleMs = 0L;
+						bool scrollBarReached = false;
+						if (VolumeBodyScroll.Template.FindName("PART_VerticalScrollBar", VolumeBodyScroll) is System.Windows.Controls.Primitives.ScrollBar verticalScrollBar)
+						{
+							var scrollBarProbe = ProbeWheel(verticalScrollBar, alreadyHandled: true);
+							wheelOverScrollBarRouted = scrollBarProbe.Routed;
+							scrollBarSettleMs = scrollBarProbe.SettleMs;
+							scrollBarReached = scrollBarProbe.Reached;
+						}
+						QaSetVolumeScrollOffset(targetOffset);
+						int routeBefore = _volumeWheelRouteCount;
+						Wheel(VolumeBodyPanel, -120);
+						Wheel(VolumeBodyPanel, 120);
+						bool reversalRouted = _volumeWheelRouteCount == routeBefore + 2 && SmoothScroll.IsVerticalActive(VolumeBodyScroll);
+						long reversalSettleMs = QaWaitForVolumeScrollSettle();
+						rapidWheelReversalPassed = reversalRouted && !SmoothScroll.IsVerticalActive(VolumeBodyScroll) && VolumeBodyScroll.VerticalOffset <= 1.0;
+						wheelTrace.Add($"reversal: routed={reversalRouted} offset={VolumeBodyScroll.VerticalOffset:0.#} settle={reversalSettleMs}ms");
+						smoothWheelSettleMs = new[] { contentProbe.SettleMs, masterProbe.SettleMs, footerProbe.SettleMs, scrollBarSettleMs, reversalSettleMs }.Max();
+						smoothWheelReachedTarget = contentProbe.Reached && masterProbe.Reached && footerProbe.Reached && scrollBarReached;
+						smoothWheelCyclePassed = wheelOverContentRouted && wheelOverMasterRouted && wheelOverFooterRouted && wheelOverScrollBarRouted
+							&& rapidWheelReversalPassed && !SmoothScroll.IsVerticalActive(VolumeBodyScroll);
+						SmoothScroll.StopVertical(VolumeBodyScroll);
+						// a clamped body keeps the clicked row in place: scrolled to the end (the rows next to the footer), each
+						// disclosure row closes and opens again without moving in the viewport
+						foreach ((FrameworkElement row, Action click) in new (FrameworkElement, Action)[]
+						{
+							(AppsExpander, delegate { OnAppsExpanderClick(AppsExpander, new RoutedEventArgs()); }),
+							(InputExpander, delegate { OnInputExpanderClick(InputExpander, new RoutedEventArgs()); })
+						})
+						{
+							if (!row.IsEnabled || !row.IsHitTestVisible)
+							{
+								continue;
+							}
+							QaSetVolumeScrollOffset(VolumeBodyScroll.ScrollableHeight);
+							double y0 = VolumeBodyOffsetOf(row);
+							click();
+							double y1 = VolumeBodyOffsetOf(row);
+							bool clampedAfter = VolumeBodyScroll.ScrollableHeight > 0.5;
+							click();
+							double y2 = VolumeBodyOffsetOf(row);
+							bool still = !double.IsNaN(y0) && clampedAfter && Math.Abs(y1 - y0) < 0.5 && Math.Abs(y2 - y0) < 0.5;
+							expanderStaysPut &= still;
+							wheelTrace.Add($"{row.Name} in place: {y0:0.#} -> {y1:0.#} -> {y2:0.#} ({(still ? "PASS" : "FAIL")})");
+						}
+						ApplyVolumeFlyoutLayout(animate: false, side);
+						QaSetVolumeScrollOffset(0.0);
+					}
+					global = QaProbeGlobalVolumeWheel();
+				});
+				// the keys through the input hook's route (the flyout never takes the foreground); Escape closes it
+				QaWithOpenVolumePopup(delegate
+				{
+					keys = QaProbeVolumeKeys();
+				});
+			}
+			double scrollBarWidth = 0.0;
+			if (VolumeBodyScroll.Resources[typeof(System.Windows.Controls.Primitives.ScrollBar)] is Style scrollBarStyle
+				&& scrollBarStyle.Setters.OfType<Setter>().FirstOrDefault(setter => setter.Property == FrameworkElement.WidthProperty)?.Value is { } widthValue)
+			{
+				scrollBarWidth = Convert.ToDouble(widthValue, CultureInfo.InvariantCulture);
+			}
+
+			// the surface: the Action Center's tones for the same theme
+			LinearGradientBrush? body = base.Resources["TB.SoundBackground"] as LinearGradientBrush;
+			System.Windows.Media.Color bodyTop = body?.GradientStops.Count > 0 ? body.GradientStops[0].Color : Colors.Transparent;
+			System.Windows.Media.Color bodyBottom = body?.GradientStops.Count > 1 ? body.GradientStops[^1].Color : Colors.Transparent;
+			System.Windows.Media.Color footerColor = (base.Resources["TB.SoundFooter"] as SolidColorBrush)?.Color ?? Colors.Transparent;
+			System.Windows.Media.Color borderColor = (base.Resources["TB.SoundBorder"] as SolidColorBrush)?.Color ?? Colors.Transparent;
+			System.Windows.Media.Color linkColor = (base.Resources["TB.SoundLink"] as SolidColorBrush)?.Color ?? Colors.Transparent;
+			FlyoutPalette.ReadTheme(out System.Windows.Media.Color themeBase, out System.Windows.Media.Color accent, out bool seasonal);
+			ActionCenterTones expected = tones is { } given ? ActionCenter.NormalTones(given.ThemeBase, given.Accent, given.Seasonal) : ActionCenter.NormalTones(themeBase, accent, seasonal);
+			bool themeSynced = !s_restTones && bodyTop == expected.BodyTop && bodyBottom == expected.BodyBottom
+				&& footerColor == expected.Footer && borderColor == expected.Border && linkColor == expected.Link;
+
+			// the motion contract: the frame never moves or fades; only the content does
+			bool frameStatic = VolumeFlyoutRoot.Opacity == 1.0 && (VolumeFlyoutRoot.RenderTransform == null || VolumeFlyoutRoot.RenderTransform.Value.IsIdentity)
+				&& ReferenceEquals(VolumeContent.RenderTransform, VolumeFlyoutSlide);
+			FlyoutPrepare(VolumeContent, VolumeFlyoutSlide);
+			bool prepareTouchesContentOnly = VolumeFlyoutRoot.Opacity == 1.0 && VolumeContent.Opacity == (Motion.Enabled ? 0.0 : 1.0);
+			ResetFlyoutContent(VolumeContent, VolumeFlyoutSlide);
+
+			System.Windows.Controls.Button[] commandButtons = SoundCommandList.Children.OfType<System.Windows.Controls.Button>().ToArray();
+			return new SoundFlyoutQaMetrics
+			{
+				Edge = side,
+				WidthDiu = VolumeFlyoutRoot.ActualWidth,
+				HeightDiu = height,
+				ExpectedHeightDiu = Math.Min(natural, double.IsInfinity(maxHeightDiu) ? natural : Math.Max(VolumeFixedDip + 32.0, maxHeightDiu)),
+				NaturalHeightDiu = natural,
+				MaxHeightDiu = double.IsInfinity(maxHeightDiu) ? 0.0 : maxHeightDiu,
+				BodyViewportDiu = VolumeBodyScroll.ViewportHeight,
+				BodyScrollable = scrollable,
+				MasterAndFooterInside = !masterRect.IsEmpty && !footerRect.IsEmpty && masterRect.Top >= 1.0 && Math.Abs(masterRect.Height - 40.0) < 0.5
+					&& footerRect.Bottom <= height - 1.0 + 0.5 && Math.Abs(footerRect.Height - 41.0) < 0.5 && !bodyRect.IsEmpty
+					&& bodyRect.Top >= masterRect.Bottom - 0.5 && bodyRect.Bottom <= footerRect.Top - 6.0 + 0.5,
+				OutputRows = OutputList.Children.Count,
+				InputRows = InputList.Children.Count,
+				AppSessionRows = _appSessions.Count,
+				InputsExpanded = inputsOpen,
+				AppsExpanded = appsOpen,
+				TicksOnDefaultOnly = ticksOnDefaultOnly,
+				SwitchMovesTickAtOnce = switchMovesTick,
+				RefusedSwitchRollsBack = refusedSwitchRollsBack,
+				DisclosureOrderAwayFromTaskbar = orderOk,
+				ChevronsMatch = chevronsOk,
+				RowHeightsExact = rowHeightsOk,
+				AppsCountText = AppsCount.Text,
+				InputRowText = InputExpanderName.Text,
+				DefaultInputNameShown = defaultInputNameShown,
+				ExpanderStaysPutWhenClamped = expanderStaysPut,
+				KeyboardRoutePassed = keys.Passed,
+				KeyboardTrace = keys.Trace,
+				FooterRoutes = routes.Length,
+				FooterRoutesNamed = routesNamed,
+				FooterIconsVector40 = iconsOk,
+				FooterGearRect = gearRect,
+				FooterLabelLeftDiu = labelRect.IsEmpty ? 0.0 : labelRect.Left,
+				FooterRect = footerRect,
+				ErrorInFooterSlot = errorShown && errorCleared,
+				MasterIconOk = masterIconOk,
+				MasterSliderMinimum = VolumeSlider.Minimum,
+				MasterSliderMaximum = VolumeSlider.Maximum,
+				SlidersKeyboardReady = VolumeSlider.Focusable && VolumeSlider.SmallChange == 1.0 && VolumeSlider.LargeChange == 10.0
+					&& KeyboardNavigation.GetTabNavigation(VolumeFlyoutRoot) == KeyboardNavigationMode.Cycle && MuteToggle.Focusable,
+				MasterWheelSteps2 = masterWheelOk,
+				AppWheelSteps2 = appWheelOk,
+				FittingBodyConsumesWheel = consumedOk,
+				NoPendingDeltaAfterExpand = pendingClearedOnExpand,
+				PixelScrollingEnabled = !VolumeBodyScroll.CanContentScroll && SmoothScroll.VerticalSupported,
+				SmoothWheelCyclePassed = smoothWheelCyclePassed,
+				SmoothWheelReachedTarget = smoothWheelReachedTarget,
+				WheelOverContentRouted = wheelOverContentRouted,
+				WheelOverMasterRouted = wheelOverMasterRouted,
+				WheelOverFooterRouted = wheelOverFooterRouted,
+				WheelOverScrollBarRouted = wheelOverScrollBarRouted,
+				RapidWheelReversalPassed = rapidWheelReversalPassed,
+				SmoothWheelSettleMs = smoothWheelSettleMs,
+				WheelProbeTrace = wheelTrace.ToArray(),
+				GlobalWheelCaptureReady = global.Ready,
+				GlobalWheelRoutePassed = global.Routed,
+				GlobalWheelReachedTarget = global.Reached,
+				GlobalWheelSettleMs = global.SettleMs,
+				GlobalWheelOverSliderSteps = global.SliderRouted,
+				ScrollBarWidthDiu = scrollBarWidth,
+				CustomPlacementEnabled = VolumePopup.Placement == PlacementMode.Custom && VolumePopup.CustomPopupPlacementCallback != null
+					&& VolumePopup.CustomPopupPlacementCallback.Method.Name != nameof(PlaceVolumePopup),
+				SquareCorners = VolumeFlyoutRoot.CornerRadius == new CornerRadius(0.0),
+				TypographyTwelve = QaTextIsTwelve(volumeContent),
+				ThemeBackgroundSynchronized = themeSynced,
+				ThemeAccent = "#" + StartAccent.Color().ToString(CultureInfo.InvariantCulture).TrimStart('#'),
+				BodyTop = bodyTop.ToString(CultureInfo.InvariantCulture),
+				BodyBottom = bodyBottom.ToString(CultureInfo.InvariantCulture),
+				FooterColor = footerColor.ToString(CultureInfo.InvariantCulture),
+				BorderColor = borderColor.ToString(CultureInfo.InvariantCulture),
+				LinkColor = linkColor.ToString(CultureInfo.InvariantCulture),
+				ValueInkColor = ((base.Resources["TB.FlyoutValueInk"] as SolidColorBrush)?.Color ?? Colors.White).ToString(CultureInfo.InvariantCulture),
+				SecondaryInkColor = ((base.Resources["TB.FlyoutSecondaryInk"] as SolidColorBrush)?.Color ?? Colors.White).ToString(CultureInfo.InvariantCulture),
+				FrameStatic = frameStatic,
+				PrepareTouchesContentOnly = prepareTouchesContentOnly,
+				BodyProbe = QaFlyoutBodyProbe("volume"),
+				OutputRowRects = outputRects.ToArray(),
+				InputRowRects = inputRects.ToArray(),
+				AppRowRects = appRects.ToArray(),
+				AudioWrites = QaAudioSink.ToArray(),
+				VisualBuildMs = build.ElapsedMilliseconds,
+				RenderAndLayoutMs = total.ElapsedMilliseconds,
+				TimerActiveDuringDetachedRender = _volumeTick?.IsEnabled == true,
+				RightClickCommands = commandButtons.Length,
+				RightClickIconsVector = commandButtons.All(button =>
+					button.Content is Grid content
+						&& content.Children.OfType<Viewbox>().Any(iconBox =>
+							iconBox.Child is Canvas canvas
+								&& canvas.Children.OfType<System.Windows.Shapes.Shape>().Any()
+								&& !canvas.Children.OfType<TextBlock>().Any())),
+				RightClickMetroSurface = SoundCommandRoot.Width == 272.0
+					&& SoundCommandRoot.CornerRadius == new CornerRadius(0.0)
+					&& SoundCommandRoot.Background != null,
+				RightClickButtonAnchored = SoundCommandPopup.Placement == PlacementMode.Custom
+					&& SoundCommandPopup.CustomPopupPlacementCallback?.Method.Name == nameof(PlaceVolumePopup),
+				RightClickScreenshot = commandScreenshotPath ?? string.Empty,
+				Screenshot = screenshotPath
+			};
 		}
-		SolidColorBrush? defaultInputBrush = base.Resources["TB.SoundInputDefault"] as SolidColorBrush;
-		SolidColorBrush? alternateInputBrush = base.Resources["TB.SoundInputOther"] as SolidColorBrush;
-		System.Windows.Media.Color defaultInput = defaultInputBrush?.Color ?? Colors.Transparent;
-		System.Windows.Media.Color alternateInput = alternateInputBrush?.Color ?? Colors.Transparent;
-		LinearGradientBrush? themedBackground = base.Resources["TB.SoundBackground"] as LinearGradientBrush;
-		System.Windows.Media.Color expectedThemeBottom = SoundTone(StartAccent.Color(), 0.0, 0.0, 0.14);
-		double inputColorDistance = Math.Sqrt(
-			Math.Pow((double)defaultInput.R - alternateInput.R, 2.0)
-			+ Math.Pow((double)defaultInput.G - alternateInput.G, 2.0)
-			+ Math.Pow((double)defaultInput.B - alternateInput.B, 2.0));
-		System.Windows.Controls.Button[] actionButtons = SoundActionGrid.Children.OfType<System.Windows.Controls.Button>().ToArray();
-		System.Windows.Controls.Button[] commandButtons = SoundCommandList.Children.OfType<System.Windows.Controls.Button>().ToArray();
-		return new SoundFlyoutQaMetrics
+		finally
 		{
-			WidthDiu = VolumeFlyoutRoot.Width,
-			HeightDiu = VolumeFlyoutRoot.Height,
-			OutputRows = OutputList.Children.Count,
-			InputRows = InputList.Children.Count,
-			AppSessionRows = AppVolumeHost.Items.Count,
-			ActionTiles = SoundActionGrid.Children.Count,
-			ActionIconsCentered = actionButtons.All(button =>
-				button.Content is Grid content
-					&& content.Children.OfType<Viewbox>().Any(iconBox => iconBox.MaxWidth == 26.0
-						&& iconBox.MaxHeight == 26.0
-						&& iconBox.HorizontalAlignment == System.Windows.HorizontalAlignment.Center
-						&& iconBox.VerticalAlignment == VerticalAlignment.Center)),
-			ActionLabelsFit = actionButtons.All(ActionTileLabelFits),
-			ActionIconsVector = actionButtons.All(button =>
-				button.Content is Grid content
-					&& content.Children.OfType<Viewbox>().Any(iconBox =>
-						iconBox.Child is Canvas canvas
-							&& canvas.Children.OfType<Shape>().Any()
-							&& !canvas.Children.OfType<TextBlock>().Any())),
-			DefaultOutputName = VolDeviceName.Text,
-			MasterIconContainerWidthDiu = MuteToggle.ActualWidth,
-			MasterIconGlyphWidthDiu = MuteToggleGlyph.ActualWidth,
-			MasterIconSafeInsetDiu = Math.Max(0.0, (MuteToggle.ActualWidth - MuteToggleGlyph.ActualWidth) / 2.0),
-			MasterIconHasSafeInsets = MuteToggle.ActualWidth >= 48.0
-				&& MuteToggleGlyph.ActualWidth <= MuteToggle.ActualWidth - 8.0
-				&& !MuteToggle.ClipToBounds
-				&& !MuteToggleGlyph.ClipToBounds,
-			MasterSliderMinimum = VolumeSlider.Minimum,
-			MasterSliderMaximum = VolumeSlider.Maximum,
-			BoundedScrollEnabled = VolumeBodyScroll.VerticalScrollBarVisibility == ScrollBarVisibility.Auto,
-			PixelScrollingEnabled = !VolumeBodyScroll.CanContentScroll && SmoothScroll.VerticalSupported,
-			SmoothWheelCyclePassed = smoothWheelCyclePassed,
-			SmoothWheelReachedTarget = smoothWheelReachedTarget,
-			WheelOverContentRouted = wheelOverContentRouted,
-			WheelOverHeaderRouted = wheelOverHeaderRouted,
-			WheelOverFooterRouted = wheelOverFooterRouted,
-			WheelOverScrollBarRouted = wheelOverScrollBarRouted,
-			HandledWheelOverScrollBarRouted = handledWheelOverScrollBarRouted,
-			RapidWheelReversalPassed = rapidWheelReversalPassed,
-			GlobalWheelCaptureReady = globalWheelReady,
-			GlobalWheelRoutePassed = globalWheelRouted,
-			GlobalWheelReachedTarget = globalWheelReached,
-			GlobalWheelSettleMs = globalWheelSettleMs,
-			SmoothWheelSettleMs = smoothWheelSettleMs,
-			ScrollBarHitWidthDiu = scrollBarHitWidth,
-			CustomPlacementEnabled = VolumePopup.Placement == PlacementMode.Custom && VolumePopup.CustomPopupPlacementCallback != null,
-			SquareCorners = VolumeFlyoutRoot.CornerRadius == new CornerRadius(0.0),
-			ThemeBackgroundSynchronized = themedBackground?.GradientStops.Count == 2
-				&& themedBackground.GradientStops[1].Color == expectedThemeBottom
-				&& defaultInputBrush != null
-				&& alternateInputBrush != null,
-			ThemeAccent = "#" + StartAccent.Color().ToString(CultureInfo.InvariantCulture).TrimStart('#'),
-			DefaultInputColor = defaultInput.ToString(CultureInfo.InvariantCulture),
-			AlternateInputColor = alternateInput.ToString(CultureInfo.InvariantCulture),
-			InputStateColorDistance = inputColorDistance,
-			VisualBuildMs = build.ElapsedMilliseconds,
-			RenderAndLayoutMs = total.ElapsedMilliseconds,
-			TimerActiveDuringDetachedRender = _volumeTick?.IsEnabled == true,
-			RightClickCommands = commandButtons.Length,
-			RightClickIconsVector = commandButtons.All(button =>
-				button.Content is Grid content
-					&& content.Children.OfType<Viewbox>().Any(iconBox =>
-						iconBox.Child is Canvas canvas
-							&& canvas.Children.OfType<Shape>().Any()
-							&& !canvas.Children.OfType<TextBlock>().Any())),
-			RightClickMetroSurface = SoundCommandRoot.Width == 272.0
-				&& SoundCommandRoot.CornerRadius == new CornerRadius(0.0)
-				&& SoundCommandRoot.Background != null,
-			RightClickCustomPlacement = SoundCommandPopup.Placement == PlacementMode.Custom
-				&& SoundCommandPopup.CustomPopupPlacementCallback != null,
-			RightClickScreenshot = commandScreenshotPath ?? string.Empty,
-			Screenshot = screenshotPath
-		};
+			s_volumeInputsExpanded = inputsBefore;
+			s_volumeAppsExpanded = appsBefore;
+			QaAudioSink = sinkBefore;
+		}
 	}
 
 	public NetworkFlyoutQaMetrics QaRenderNetworkFlyout(
@@ -8417,49 +9768,201 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		}
 	}
 
-	// QA: a brush the taskbar's flyout themes wrote (for example "TB.ClockHeader").
+	// QA: a brush the taskbar's flyout themes wrote (for example "TB.ClockBody").
 	internal System.Windows.Media.Brush QaResource(string key)
 	{
 		return base.Resources.Contains(key) ? base.Resources[key] as System.Windows.Media.Brush : null;
 	}
 
-	public ClockCalendarQaMetrics QaRenderClockCalendar(string clockPath, DateTime sample, double widthDiu = 304.0, double heightDiu = 444.0)
+	// QA: the clock flyout as it opens on the sample's date, rendered offscreen. widthDiu/maxHeightDiu stand for the monitor
+	// (a short work area compresses the week rows); tones renders a given theme (default: the live Start theme).
+	public ClockCalendarQaMetrics QaRenderClockCalendar(string clockPath, DateTime sample, double widthDiu = 376.0, double maxHeightDiu = double.PositiveInfinity, (System.Windows.Media.Color ThemeBase, System.Windows.Media.Color Accent, bool Seasonal)? tones = null, DateTime? selectDate = null)
 	{
 		Stopwatch total = Stopwatch.StartNew();
+		StopClockTick();
+		FrameworkElement clockContent = (FrameworkElement)ClockPopup.Child;
+		if (!ClockPopup.IsOpen && PresentationSource.FromVisual(clockContent) == null)
+		{
+			QaResumeLayout(clockContent);
+		}
 		ApplyClockCalendarTheme();
+		if (tones is { } fixedTones)
+		{
+			ApplyClockCalendarPalette(fixedTones.ThemeBase, fixedTones.Accent, fixedTones.Seasonal);
+		}
+		DateTime shownSelection = (selectDate ?? sample).Date;
 		_calendarToday = sample.Date;
-		_calendarSelection = sample.Date;
+		_calendarSelection = shownSelection;
 		_calMonth = new DateTime(sample.Year, sample.Month, 1);
 		UpdateClockDisplay(sample);
+		LayoutClockFlyout(widthDiu, maxHeightDiu);
 		BuildMonth(_calMonth);
-		ConfigureClockFlyoutSize(widthDiu, heightDiu);
-		ClockFlyoutRoot.BeginAnimation(UIElement.OpacityProperty, null);
-		ClockFlyoutSlide.BeginAnimation(TranslateTransform.XProperty, null);
-		ClockFlyoutSlide.BeginAnimation(TranslateTransform.YProperty, null);
-		ClockFlyoutRoot.Opacity = 1.0;
-		ClockFlyoutSlide.X = 0.0;
-		ClockFlyoutSlide.Y = 0.0;
-		ClockFlyoutRoot.CacheMode = null;
-		RenderDetached((FrameworkElement)ClockPopup.Child, null, clockPath);
+		SettleMonthMotion();
+		ResetFlyoutContent(ClockContent, ClockFlyoutSlide);
+		RenderDetached(clockContent, null, clockPath);
 		total.Stop();
-		LinearGradientBrush? themedBackground = base.Resources["TB.ClockBody"] as LinearGradientBrush;
-		System.Windows.Media.Color expectedThemeBottom = SoundTone(StartAccent.Color(), 0.0, 0.0, 0.12);
-		bool themeSwitchPassed = QaVerifyClockCalendarThemeSwitch();
+		Visual root = clockContent;
+		CultureInfo ci = CultureInfo.CurrentCulture;
+
+		// the grid: 7 columns, the weekday row and six week rows of R
+		double weekRow = _clockWeekRowDip;
+		bool rowsOk = MonthGrid.RowDefinitions.Count == 7 && Math.Abs(MonthGrid.RowDefinitions[0].ActualHeight - CalendarWeekdayRowDip) < 0.5
+			&& MonthGrid.RowDefinitions.Skip(1).All(r => Math.Abs(r.ActualHeight - weekRow) < 0.5);
+		List<Rect> dayRects = _calendarDayButtons.Select(b => QaRectIn(b, root)).ToList();
+		// hidden days keep their cells: their arranged rects bound the grid's fills
+		List<Rect> cells = _calendarDayButtons.Select(b =>
+		{
+			try
+			{
+				return b.TransformToAncestor(root).TransformBounds(new Rect(0.0, 0.0, b.ActualWidth, b.ActualHeight));
+			}
+			catch
+			{
+				return Rect.Empty;
+			}
+		}).Where(r => !r.IsEmpty).ToList();
+		double fillLeft = cells.Count > 0 ? cells.Min(r => r.Left) : 0.0;
+		double fillRight = cells.Count > 0 ? cells.Max(r => r.Right) : 0.0;
+		double gutter = cells.Count > 1 ? cells.Where(r => Math.Abs(r.Top - cells[0].Top) < 0.5).OrderBy(r => r.Left).Skip(1).First().Left - cells.Where(r => Math.Abs(r.Top - cells[0].Top) < 0.5).OrderBy(r => r.Left).First().Right : 0.0;
+		System.Windows.Controls.Button? selectedButton = _calendarDayButtons.FirstOrDefault(b => b.Tag is DateTime d && d == _calendarSelection);
+		System.Windows.Media.Color selection = (base.Resources["TB.ClockSelection"] as SolidColorBrush)?.Color ?? Colors.Transparent;
+		bool selectedFill = selectedButton?.Background is SolidColorBrush sb && sb.Color == selection;
+		Rect selectedRect = selectedButton != null ? QaRectIn(selectedButton, root) : Rect.Empty;
+		// the selected day's number itself (a contrast spot reads the ink there against the fill around it)
+		Rect selectedTextRect = selectedButton != null && QaFindChild<TextBlock>(selectedButton) is TextBlock dayText ? QaRectIn(dayText, root) : Rect.Empty;
+
+		// today: no outline while it is the selected day; a 1 DIP outline in the selection colour when another day is
+		_calendarSelection = _calendarToday;
+		BuildMonth(_calMonth);
+		System.Windows.Controls.Button? todayButton = _calendarDayButtons.FirstOrDefault(b => b.Tag is DateTime d && d == _calendarToday);
+		bool noOutlineWhenSelected = todayButton != null && (todayButton.BorderBrush is not SolidColorBrush tb0 || tb0.Color.A == 0);
+		DateTime other = new DateTime(sample.Year, sample.Month, sample.Day == 15 ? 16 : 15);
+		_calendarSelection = other;
+		BuildMonth(_calMonth);
+		bool outlineWhenNotSelected = todayButton != null && todayButton.BorderBrush is SolidColorBrush tb1 && tb1.Color == selection
+			&& Math.Abs(todayButton.BorderThickness.Left - 1.0) < 0.01 && todayButton.FontWeight == FontWeights.SemiBold
+			&& _calendarDayButtons.FirstOrDefault(b => b.Tag is DateTime d && d == other)?.Background is SolidColorBrush ob && ob.Color == selection;
+		_calendarSelection = shownSelection;
+		BuildMonth(_calMonth);
+
+		// month navigation keeps the height
+		double heightBefore = ClockFlyoutRoot.Height;
+		string title = MonthLabel.Text;
+		OnPrevMonth(this, new RoutedEventArgs());
+		string previousTitle = MonthLabel.Text;
+		OnNextMonth(this, new RoutedEventArgs());
+		OnNextMonth(this, new RoutedEventArgs());
+		string nextTitle = MonthLabel.Text;
+		bool heightStable = ClockFlyoutRoot.Height == heightBefore && MonthGrid.RowDefinitions.Count == 7;
+		_calMonth = new DateTime(sample.Year, sample.Month, 1);
+		BuildMonth(_calMonth);
+		SettleMonthMotion();
+		clockContent.UpdateLayout();
+
+		// the edges: header, month row, grid fills and the footer's icon column on the Action Center's 12 / 364 DIP lines
+		Rect headerRect = QaRectIn(ClockHeaderPanel, root);
+		Rect bigRect = QaRectIn(ClockBig, root);
+		Rect secondsRect = QaRectIn(ClockSeconds, root);
+		Rect navRect = QaRectIn(CalendarNav, root);
+		Rect monthRect = QaRectIn(MonthLabel, root);
+		Rect nextRect = QaRectIn(NextMonth, root);
+		Rect footerRect = QaRectIn(ClockFooterBar, root);
+		Rect gearRect = QaRectIn(ClockSettingsGear, root);
+		Rect labelRect = QaRectIn(ClockSettingsLabel, root);
+		bool baselinesShared = ClockBig.LineHeight == 40.0 && ClockSeconds.LineHeight == 40.0
+			&& ClockBig.LineStackingStrategy == LineStackingStrategy.BlockLineHeight && ClockSeconds.LineStackingStrategy == LineStackingStrategy.BlockLineHeight
+			&& ClockBig.FontFamily.Source == ClockSeconds.FontFamily.Source && !bigRect.IsEmpty && !secondsRect.IsEmpty
+			&& Math.Abs(bigRect.Top - secondsRect.Top) < 0.5 && Math.Abs(bigRect.Height - secondsRect.Height) < 0.5;
+
+		// the surface: the Action Center's tones for the same theme; the link and the selection readable
+		LinearGradientBrush? body = base.Resources["TB.ClockBody"] as LinearGradientBrush;
+		System.Windows.Media.Color bodyTop = body?.GradientStops.Count > 0 ? body.GradientStops[0].Color : Colors.Transparent;
+		System.Windows.Media.Color bodyBottom = body?.GradientStops.Count > 1 ? body.GradientStops[^1].Color : Colors.Transparent;
+		System.Windows.Media.Color footer = (base.Resources["TB.ClockFooter"] as SolidColorBrush)?.Color ?? Colors.Transparent;
+		System.Windows.Media.Color link = (base.Resources["TB.ClockLink"] as SolidColorBrush)?.Color ?? Colors.Transparent;
+		System.Windows.Media.Color border = (base.Resources["TB.ClockBorder"] as SolidColorBrush)?.Color ?? Colors.Transparent;
+		System.Windows.Media.Color dayInk = (base.Resources["TB.DaySelectedInk"] as SolidColorBrush)?.Color ?? NormalDaySelectedInk;
+		System.Windows.Media.Color secondaryInk = (base.Resources["TB.FlyoutSecondaryInk"] as SolidColorBrush)?.Color ?? Colors.White;
+		System.Windows.Media.Color ink = (base.Resources["TB.Ink"] as SolidColorBrush)?.Color ?? Colors.White;
+		FlyoutPalette.ReadTheme(out System.Windows.Media.Color themeBase, out System.Windows.Media.Color accent, out bool seasonal);
+		ActionCenterTones expected = tones is { } given ? ActionCenter.NormalTones(given.ThemeBase, given.Accent, given.Seasonal) : ActionCenter.NormalTones(themeBase, accent, seasonal);
+		bool themeSynced = !s_restTones && bodyTop == expected.BodyTop && bodyBottom == expected.BodyBottom && footer == expected.Footer
+			&& border == expected.Border && link == expected.Link;
+		double MinOn(System.Windows.Media.Color fg, params System.Windows.Media.Color[] grounds) => grounds.Min(g => FlyoutPalette.Contrast(FlyoutPalette.Flatten(fg, g), g));
+		double linkContrast = MinOn(link, bodyTop, bodyBottom, footer);
+		double selectionContrast = FlyoutPalette.Contrast(FlyoutPalette.Flatten(dayInk, selection), selection);
+		double secondaryContrast = MinOn(secondaryInk, bodyTop, bodyBottom, footer);
+		double inkFooterContrast = MinOn(ink, footer);
+		double selectionOnBody = Math.Min(FlyoutPalette.Contrast(selection, bodyTop), FlyoutPalette.Contrast(selection, bodyBottom));
+		bool themeSwitchPassed = QaVerifyClockCalendarThemeSwitch(out bool seasonalBody);
+
+		// the motion contract: the frame never moves or fades; only the content does
+		bool frameStatic = ClockFlyoutRoot.Opacity == 1.0 && (ClockFlyoutRoot.RenderTransform == null || ClockFlyoutRoot.RenderTransform.Value.IsIdentity)
+			&& ReferenceEquals(ClockContent.RenderTransform, ClockFlyoutSlide);
+		FlyoutPrepare(ClockContent, ClockFlyoutSlide);
+		bool prepareTouchesContentOnly = ClockFlyoutRoot.Opacity == 1.0 && ClockContent.Opacity == (Motion.Enabled ? 0.0 : 1.0);
+		ResetFlyoutContent(ClockContent, ClockFlyoutSlide);
+
 		return new ClockCalendarQaMetrics
 		{
-			WidthDiu = ClockFlyoutRoot.Width,
-			HeightDiu = ClockFlyoutRoot.Height,
+			WidthDiu = ClockFlyoutRoot.ActualWidth,
+			HeightDiu = ClockFlyoutRoot.ActualHeight,
+			ExpectedHeightDiu = ClockFixedDip + 6.0 * weekRow,
+			MaxHeightDiu = double.IsInfinity(maxHeightDiu) ? 0.0 : maxHeightDiu,
+			WeekRowDiu = weekRow,
 			CalendarColumns = MonthGrid.ColumnDefinitions.Count,
 			CalendarRows = MonthGrid.RowDefinitions.Count,
+			CalendarRowsExact = rowsOk,
 			DayVisuals = _calendarDayButtons.Length,
 			VisibleDays = _calendarDayButtons.Count(button => button.Visibility == Visibility.Visible),
 			SelectedDate = _calendarSelection.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
-			MonthTitle = MonthLabel.Text,
+			SelectedFillIsSelection = selectedFill,
+			SelectedDayRect = selectedRect,
+			SelectedDayTextRect = selectedTextRect,
+			NoTodayOutlineWhenSelected = noOutlineWhenSelected,
+			TodayOutlineWhenNotSelected = outlineWhenNotSelected,
+			MonthTitle = title,
+			PreviousMonthTitle = previousTitle,
+			NextMonthTitle = nextTitle,
+			ExpectedPreviousTitle = sample.AddMonths(-1).ToString("MMMM yyyy", ci),
+			ExpectedNextTitle = sample.AddMonths(1).ToString("MMMM yyyy", ci),
+			HeightStableAcrossMonths = heightStable,
 			ClockText = ClockBig.Text + ":" + ClockSeconds.Text,
-			ThemeBackgroundSynchronized = themedBackground?.GradientStops.Count == 2
-				&& themedBackground.GradientStops[1].Color == expectedThemeBottom,
+			TimeBaselinesShared = baselinesShared,
+			TypographyTwelve = QaTextIsTwelve(clockContent, ClockBig, ClockSeconds) && _calendarDayButtons.All(b => Math.Abs(b.FontSize - 12.0) < 0.01)
+				&& ClockBig.FontSize == 32.0 && ClockSeconds.FontSize == 15.0,
+			HeaderLeftDiu = bigRect.IsEmpty ? 0.0 : bigRect.Left,
+			HeaderRightDiu = headerRect.IsEmpty ? 0.0 : headerRect.Right,
+			NavLeftDiu = monthRect.IsEmpty ? 0.0 : monthRect.Left,
+			NavRightDiu = nextRect.IsEmpty ? 0.0 : nextRect.Right,
+			NavHeightDiu = navRect.Height,
+			GridFillLeftDiu = fillLeft,
+			GridFillRightDiu = fillRight,
+			GutterDiu = gutter,
+			FooterRect = footerRect,
+			FooterGearRect = gearRect,
+			FooterLabelLeftDiu = labelRect.IsEmpty ? 0.0 : labelRect.Left,
+			BodyTop = bodyTop.ToString(CultureInfo.InvariantCulture),
+			BodyBottom = bodyBottom.ToString(CultureInfo.InvariantCulture),
+			FooterColor = footer.ToString(CultureInfo.InvariantCulture),
+			BorderColor = border.ToString(CultureInfo.InvariantCulture),
+			LinkColor = link.ToString(CultureInfo.InvariantCulture),
+			ValueInkColor = ((base.Resources["TB.FlyoutValueInk"] as SolidColorBrush)?.Color ?? Colors.White).ToString(CultureInfo.InvariantCulture),
+			SecondaryInkColor = secondaryInk.ToString(CultureInfo.InvariantCulture),
+			LinkIsPanelLink = link == expected.Link,
+			LinkContrast = linkContrast,
+			SelectionColor = selection.ToString(CultureInfo.InvariantCulture),
+			SelectionContrast = selectionContrast,
+			SelectionOnBodyContrast = selectionOnBody,
+			SecondaryInkContrast = secondaryContrast,
+			InkOnFooterContrast = inkFooterContrast,
+			ThemeBackgroundSynchronized = themeSynced,
 			ThemeSwitchPassed = themeSwitchPassed,
+			SeasonalBodyPassed = seasonalBody,
 			ThemeAccent = "#" + StartAccent.Color().ToString(CultureInfo.InvariantCulture).TrimStart('#'),
+			FrameStatic = frameStatic,
+			PrepareTouchesContentOnly = prepareTouchesContentOnly,
+			BodyProbe = QaFlyoutBodyProbe("clock"),
 			InitialVisualBuildMs = _clockCalendarBuildMs,
 			RenderAndLayoutMs = total.ElapsedMilliseconds,
 			TimerActiveDuringDetachedRender = _clockTick?.IsEnabled == true,
@@ -8467,25 +9970,36 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		};
 	}
 
-	private bool QaVerifyClockCalendarThemeSwitch()
+	// A red theme and a blue one give different bodies (nothing hard-coded); a season keeps its base hue for the whole body.
+	private bool QaVerifyClockCalendarThemeSwitch(out bool seasonalBody)
 	{
+		bool rest = s_restTones;
 		try
 		{
+			s_restTones = false;
 			System.Windows.Media.Color red = System.Windows.Media.Color.FromRgb(196, 32, 40);
 			System.Windows.Media.Color blue = System.Windows.Media.Color.FromRgb(0, 114, 198);
 			ApplyClockCalendarPalette(red, red);
 			System.Windows.Media.Color redBottom = ((LinearGradientBrush)base.Resources["TB.ClockBody"]).GradientStops[1].Color;
-			System.Windows.Media.Color redHeader = ((SolidColorBrush)base.Resources["TB.ClockHeader"]).Color;
+			System.Windows.Media.Color redSelection = ((SolidColorBrush)base.Resources["TB.ClockSelection"]).Color;
 			ApplyClockCalendarPalette(blue, blue);
 			System.Windows.Media.Color blueBottom = ((LinearGradientBrush)base.Resources["TB.ClockBody"]).GradientStops[1].Color;
-			System.Windows.Media.Color blueHeader = ((SolidColorBrush)base.Resources["TB.ClockHeader"]).Color;
+			System.Windows.Media.Color blueSelection = ((SolidColorBrush)base.Resources["TB.ClockSelection"]).Color;
+			System.Windows.Media.Color pine = System.Windows.Media.Color.FromRgb(0x0B, 0x3D, 0x2C);
+			System.Windows.Media.Color holly = System.Windows.Media.Color.FromRgb(0xC8, 0x10, 0x2E);
+			ApplyClockCalendarPalette(pine, holly, seasonal: true);
+			LinearGradientBrush season = (LinearGradientBrush)base.Resources["TB.ClockBody"];
+			ActionCenterTones want = ActionCenter.NormalTones(pine, holly, seasonal: true);
+			seasonalBody = season.GradientStops[0].Color == want.BodyTop && season.GradientStops[1].Color == want.BodyBottom
+				&& season.GradientStops[0].Color == FlyoutPalette.Tone(pine, 0.0, 0.0, 0.26);
 			return redBottom != blueBottom
-				&& redHeader != blueHeader
+				&& redSelection != blueSelection
 				&& redBottom.R > redBottom.B
 				&& blueBottom.B > blueBottom.R;
 		}
 		finally
 		{
+			s_restTones = rest;
 			ApplyClockCalendarTheme();
 		}
 	}

@@ -1586,12 +1586,12 @@ public partial class App : System.Windows.Application
 		}
 		if (clockCalendarTest)
 		{
-			ClockCalendarDiagnostics.Begin(this);
+			ClockCalendarDiagnostics.Begin(this, e.Args);
 			return;
 		}
 		if (soundFlyoutTest)
 		{
-			SoundFlyoutDiagnostics.Begin(this);
+			SoundFlyoutDiagnostics.Begin(this, e.Args);
 			return;
 		}
 		if (networkFlyoutTest)
@@ -3573,6 +3573,8 @@ public partial class App : System.Windows.Application
 		});
 		// Presses on any bar's Action Center button belong to ActionCenter.Toggle, never to its light-dismiss.
 		ActionCenter.IsToggleButtonAt = (int x, int y) => _taskbar?.HitsActionCenterButton(x, y) == true;
+		// The clock and volume flyouts share the Action Center's place at the tray end: they close (no animation) before it shows.
+		ActionCenter.BeforeShow = () => _taskbar?.CloseTrayFlyouts(animate: false);
 		// Presses on a Start button (the launcher's or the native one) belong to the Win7 Start toggle, never to its light dismiss.
 		Win7StartMenu.IsStartButtonAt = (int x, int y) => _taskbar?.HitsStartButton(x, y) == true || _winHook?.HitsNativeStartButtonSnapshot(x, y) == true;
 		_winHook.GlobalLeftDown += delegate(int x, int y, int downTime)
@@ -3598,6 +3600,12 @@ public partial class App : System.Windows.Application
 		_winHook.GlobalMouseWheel += delegate(int x, int y, int delta)
 		{
 			return _taskbar?.TryRouteGlobalFlyoutMouseWheel(x, y, delta) == true;
+		};
+		// The clock and volume flyouts never take the foreground: their keys (Escape, the arrows, PageUp / PageDown, Home)
+		// come from the hook while one is open.
+		_winHook.GlobalFlyoutKey += delegate(int vk)
+		{
+			return _taskbar?.TryRouteGlobalFlyoutKey(vk) == true;
 		};
 		_winHook.DesktopRightClick += delegate(int x, int y)
 		{

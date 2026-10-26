@@ -345,6 +345,21 @@ public sealed class WinKeyHook : IDisposable
 
 	public event Func<int, int, int, bool>? GlobalMouseWheel;
 
+	// The keys of an open tray flyout (the clock and volume flyouts never take the foreground, so the keyboard reaches them
+	// only through here). Raised on the hook thread with the key's vk (Escape, PageUp, PageDown, End, Home or an arrow,
+	// pressed with no Ctrl, Alt, Shift or Win); true = the flyout took it, and neither the press nor its release reaches the
+	// focused app.
+	public event Func<int, bool>? GlobalFlyoutKey;
+
+	// The flyout keys (bit vk - VK_ESCAPE) held by a press a flyout took (their repeats and releases are swallowed too), and
+	// those held by a press the app got (their repeats are never offered to a flyout).
+	private int _flyoutKeyUps;
+
+	private int _appKeyDowns;
+
+	// RouteFlyoutKey as one delegate (no allocation per key event).
+	private readonly Func<int, bool> _routeFlyoutKey;
+
 	public event Action<int, int>? DesktopRightClick;
 
 	public event Action? VolumeUp;
@@ -358,6 +373,7 @@ public sealed class WinKeyHook : IDisposable
 		PerfProbe.Refuse("WinKeyHook");
 		_kbProc = KeyboardCallback;
 		_mouseProc = MouseCallback;
+		_routeFlyoutKey = RouteFlyoutKey;
 		_thread = new Thread(HookThread)
 		{
 			IsBackground = true,
@@ -610,6 +626,11 @@ public sealed class WinKeyHook : IDisposable
 					{
 						LastTriggerTs = Stopwatch.GetTimestamp();
 						Raise(WinTapped);
+						return 1;
+					}
+					// an open tray flyout's keys
+					if (FlyoutKeyStep(ref _flyoutKeyUps, ref _appKeyDowns, info.vkCode, isDown, isUp, _winDown, _routeFlyoutKey))
+					{
 						return 1;
 					}
 					if (isDown && _winDown)
@@ -1046,6 +1067,59 @@ public sealed class WinKeyHook : IDisposable
 			};
 		}
 		_startRects.Add(r);
+	}
+
+	// The flyout keys' bookkeeping (pure, so QA can drive it): true = swallow this event. Only Escape and PageUp to Down
+	// (0x1B, 0x21-0x28) are offered, never while Win is held. A press the flyout takes is its own, repeats and release
+	// included; a press the app got stays the app's until it is released, so a held key never changes hands and the app never
+	// misses a release. A repeat the flyout no longer takes (it closed) goes to the app as a fresh press, its release with it.
+	internal static bool FlyoutKeyStep(ref int flyoutKeyUps, ref int appKeyDowns, int vk, bool isDown, bool isUp, bool winDown, Func<int, bool> route)
+	{
+		if (vk != VK_ESCAPE && (vk < 0x21 || vk > 0x28))
+		{
+			return false;
+		}
+		int bit = 1 << (vk - VK_ESCAPE);
+		if (isDown)
+		{
+			if ((appKeyDowns & bit) == 0 && !winDown && route(vk))
+			{
+				flyoutKeyUps |= bit;
+				return true;
+			}
+			flyoutKeyUps &= ~bit;
+			appKeyDowns |= bit;
+			return false;
+		}
+		if (isUp)
+		{
+			appKeyDowns &= ~bit;
+			if ((flyoutKeyUps & bit) != 0)
+			{
+				flyoutKeyUps &= ~bit;
+				return true;
+			}
+		}
+		return false;
+	}
+
+	// Hook thread: offers a plain key (no modifier held) to an open tray flyout; a handler that throws keeps the key native.
+	private bool RouteFlyoutKey(int vk)
+	{
+		Func<int, bool>? route = GlobalFlyoutKey;
+		if (route == null || OtherModifierHeld())
+		{
+			return false;
+		}
+		try
+		{
+			return route(vk);
+		}
+		catch (Exception ex)
+		{
+			Logger.Log("Flyout key route failed: " + ex.Message);
+			return false;
+		}
 	}
 
 	private static bool OtherModifierHeld()

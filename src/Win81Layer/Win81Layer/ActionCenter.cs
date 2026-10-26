@@ -104,12 +104,36 @@ public sealed partial class ActionCenter : Window
 			_instance.Dismiss("toggle");
 			return;
 		}
+		// The clock and volume flyouts open where this panel does (the tray end): close them first, without animation, so the
+		// two never stack (Win+A while one of them is open).
+		try
+		{
+			BeforeShow?.Invoke();
+		}
+		catch (Exception ex)
+		{
+			Logger.Log("Action Center: closing the tray flyouts failed: " + ex.Message);
+		}
 		ActionCenter ac = _instance ?? (_instance = new ActionCenter());
 		ac._screen = screen;
 		ac._edge = NormalizeEdge(edge);
 		ac._barPx = barPx is { IsEmpty: false } ? barPx : null;
 		ac._via = fromKeyboard || screen == null ? "Win+A" : "taskbar";
 		ac.ShowPanel();
+	}
+
+	// Set once by App: closes every taskbar's clock and volume flyouts (no animation) before the panel shows.
+	internal static Action? BeforeShow;
+
+	// The clock and volume flyouts call this when they open (they share the panel's place at the tray end). A panel that is
+	// already closing is left to finish.
+	internal static void DismissIfOpen()
+	{
+		ActionCenter? ac = _instance;
+		if (ac != null && ac.CheckAccess() && ac.IsVisible && !ac._dismissing)
+		{
+			ac.Dismiss("tray flyout opened");
+		}
 	}
 
 	internal static void Prewarm()

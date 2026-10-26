@@ -651,7 +651,8 @@ public sealed partial class ActionCenter
 		};
 	}
 
-	private static FrameworkElement CreateVolumeGlyph(int waves, bool muted, double size)
+	// Shared with the tray's volume flyout (its master and app rows), so the speaker is one vector everywhere.
+	internal static FrameworkElement CreateVolumeGlyph(int waves, bool muted, double size)
 	{
 		Canvas canvas = new Canvas { Width = 24.0, Height = 24.0, SnapsToDevicePixels = true };
 		canvas.Children.Add(CreateFillPath("M 2,9.2 L 6.2,9.2 L 11,4.8 L 11,19.2 L 6.2,14.8 L 2,14.8 Z"));
@@ -1435,19 +1436,8 @@ public sealed partial class ActionCenter
 			ApplyRestPalette();
 			return;
 		}
-		System.Windows.Media.Color accent = StartAccent.Color();
-		System.Windows.Media.Color themeBase = accent;
-		bool seasonal = false;
-		try
-		{
-			AppSettings settings = SettingsStore.Load();
-			if (settings.StartBgMode == "pattern" && !string.IsNullOrWhiteSpace(settings.StartBgColor))
-			{
-				themeBase = StartBackgroundFactory.Parse(settings.StartBgColor, accent);
-				seasonal = !string.IsNullOrEmpty(settings.SeasonalActive) || SeasonalArt.IsSeasonalPattern(settings.StartPattern);
-			}
-		}
-		catch { }
+		// the one theme rule of the tray-end panels (the clock and volume flyouts read the same)
+		FlyoutPalette.ReadTheme(out System.Windows.Media.Color themeBase, out System.Windows.Media.Color accent, out bool seasonal);
 		ApplyMetroPalette(themeBase, accent, seasonal);
 	}
 
@@ -1639,7 +1629,8 @@ public sealed partial class ActionCenter
 		"<Track.IncreaseRepeatButton><RepeatButton Command=\"ScrollBar.PageDownCommand\" Opacity=\"0\" Focusable=\"False\"/></Track.IncreaseRepeatButton>" +
 		"</Track></Grid></ControlTemplate>";
 
-	private static FrameworkElement CreateMetroIcon(string id, double size)
+	// Also the volume flyout's device glyphs (the "project" monitor for a display output).
+	internal static FrameworkElement CreateMetroIcon(string id, double size)
 	{
 		Canvas canvas = new Canvas { Width = 24.0, Height = 24.0, SnapsToDevicePixels = true };
 		void stroke(string data, double thickness = 1.6) => canvas.Children.Add(CreateStrokePath(data, thickness));

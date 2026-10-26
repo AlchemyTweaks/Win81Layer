@@ -270,6 +270,15 @@ public sealed class TaskbarManager
 		}
 	}
 
+	// Every bar's clock and volume flyouts (they open where the Action Center does, at the tray end).
+	internal void CloseTrayFlyouts(bool animate)
+	{
+		foreach (TaskbarWindow b in _bars)
+		{
+			try { b.CloseTrayFlyouts(animate); } catch (Exception ex) { Logger.Log("Closing the tray flyouts failed: " + ex.Message); }
+		}
+	}
+
 	public bool HitsActionCenterButton(int x, int y)
 	{
 		foreach (TaskbarWindow b in _bars)
@@ -332,6 +341,19 @@ public sealed class TaskbarManager
 		foreach (TaskbarWindow bar in Volatile.Read(ref _wheelRouteBars))
 		{
 			if (bar.TryRouteGlobalFlyoutMouseWheel(x, y, delta))
+			{
+				return true;
+			}
+		}
+		return false;
+	}
+
+	// Hook thread: a key for the bar whose clock or volume flyout is open.
+	public bool TryRouteGlobalFlyoutKey(int vk)
+	{
+		foreach (TaskbarWindow bar in Volatile.Read(ref _wheelRouteBars))
+		{
+			if (bar.TryRouteGlobalFlyoutKey(vk))
 			{
 				return true;
 			}

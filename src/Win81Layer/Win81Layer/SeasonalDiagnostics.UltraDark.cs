@@ -631,7 +631,9 @@ internal static partial class SeasonalDiagnostics
 			return b is GradientBrush g && stop < g.GradientStops.Count ? g.GradientStops[stop].Color : (b as SolidColorBrush)?.Color ?? Colors.Magenta;
 		}
 		Pair("flyout ink/body", Res("TB.Ink"), Res("TB.ClockBody"), 4.5);
-		Pair("flyout ink/header", Res("TB.Ink"), Res("TB.ClockHeader"), 4.5);
+		Pair("flyout ink/footer", Res("TB.Ink"), Res("TB.ClockFooter"), 4.5);
+		Pair("flyout secondary ink/body", Res("TB.FlyoutSecondaryInk"), Res("TB.ClockBody"), 4.5);
+		Pair("flyout link/footer", Res("TB.ClockLink"), Res("TB.ClockFooter"), 4.5);
 		Pair("flyout link/body", Res("TB.ClockLink"), Res("TB.ClockBody", 1), 4.5);
 		Pair("flyout today/body", Res("TB.ClockSelection"), Res("TB.ClockBody"), 3.0);
 		Pair("selected day ink/flyout today", Res("TB.DaySelectedInk"), Res("TB.ClockSelection"), 4.5);
@@ -1040,7 +1042,7 @@ internal static partial class SeasonalDiagnostics
 		yield return ("osd-rest.png", none);
 		yield return ("flyout-clock-rest.png", none);
 		// the app cards' logos left out (a lifted dark logo is light by design)
-		yield return ("flyout-volume-rest.png", new Int32Rect[1] { new Int32Rect(14, 415, 52, 140) });
+		yield return ("flyout-volume-rest.png", new Int32Rect[1] { _restVolumeLogos });
 		yield return ("flyout-network-rest.png", none);
 		// the hub tiles at the top of the page carry large tile glyphs (left out like the preview tiles)
 		yield return ("pcsettings-rest-devices.png", new Int32Rect[1] { new Int32Rect(360, 94, 770, 150) });
@@ -1129,7 +1131,8 @@ internal static partial class SeasonalDiagnostics
 				Spot("action center tile " + what, "actioncenter-rest.png", R32(t.LabelRect.X, t.LabelRect.Y, t.LabelRect.Width, t.LabelRect.Height), R32(t.TileRect.X + 32.0, t.TileRect.Y + 8.0, 16.0, 14.0), 4.5);
 			}
 		}
-		Spot("clock digits", "flyout-clock-rest.png", new Int32Rect(20, 20, 200, 60), new Int32Rect(240, 10, 80, 30), 4.5);
+		// the compact clock: the time at x = 12 on the 40 DIP line under the 12 DIP top padding, the empty header right of it
+		Spot("clock digits", "flyout-clock-rest.png", new Int32Rect(12, 13, 120, 40), new Int32Rect(240, 14, 100, 30), 4.5);
 		// the QA menu at (20, 20): 1 px border, 3 px padding, 32 px rows (row tops 24, 56, 88; separator 120-127; the keyboard
 		// row 127-159), text from x = 50
 		Spot("menu item", "contextmenu-rest.png", new Int32Rect(50, 30, 120, 20), new Int32Rect(170, 28, 40, 24), 4.5);
@@ -1143,7 +1146,10 @@ internal static partial class SeasonalDiagnostics
 		// the review follow-ups: the selected calendar day, the zoomed-out group name,
 		// the hollow OSD segments, the outline of a plain button and of a slider's remainder, and the open category of
 		// PC Settings (its fill against the navigation pane and its ink on it)
-		Spot("clock selected day", "flyout-clock-rest.png", new Int32Rect(66, 398, 32, 30), new Int32Rect(66, 398, 32, 30), 4.5);
+		// the compact calendar's 12 px number: its own text box against the selection fill around it
+		Rect day = _restClockSelectedDay;
+		Rect dayText = _restClockSelectedDayText.IsEmpty ? day : _restClockSelectedDayText;
+		Spot("clock selected day", "flyout-clock-rest.png", R32(dayText.X, dayText.Y, Math.Max(1.0, dayText.Width), Math.Max(1.0, dayText.Height)), R32(day.X + 3.0, day.Y + 3.0, Math.Max(1.0, day.Width - 6.0), Math.Max(1.0, day.Height - 6.0)), 4.5);
 		Spot("zoom group name", "start-rest-zoom.png", new Int32Rect(370, 384, 80, 20), new Int32Rect(470, 384, 80, 20), 4.5);
 		Spot("osd empty outline", "osd-rest.png", new Int32Rect(240, 12, 30, 20), new Int32Rect(247, 15, 8, 10), 3.0);
 		Spot("button outline", "controls-rest.png", new Int32Rect(240, 559, 70, 6), new Int32Rect(240, 540, 70, 8), 3.0);

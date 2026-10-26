@@ -689,8 +689,8 @@ internal static partial class SeasonalDiagnostics
 		f.Charms.QaRender(P("charms"));
 		f.Osd.QaRenderCard(P("osd"));
 		f.Pc.QaRender(P("pcsettings"), "PC & devices", 1366.0, 768.0);
-		f.Taskbar.QaRenderClockCalendar(P("flyout-clock"), FlyoutSample, 304.0, 444.0);
-		f.Taskbar.QaRenderSoundFlyout(P("flyout-volume"), 376.0, 480.0);
+		f.Taskbar.QaRenderClockCalendar(P("flyout-clock"), FlyoutSample);
+		f.Taskbar.QaRenderSoundFlyout(P("flyout-volume"), probes: false);
 		f.Taskbar.QaRenderNetworkFlyout(P("flyout-network"), QaNetState, QaLocalNet, "203.0.113.42", 376.0, 444.0);
 		start.QaRenderSeason(P("start-apps"), 1920.0, 1080.0, withAmbient: true, allApps: true);
 		start.QaRenderPersonalize(P("personalize"));
@@ -1028,7 +1028,10 @@ internal static partial class SeasonalDiagnostics
 	private static void RestFlyouts(string outDir, TaskbarWindow taskbar)
 	{
 		string clock = Path.Combine(outDir, "flyout-clock-rest.png");
-		taskbar.QaRenderClockCalendar(clock, FlyoutSample, 304.0, 444.0);
+		ClockCalendarQaMetrics clockMetrics = taskbar.QaRenderClockCalendar(clock, FlyoutSample);
+		_restClockSelectedDay = clockMetrics.SelectedDayRect;
+		_restClockSelectedDayText = clockMetrics.SelectedDayTextRect;
+		Rect clockProbe = clockMetrics.BodyProbe;
 		// the rest tone rule, read back from the brushes the flyout theme wrote
 		List<string> bad = new List<string>();
 		List<string> got = new List<string>();
@@ -1046,7 +1049,6 @@ internal static partial class SeasonalDiagnostics
 		}
 		Want("TB.ClockBody", 0, "#FF0F0F0F");
 		Want("TB.ClockBody", 1, "#FF0A0A0A");
-		Want("TB.ClockHeader", 0, "#FF141414");
 		Want("TB.ClockFooter", 0, "#FF0A0A0A");
 		Want("TB.ClockBorder", 0, "#FF4D4D4D");
 		Want("TB.ClockLink", 0, "#FF9ABAC1");
@@ -1055,6 +1057,7 @@ internal static partial class SeasonalDiagnostics
 		Want("TB.FlyoutBg", 0, "#F20F0F0F");
 		string volume = Path.Combine(outDir, "flyout-volume-rest.png");
 		RestVolumeRender(volume, taskbar);
+		Rect volumeProbe = taskbar.QaFlyoutBodyProbe("volume");
 		string network = Path.Combine(outDir, "flyout-network-rest.png");
 		taskbar.QaRenderNetworkFlyout(network, QaNetState, QaLocalNet, "203.0.113.42", 376.0, 444.0);
 		Want("TB.NetworkState", 0, "#FF141414");
@@ -1067,10 +1070,17 @@ internal static partial class SeasonalDiagnostics
 		Check("rest-flyout-tones", bad.Count == 0, bad.Count == 0 ? string.Join(" ", got) : string.Join(" ; ", bad) + " | " + string.Join(" ", got));
 		List<string> bodies = new List<string>();
 		bool dark = true;
-		foreach (string path in new string[3] { clock, volume, network })
+		// the body's left padding strip (the body background itself: the compact clock and volume flyouts report theirs; the
+		// network flyout's below its header)
+		foreach ((string path, Rect probe) in new (string, Rect)[3] { (clock, clockProbe), (volume, volumeProbe), (network, new Rect(1.0, 160.0, 11.0, 200.0)) })
 		{
-			// the body's left margin below the header (the body background itself; the tiles are checked by the tones)
-			RegionStats body = Region(path, 1, 160, 11, 200);
+			if (probe.IsEmpty)
+			{
+				bodies.Add(Path.GetFileName(path) + ": no body probe");
+				dark = false;
+				continue;
+			}
+			RegionStats body = Region(path, (int)Math.Round(probe.X), (int)Math.Round(probe.Y), Math.Max(1, (int)Math.Round(probe.Width)), Math.Max(1, (int)Math.Round(probe.Height)));
 			bodies.Add(Path.GetFileName(path) + ": " + body);
 			dark &= body.L <= 0.07 && body.S <= 0.05;
 		}

@@ -341,6 +341,13 @@ internal static partial class SeasonalDiagnostics
 
     private static Rect _restVolumeCard;
 
+    // The compact flyouts' rendered geometry the Dark rest checks need: the selected calendar day and the app logos' column.
+    private static Rect _restClockSelectedDay;
+
+    private static Rect _restClockSelectedDayText;
+
+    private static Int32Rect _restVolumeLogos = new Int32Rect(12, 0, 32, 1);
+
     private static Rect _restSwitcherSelected;
 
     // The renders (made before the glare census, which includes them).
@@ -418,13 +425,20 @@ internal static partial class SeasonalDiagnostics
         }
     }
 
-    // Called from RestFlyouts: the volume flyout tall enough for its app cards, a second app with a black logo.
+    // Called from RestFlyouts: the volume flyout with both sections open (the input rows and the app rows), a second app with
+    // a black logo.
     private static void RestVolumeRender(string path, TaskbarWindow taskbar)
     {
-        taskbar.QaRenderSoundFlyout(path, 376.0, 760.0, null, GlyphIcon(Colors.Black));
+        taskbar.QaRenderSoundFlyout(path, expandInputs: true, expandApps: true, qaSessionIcon: GlyphIcon(Colors.Black), probes: false);
         _restVolumeDefault = taskbar.QaVolumeRowBounds(capture: false, 0);
         _restVolumeOther = taskbar.QaVolumeRowBounds(capture: true, 1);
         _restVolumeCard = taskbar.QaVolumeSessionBounds(1);
+        Rect first = taskbar.QaVolumeSessionBounds(0);
+        if (!first.IsEmpty && !_restVolumeCard.IsEmpty)
+        {
+            // the app rows' icon column (a lifted dark logo is light by design)
+            _restVolumeLogos = new Int32Rect((int)first.Left + 11, (int)first.Top, 32, (int)Math.Ceiling(_restVolumeCard.Bottom - first.Top));
+        }
     }
 
     // Called from RestPanes: the switcher with an entry selected by the keyboard.
@@ -441,9 +455,9 @@ internal static partial class SeasonalDiagnostics
     private static void RestStatesChecks(string outDir, StartScreen start, AppSettings real, RestFixtures f)
     {
         string P(string name) => Path.Combine(outDir, name);
-        // the volume flyout: the device rows are drawn, the default one in the selection fill and the others on a dark
-        // field with the control outline (the two apart by 3:1 or more), each name 4.5:1 on its row, and the dark logo of
-        // an app card lifted (3:1 or more against its plate)
+        // the volume flyout (both sections open): the device rows are drawn on the near-black body, the tick only on the
+        // default one (3:1 or more; nothing in the other row's tick column), each name 4.5:1 on the body, and the dark logo
+        // of an app row lifted (3:1 or more against the body)
         {
             string vol = P("flyout-volume-rest.png");
             List<string> bad = new List<string>();
@@ -456,23 +470,24 @@ internal static partial class SeasonalDiagnostics
             }
             else
             {
-                Color dFill = Px(vol, (int)(d.Right - 30), (int)(d.Top + 8));
-                Color oFill = Px(vol, (int)(o.Right - 60), (int)(o.Top + 6));
-                Color oEdge = Px(vol, (int)o.Left, (int)(o.Top + o.Height / 2));
-                Color body = Px(vol, (int)o.Left - 6, (int)(o.Top + o.Height / 2));
-                double dName = ContrastIn(vol, R(d, 61, 6, 150, 16), R(d, d.Width - 40, 4, 20, 8));
-                double oName = ContrastIn(vol, R(o, 61, 6, 150, 16), R(o, o.Width - 70, 4, 20, 8));
-                (double ir, double ig, double ib) = RegionAverage(vol, (int)(c.Left + 20), (int)(c.Top + 27), 8, 8);
+                // a row: 11 DIP padding, [32 icon | 8 | name | 24 tick]; the body shows in the left padding
+                Int32Rect Pad(Rect r) => R(r, 1, 4, 8, r.Height - 8);
+                Int32Rect TickColumn(Rect r) => R(r, r.Width - 11 - 24 + 4, 8, 16, r.Height - 16);
+                Color body = Px(vol, (int)(o.Left + 4), (int)(o.Top + o.Height / 2));
+                double dTick = ContrastIn(vol, TickColumn(d), Pad(d));
+                double oTick = ContrastIn(vol, TickColumn(o), Pad(o));
+                double dName = ContrastIn(vol, R(d, 51, 8, 140, 16), Pad(d));
+                double oName = ContrastIn(vol, R(o, 51, 8, 140, 16), Pad(o));
+                (double ir, double ig, double ib) = RegionAverage(vol, (int)(c.Left + 21), (int)(c.Top + 18), 3, 3);
                 Color icon = Color.FromRgb((byte)ir, (byte)ig, (byte)ib);
-                Color plate = Px(vol, (int)(c.Left + 3), (int)(c.Top + 3));
-                if (!Near(dFill, DarkRestPalette.AccentFillColor, 2)) bad.Add("default row fill " + Hex(dFill));
-                if (!Near(oFill, DarkRestPalette.FieldColor, 2)) bad.Add("other row fill " + Hex(oFill));
-                if (Contrast(oEdge, body) < 3.0) bad.Add($"other row outline {Hex(oEdge)} on {Hex(body)} {Contrast(oEdge, body):F2}");
-                if (Contrast(dFill, oFill) < 3.0) bad.Add($"default vs other {Contrast(dFill, oFill):F2}");
+                Color plate = Px(vol, (int)(c.Left + 4), (int)(c.Top + 4));
+                if (body.R > 0x14 || body.G > 0x14 || body.B > 0x14) bad.Add("row body " + Hex(body));
+                if (dTick < 3.0) bad.Add($"default tick {dTick:F2}");
+                if (oTick > 1.3) bad.Add($"tick on the other row {oTick:F2}");
                 if (dName < 4.5) bad.Add($"default name {dName:F2}");
                 if (oName < 4.5) bad.Add($"other name {oName:F2}");
                 if (Contrast(icon, plate) < 3.0) bad.Add($"app logo {Hex(icon)} on {Hex(plate)} {Contrast(icon, plate):F2}");
-                Metrics["RestVolumeRows"] = $"default {Hex(dFill)} name {dName:F2}; other {Hex(oFill)} outline {Hex(oEdge)} name {oName:F2}; logo {Hex(icon)} on {Hex(plate)} {Contrast(icon, plate):F2}";
+                Metrics["RestVolumeRows"] = $"body {Hex(body)}; default tick {dTick:F2} name {dName:F2}; other tick {oTick:F2} name {oName:F2}; logo {Hex(icon)} on {Hex(plate)} {Contrast(icon, plate):F2}";
             }
             Check("rest-volume-rows", bad.Count == 0, bad.Count == 0 ? Metrics["RestVolumeRows"]?.ToString() ?? "" : string.Join(" ; ", bad));
         }

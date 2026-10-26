@@ -8,6 +8,8 @@ namespace Win81Layer;
 
 // The clock, volume and network flyouts share one motion (Motion tokens): open = a 120 ms linear fade and a 12 DIP rise
 // from the taskbar edge over 250 ms DECELERATE; close = a 100 ms linear fade and 6 DIP toward the taskbar with ACCELERATE.
+// The clock and volume flyouts pass their inner content (as the Action Center does): their frame and body appear at once
+// at full opacity, clipped, and only the content moves and fades. The network flyout still passes its whole root.
 // No scale and no BitmapCache (the scale cost about 1.4x CPU per frame and the cache saved nothing consistently). Calm
 // motion travels half as far (6 DIP in, 3 DIP out); Off shows and hides at once. One-shot clocks over exact base values.
 public partial class TaskbarWindow
@@ -192,8 +194,11 @@ public partial class TaskbarWindow
 		if (want == Visibility.Visible)
 		{
 			// the fade stops where the scrollbar's track starts: whatever the viewport and the padding leave of the width
-			// (the track is wider than its 14 DIP style when the system scrollbar minimum applies)
-			double right = scroll.ActualWidth - scroll.ViewportWidth - scroll.Padding.Left - scroll.Padding.Right;
+			// (the track is wider than its 14 DIP style when the system scrollbar minimum applies); the volume body's slim
+			// bar lies over its content, 10 DIP at the right edge
+			double right = ReferenceEquals(scroll, VolumeBodyScroll)
+				? (scroll.ComputedVerticalScrollBarVisibility == Visibility.Visible ? 10.0 : 0.0)
+				: scroll.ActualWidth - scroll.ViewportWidth - scroll.Padding.Left - scroll.Padding.Right;
 			right = double.IsNaN(right) || right < 0.0 ? 14.0 : right;
 			if (Math.Abs(fade.Margin.Right - right) > 0.1)
 			{
