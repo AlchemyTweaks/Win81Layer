@@ -18,7 +18,9 @@ internal static class Keystroke
 	[DllImport("user32.dll")]
 	private static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, nuint dwExtraInfo);
 
-	internal static void Chord(params byte[] vks)
+	// Presses the keys in order and releases them in reverse. False when the input could not be sent (callers with a
+	// fallback, such as the Action Center's Win+N and Win+K tiles, then use it).
+	internal static bool Chord(params byte[] vks)
 	{
 		try
 		{
@@ -30,10 +32,12 @@ internal static class Keystroke
 			{
 				keybd_event(vks[i2], 0, 2u, UIntPtr.Zero);
 			}
+			return true;
 		}
 		catch (Exception ex)
 		{
 			Logger.Log("Keystroke: " + ex.Message);
+			return false;
 		}
 	}
 }

@@ -979,7 +979,8 @@ public sealed class AppSwitcher : Window
 		{
 			bool flag = !_state.IsPinned(exe);
 			_state.TogglePin(exe);
-			ToastService.Show(icon, "App switcher", flag ? "Pinned" : "Unpinned", flag ? (title + " stays at the top of the switcher.") : (title + " removed from favourites."));
+			// log only: the pin glyph and the new order are the visible feedback (the launcher shows no toasts of its own)
+			Logger.Log("App switcher: '" + title + "' " + (flag ? "pinned" : "unpinned"));
 			RebuildNow();
 		};
 		StackPanel rightButtons = new StackPanel

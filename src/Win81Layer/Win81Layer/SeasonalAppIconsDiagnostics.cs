@@ -316,8 +316,6 @@ internal static class SeasonalAppIconsDiagnostics
 		Expect("match-tray-process-Discord", SeasonalAppIcons.KeyForProcess("Discord", null), "discord");
 		Expect("match-tray-process-slack", SeasonalAppIcons.KeyForProcess("slack", null), "slack");
 		Expect("match-tray-process-explorer", SeasonalAppIcons.KeyForProcess("explorer", null), null);
-		Expect("match-notification-aumid", SeasonalAppIcons.KeyForNotification("com.squirrel.Discord.Discord", ""), "discord");
-		Expect("match-notification-name", SeasonalAppIcons.KeyForNotification("", "Discord"), "discord");
 		Expect("match-window-exe", SeasonalAppIcons.KeyForWindow(IntPtr.Zero, "C:\\QA\\Discord\\app-1.0.9200\\Discord.exe", ""), "discord");
 		Expect("match-window-pwa", SeasonalAppIcons.KeyForWindow(IntPtr.Zero, "C:\\QA\\Google\\Chrome\\Application\\chrome.exe", "Chrome._crx_abc"), null);
 		Expect("match-window-store-app", SeasonalAppIcons.KeyForWindow(IntPtr.Zero, "C:\\Windows\\System32\\ApplicationFrameHost.exe", "SpotifyAB.SpotifyMusic_zpdnekdrzrea0!Spotify"), "spotify");
@@ -370,7 +368,7 @@ internal static class SeasonalAppIconsDiagnostics
 			{
 				if (SeasonalAppIcons.KeyForIdentity(id) != null || SeasonalAppIcons.KeyForEntry(discord) != null || SeasonalAppIcons.KeyForPin(pin) != null
 					|| SeasonalAppIcons.KeyForWindow(IntPtr.Zero, "C:\\QA\\Discord\\Discord.exe", "com.squirrel.Discord.Discord") != null
-					|| SeasonalAppIcons.KeyForProcess("Discord", null) != null || SeasonalAppIcons.KeyForNotification("com.squirrel.Discord.Discord", "Discord") != null
+					|| SeasonalAppIcons.KeyForProcess("Discord", null) != null
 					|| SeasonalAppIcons.Frame("discord", 24) != null || SeasonalAppIcons.IsActive)
 				{
 					hits++;
@@ -1311,21 +1309,14 @@ internal static class SeasonalAppIconsDiagnostics
 	private static void OtherSurfaceChecks()
 	{
 		Use(SeasonalTheme.Halloween);
-		ImageSource? ac = ActionCenter.ResolveNotifIcon("com.squirrel.Discord.Discord", "Discord");
-		ImageSource? acByName = ActionCenter.ResolveNotifIcon("", "Discord");
-		ImageSource? toast = NotificationRouter.SeasonalIconFor("com.squirrel.Discord.Discord", "Discord");
+		// (notifications are entirely Windows' own: no Action Center cards or launcher toasts carry seasonal icons any more)
 		ImageSource? audio = AudioSessions.IconFor("Discord", "C:\\QA\\Discord\\app-1.0.9200\\Discord.exe");
 		string? switcher = SeasonalAppIcons.KeyForWindow(IntPtr.Zero, "C:\\QA\\Discord\\app-1.0.9200\\Discord.exe", null);
-		int acSrc = ac is BitmapSource acb ? SourceSize(Pixel(acb, 17, 17)) : -1;
 		int audioSrc = audio is BitmapSource aub ? SourceSize(Pixel(aub, 13, 13)) : -1;
-		Check("actioncenter-card-34", Px(ac) == 34 && acSrc == 96 && Px(acByName) == 34, $"aumid={Px(ac)} (34<-{acSrc}, want 96) name={Px(acByName)}");
-		Check("toast-32", Px(toast) == 32, $"{Px(toast)}");
 		Check("volume-row-27", Px(audio) == 27 && audioSrc == 64, $"{Px(audio)} (27<-{audioSrc}, want 64)");
 		Check("switcher-key", switcher == "discord" && Px(SeasonalAppIcons.Frame(switcher, SeasonalAppIcons.Px(16.0))) == 16, $"{switcher}");
 		Use(SeasonalTheme.Normal);
-		Check("toast-normal-null", NotificationRouter.SeasonalIconFor("com.squirrel.Discord.Discord", "Discord") == null, "");
 		Check("volume-row-normal", AudioSessions.IconFor("Discord", "C:\\QA\\Discord\\app-1.0.9200\\Discord.exe") == null, "a missing file has no icon, as before");
-		Check("actioncenter-normal", ActionCenter.ResolveNotifIcon("", "Discord") == null, "");
 	}
 
 	// ===================================================================== F. jump lists
@@ -1668,14 +1659,10 @@ internal static class SeasonalAppIconsDiagnostics
 	}
 
 	// The surfaces that only had size checks, drawn with the real art as each surface builds them: running taskbar
-	// buttons, thumbnail preview headers, switcher entries, volume mixer rows (with the speaker glyph underneath),
-	// Action Center cards, toasts (the real ToastWindow content) and a folder tile (the real tile template).
+	// buttons, thumbnail preview headers, switcher entries, volume mixer rows (with the speaker glyph underneath)
+	// and a folder tile (the real tile template).
 	private static void RenderMoreSurfaces(StartScreen start, string path, List<Probe> probes, string[] titles)
 	{
-		string[] aumids = new string[5]
-		{
-			"com.squirrel.Discord.Discord", "Chrome", "notion.id", "com.tinyspeck.slackdesktop_8yrtsj140pw4g!Slack", "SpotifyAB.SpotifyMusic_zpdnekdrzrea0!Spotify"
-		};
 		StackPanel root = new StackPanel { Background = new SolidColorBrush(Color.FromRgb(0x10, 0x10, 0x10)) };
 		FontFamily ui = new FontFamily("Segoe UI");
 		void Header(string text)
@@ -1760,56 +1747,6 @@ internal static class SeasonalAppIconsDiagnostics
 			volume.Children.Add(card);
 		}
 		root.Children.Add(Wrap(volume));
-
-		// Action Center cards: the Metro card (accent stripe, 34 DIP icon from ResolveNotifIcon, app and title).
-		Header("Action Center cards");
-		StackPanel ac = new StackPanel { Width = 360.0, HorizontalAlignment = HorizontalAlignment.Left, Background = new SolidColorBrush(Color.FromRgb(0x1F, 0x1F, 0x1F)) };
-		for (int i = 0; i < probes.Count; i++)
-		{
-			ImageSource? icon = ActionCenter.ResolveNotifIcon(aumids[i], titles[i]);
-			Grid grid = new Grid { MinHeight = 68.0, Background = new SolidColorBrush(Color.FromArgb(42, 255, 255, 255)), Margin = new Thickness(0.0, 0.0, 6.0, 7.0) };
-			grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(4.0) });
-			grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-			grid.ColumnDefinitions.Add(new ColumnDefinition());
-			grid.Children.Add(new Border { Background = new SolidColorBrush(Color.FromRgb(0xE0, 0x62, 0x0B)) });
-			if (icon != null)
-			{
-				Image img = new Image { Source = icon, Width = 34.0, Height = 34.0, Margin = new Thickness(10.0, 0.0, 0.0, 0.0), VerticalAlignment = VerticalAlignment.Center };
-				RenderOptions.SetBitmapScalingMode(img, BitmapScalingMode.HighQuality);
-				Grid.SetColumn(img, 1);
-				grid.Children.Add(img);
-			}
-			StackPanel text = new StackPanel { Margin = new Thickness(11.0, 9.0, 32.0, 9.0), VerticalAlignment = VerticalAlignment.Center };
-			text.Children.Add(new TextBlock { Text = titles[i], Foreground = new SolidColorBrush(Color.FromArgb(0xB0, 0xFF, 0xFF, 0xFF)), FontFamily = ui, FontSize = 12.0 });
-			text.Children.Add(new TextBlock { Text = "New message", Foreground = Brushes.White, FontFamily = ui, FontSize = 14.0 });
-			Grid.SetColumn(text, 2);
-			grid.Children.Add(text);
-			ac.Children.Add(grid);
-		}
-		root.Children.Add(Wrap(ac));
-
-		// Toasts: the real ToastWindow content (the window is never shown).
-		Header("Toasts");
-		StackPanel toasts = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Left, Background = new SolidColorBrush(Color.FromRgb(0x30, 0x30, 0x30)) };
-		foreach (int i in new int[2] { 0, 3 })
-		{
-			ToastWindow toast = new ToastWindow(NotificationRouter.SeasonalIconFor(aumids[i], titles[i]), titles[i], "New message", "Hello from the seasonal icons check.", null, "now");
-			try
-			{
-				if (toast.Content is FrameworkElement card)
-				{
-					toast.Content = null;
-					card.Width = ToastWindow.ToastWidth - 2.0;
-					card.Margin = new Thickness(6.0);
-					toasts.Children.Add(card);
-				}
-			}
-			finally
-			{
-				toast.Close();
-			}
-		}
-		root.Children.Add(Wrap(toasts));
 
 		// A folder tile of the five apps: the real Start tile template on the Halloween background.
 		Header("Folder tiles (Medium and Large)");

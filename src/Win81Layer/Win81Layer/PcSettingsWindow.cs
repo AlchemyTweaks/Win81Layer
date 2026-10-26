@@ -3129,7 +3129,9 @@ public sealed class PcSettingsWindow : Window
 		bool gConfigured = false;
 		bool gSignedIn = false;
 		try { gConfigured = GoogleAuth.IsConfigured; gSignedIn = GoogleAuth.IsSignedIn; } catch { }
-		panel.Children.Add(SubLabel(gConfigured ? (gSignedIn ? "Google: signed in ✓" : "Google: not signed in") : "Google: not set up — add OAuth credentials first"));
+		// the Google status line doubles as the inline result of Sign out (the launcher shows no toasts of its own)
+		TextBlock gStatus = SubLabel(gConfigured ? (gSignedIn ? "Google: signed in ✓" : "Google: not signed in") : "Google: not set up — add OAuth credentials first");
+		panel.Children.Add(gStatus);
 		StackPanel gButtons = new StackPanel
 		{
 			Orientation = System.Windows.Controls.Orientation.Horizontal,
@@ -3138,18 +3140,21 @@ public sealed class PcSettingsWindow : Window
 		gButtons.Children.Add(ActionButton(GoogleAuth.HasCalendarAccess ? "Manage Google Calendar" : "Connect Google Calendar", () => GoogleCalendarConnectWindow.ShowFor(this)));
 		if (gSignedIn)
 		{
-			System.Windows.Controls.Button gSignOut = ActionButton("Sign out", delegate
+			System.Windows.Controls.Button gSignOut = null;
+			gSignOut = ActionButton("Sign out", delegate
 			{
 				try
 				{
 					GoogleAuth.SignOut();
-					ToastService.Show(null, "Google", "Signed out", "The local Google connection was removed.");
+					Logger.Log("Google: signed out");
+					gStatus.Text = "Google: signed out — the local connection was removed.";
+					gSignOut.Visibility = Visibility.Collapsed;
 				}
 				catch (Exception ex)
 				{
 					Logger.Log("Google disconnect failed: " + ex.GetType().Name);
+					gStatus.Text = "Google: could not disconnect — manage the saved connection to try again.";
 					GoogleCalendarConnectWindow.ShowFor(this);
-					ToastService.Show(null, "Google", "Could not disconnect", "Manage the saved connection to try again.");
 				}
 			});
 			gSignOut.Margin = new Thickness(0.0, 0.0, 12.0, 0.0);
@@ -3773,9 +3778,10 @@ public sealed class PcSettingsWindow : Window
 		{
 			Launch("ms-settings:cortana");
 		}));
-		panel.Children.Add(RowLink("Notifications", "App notifications, lock screen, sounds", delegate
+		// Notifications are entirely Windows' own: the row opens Windows Settings (the launcher writes no notification setting)
+		panel.Children.Add(RowLink("Notifications", "App notifications and Do not disturb (Windows Settings)", delegate
 		{
-			ShowPage(NotificationsPage);
+			Launch("ms-settings:notifications");
 		}));
 		panel.Children.Add(RowLink("App sizes", "See how much space your apps are using", delegate
 		{
@@ -3792,42 +3798,6 @@ public sealed class PcSettingsWindow : Window
 		panel.Children.Add(RowLink("Optional features", "Add or remove optional Windows features", delegate
 		{
 			Launch("ms-settings:optionalfeatures");
-		}));
-		return new ScrollViewer
-		{
-			VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-			Content = panel
-		};
-	}
-
-	private UIElement NotificationsPage()
-	{
-		StackPanel panel = new StackPanel
-		{
-			Margin = new Thickness(40.0, 40.0, 40.0, 24.0)
-		};
-		System.Windows.Controls.Button back = LinkButton("‹ Search and apps", delegate
-		{
-			ShowPage(SearchAndAppsPage);
-		});
-		back.Margin = new Thickness(0.0, 0.0, 0.0, 10.0);
-		panel.Children.Add(back);
-		panel.Children.Add(SectionTitle("Notifications"));
-		panel.Children.Add(ToggleRow("Show app notifications", "Let apps show toast notifications while you work.", NotificationSettings.ToastEnabled, delegate(bool on)
-		{
-			NotificationSettings.SetToastEnabled(on);
-		}));
-		panel.Children.Add(ToggleRow("Show notifications on the lock screen", "Let apps show notifications on the lock screen.", NotificationSettings.LockScreenToastEnabled, delegate(bool on)
-		{
-			NotificationSettings.SetLockScreenToastEnabled(on);
-		}));
-		panel.Children.Add(new Border
-		{
-			Height = 8.0
-		});
-		panel.Children.Add(ActionButton("More notification settings", delegate
-		{
-			Launch("ms-settings:notifications");
 		}));
 		return new ScrollViewer
 		{
@@ -5495,7 +5465,7 @@ public sealed class PcSettingsWindow : Window
 			break;
 		case "Notifications":
 			Nav("Search and apps");
-			ShowPage(NotificationsPage);
+			ShowPage(SearchAndAppsPage);
 			break;
 		case "Ease of Access":
 			DrillIntoEoa();

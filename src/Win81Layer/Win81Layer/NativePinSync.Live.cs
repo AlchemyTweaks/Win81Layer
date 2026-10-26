@@ -107,14 +107,15 @@ internal sealed class LauncherPinSyncTarget : IPinSyncTarget, IDisposable
 		log.AddRange(planned);
 		if (diff.Live && diff.NotOnTaskbar.Count > 0)
 		{
-			ShowNotOnTaskbarToast(diff.NotOnTaskbar);
+			LogNotOnTaskbar(diff.NotOnTaskbar);
 		}
 		return (PinSyncOutcome.Applied, null);
 	}
 
 	// Explorer's menus follow the native pin list, so they can offer "Unpin from taskbar" for an app that is not on
-	// this taskbar. Clicking it changes nothing here; say so, and how to add the app instead.
-	private static void ShowNotOnTaskbarToast(List<string> names)
+	// this taskbar. Clicking it changes nothing here; the log says so, and how to add the app instead (the launcher shows
+	// no toasts of its own).
+	private static void LogNotOnTaskbar(List<string> names)
 	{
 		try
 		{
@@ -126,7 +127,7 @@ internal sealed class LauncherPinSyncTarget : IPinSyncTarget, IDisposable
 			string message = distinct.Count == 1
 				? distinct[0] + " wasn't on the taskbar, so there was nothing to unpin. To add it, choose Pin to taskbar."
 				: string.Join(", ", distinct.Take(3)) + (distinct.Count > 3 ? " and others" : "") + " weren't on the taskbar, so there was nothing to unpin. To add them, choose Pin to taskbar.";
-			ToastService.Show(null, "Taskbar", "Not on the taskbar", message);
+			Logger.Log("Native pin sync: " + message);
 		}
 		catch
 		{

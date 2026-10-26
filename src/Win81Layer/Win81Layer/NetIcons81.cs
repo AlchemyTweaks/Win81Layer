@@ -155,21 +155,23 @@ internal static class NetIcons81
 		};
 	}
 
-	internal static ImageSource Draw(NetworkIconKind kind, NetworkIconState state, int signal = 4, int size = 32, Color? foreground = null)
+	// dimmed: the unlit and disconnected parts' colour when the icon sits on a coloured surface (the Action Center's tiles);
+	// by default the dark tray's unlit grey.
+	internal static ImageSource Draw(NetworkIconKind kind, NetworkIconState state, int signal = 4, int size = 32, Color? foreground = null, Color? dimmed = null)
 	{
 		state = state == NetworkIconState.Auto ? NetworkIconState.Connected : state;
 		int targetSize = size <= 12 ? 12 : (size <= 16 ? 16 : 32);
 		int level = Math.Clamp(signal, 0, 4);
 		Color color = foreground ?? Primary;
 		bool rest = DarkRest.Visuals;
-		string key = $"{kind}:{state}:{level}:{targetSize}:{color}" + (rest ? ":rest" : "");
+		string key = $"{kind}:{state}:{level}:{targetSize}:{color}" + (dimmed is Color d ? ":dim" + d : "") + (rest ? ":rest" : "");
 		lock (Gate)
 		{
 			if (Cache.TryGetValue(key, out ImageSource cached))
 			{
 				return cached;
 			}
-			Dimmed = rest ? RestDimmed : NormalDimmed;
+			Dimmed = dimmed ?? (rest ? RestDimmed : NormalDimmed);
 			ImageSource icon = Build(kind, state, level, targetSize, color);
 			Cache[key] = icon;
 			return icon;

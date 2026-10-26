@@ -309,6 +309,24 @@ public sealed class TaskbarManager
 		return false;
 	}
 
+	// The edge and the on-screen rect (physical px; null while an auto-hidden bar is away) of the bar on the given monitor,
+	// for anchoring the Action Center opened with Win+A.
+	public bool TryGetBarPlacement(Screen screen, out string edge, out System.Drawing.Rectangle? barPx)
+	{
+		foreach (TaskbarWindow b in _bars)
+		{
+			if (screen != null && string.Equals(b.ScreenDeviceName, screen.DeviceName, StringComparison.OrdinalIgnoreCase))
+			{
+				edge = b.BarEdge;
+				barPx = b.TryGetBarRect(out System.Drawing.Rectangle px) ? px : null;
+				return true;
+			}
+		}
+		edge = "Bottom";
+		barPx = null;
+		return false;
+	}
+
 	public bool TryRouteGlobalFlyoutMouseWheel(int x, int y, int delta)
 	{
 		foreach (TaskbarWindow bar in Volatile.Read(ref _wheelRouteBars))

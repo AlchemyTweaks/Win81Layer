@@ -660,9 +660,9 @@ internal static partial class SeasonalDiagnostics
 
 	// The Normal renders compared before and after the Dark rest pass ("*-normal-before.png" / "*-normal-after.png").
 	// The switcher is not among them: it lists the real open windows, which may change between the two renders.
-	private static readonly string[] NormalPairs = new string[19]
+	private static readonly string[] NormalPairs = new string[18]
 	{
-		"taskbar-strip", "actioncenter", "searchpane", "settingspane", "charms", "toast", "osd", "pcsettings", "flyout-clock", "flyout-volume", "flyout-network",
+		"taskbar-strip", "actioncenter", "searchpane", "settingspane", "charms", "osd", "pcsettings", "flyout-clock", "flyout-volume", "flyout-network",
 		"start-apps", "personalize", "win7start", "contextmenu", "controls", "caption", "share", "powerflyout"
 	};
 
@@ -683,11 +683,10 @@ internal static partial class SeasonalDiagnostics
 		start.RefreshBackground();
 		string P(string name) => Path.Combine(outDir, name + "-normal-" + when + ".png");
 		RenderTaskbarNormal(P("taskbar-strip"), real);
-		ActionCenter.QaRenderMetro(P("actioncenter"), 468.0, 860.0, compact: false, withNotifications: false, currentTheme: true);
+		ActionCenter.QaRenderMetro(P("actioncenter"), ActionCenterQaDevice.Laptop, currentTheme: true);
 		f.Search.QaRender(P("searchpane"), RestQuery, 920.0);
 		f.Settings.QaRender(P("settingspane"), 1040.0);
 		f.Charms.QaRender(P("charms"));
-		RenderToast(P("toast"));
 		f.Osd.QaRenderCard(P("osd"));
 		f.Pc.QaRender(P("pcsettings"), "PC & devices", 1366.0, 768.0);
 		f.Taskbar.QaRenderClockCalendar(P("flyout-clock"), FlyoutSample, 304.0, 444.0);
@@ -718,13 +717,6 @@ internal static partial class SeasonalDiagnostics
 		{
 			share.Close();
 		}
-	}
-
-	private static void RenderToast(string path)
-	{
-		ToastWindow toast = new ToastWindow(null, "Personalize", "Start colour updated", "Your Start colour was updated.", null, "3:07 PM");
-		toast.QaRender(path);
-		toast.Close();
 	}
 
 	private static void RestChecks(string outDir, StartScreen start, AppSettings real)
@@ -1088,9 +1080,12 @@ internal static partial class SeasonalDiagnostics
 	private static void RestPanes(string outDir, StartScreen start, RestFixtures f)
 	{
 		string ac = Path.Combine(outDir, "actioncenter-rest.png");
-		_restActionCenter = ActionCenter.QaRenderMetro(ac, 468.0, 860.0, compact: false, withNotifications: false, currentTheme: true);
-		RegionStats panel = Region(ac, 20, 300, 420, 80);
-		Check("rest-actioncenter", panel.L <= 0.05 && panel.Chroma <= 3, panel.ToString());
+		_restActionCenter = ActionCenter.QaRenderMetro(ac, ActionCenterQaDevice.Laptop, currentTheme: true);
+		// the body band between the tiles and the sliders: the flyouts' near-black body (#0F0F0F to #0A0A0A), so the
+		// flyouts' bound (rest-flyouts-dark)
+		Rect acBand = _restActionCenter.BackgroundProbe;
+		RegionStats panel = Region(ac, (int)Math.Round(acBand.X), (int)Math.Round(acBand.Y), (int)Math.Round(acBand.Width), (int)Math.Round(acBand.Height));
+		Check("rest-actioncenter", !acBand.IsEmpty && panel.L <= 0.07 && panel.Chroma <= 3, panel.ToString());
 		string search = Path.Combine(outDir, "searchpane-rest.png");
 		f.Search.QaRender(search, RestQuery, 920.0);
 		RegionStats searchPane = Region(search, 10, 820, 300, 80);
@@ -1121,12 +1116,6 @@ internal static partial class SeasonalDiagnostics
 		}
 		RegionStats charmsBar = Region(charms, 0, 0, Math.Max(1, LoadPng(charms).PixelWidth), 40);
 		Check("rest-charms", charmsBar.L <= 0.05 && charmsBar.S <= 0.05, charmsBar.ToString());
-		string toast = Path.Combine(outDir, "toast-rest.png");
-		RenderToast(toast);
-		BitmapSource toastBmp = LoadPng(toast);
-		// the card's left padding, full height (no text there)
-		RegionStats toastCard = Region(toast, 2, 2, 12, toastBmp.PixelHeight - 4);
-		Check("rest-toast", toastCard.L <= 0.07 && toastCard.S <= 0.05, toastCard.ToString());
 		string osd = Path.Combine(outDir, "osd-rest.png");
 		f.Osd.QaRenderCard(osd);
 		BitmapSource osdBmp = LoadPng(osd);

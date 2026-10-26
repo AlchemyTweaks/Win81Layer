@@ -1127,7 +1127,7 @@
           </Grid>
         </Border>
       </Popup>
-      <Button Name="ActionCenterBtn" Style="{StaticResource TrayIcon}" ToolTip="Notifications" Click="OnActionCenter">
+      <Button Name="ActionCenterBtn" Style="{StaticResource TrayIcon}" ToolTip="Action center" Click="OnActionCenter">
         <Grid>
           <Image Name="NotifIcon81" Width="{DynamicResource TB.Win81TrayIconSize}" RenderOptions.BitmapScalingMode="HighQuality" SnapsToDevicePixels="True" Source="pack://application:,,,/Assets/win81icons/notifications81.png" Opacity="{DynamicResource TB.SystemGlyphOpacity}" />
           <TextBlock Name="NotifGlyphNative" Visibility="Collapsed" Text="&#xE7E7;" FontFamily="Segoe MDL2 Assets" FontSize="{DynamicResource TB.GlyphSize}" Foreground="{DynamicResource TB.GlyphInk}" HorizontalAlignment="Center" VerticalAlignment="Center" />

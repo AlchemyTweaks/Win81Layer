@@ -105,7 +105,7 @@ internal static partial class SeasonalDiagnostics
 		Check("no-theme-change", before.Theme == after.Theme && before.Theme.Length > 0, $"before={before.Theme} after={after.Theme}");
 		Check("no-extension-link-write", before.ExtensionLink == after.ExtensionLink, $"before={before.ExtensionLink} after={after.ExtensionLink}");
 		string[] pngs = Directory.GetFiles(outDir, "*.png");
-		string[] expected = new string[71]
+		string[] expected = new string[68]
 		{
 			"wallpaper-halloween.png", "wallpaper-christmas.png", "wallpaper-christmas-1280x1024.png", "wallpaper-halloween-1280x1024.png", "patterns.png", "designs-thumbs.png",
 			"start-halloween.png", "start-christmas.png", "personalize-halloween.png", "ambient-bats.png", "ambient-snow.png", "actioncenter-halloween.png", "actioncenter-christmas.png",
@@ -113,19 +113,19 @@ internal static partial class SeasonalDiagnostics
 			"pcsettings-startscreen-christmas.png", "start-normal.png", "wallpaper-halloween-2560x1080.png", "start-before.png", "actioncenter-normal.png", "taskbar-normal.png",
 			"wallpaper-rest.png", "wallpaper-rest-1280x1024.png", "pattern-nightgrid.png", "start-rest.png", "start-rest-apps.png", "personalize-rest.png", "taskbar-rest.png",
 			"flyout-clock-rest.png", "flyout-volume-rest.png", "flyout-network-rest.png", "actioncenter-rest.png", "searchpane-rest.png", "settingspane-rest.png", "charms-rest.png",
-			"toast-rest.png", "osd-rest.png", "switcher-rest.png", "win7start-rest.png", "pcsettings-rest-launcher.png", "pcsettings-rest-devices.png",
+			"osd-rest.png", "switcher-rest.png", "win7start-rest.png", "pcsettings-rest-launcher.png", "pcsettings-rest-devices.png",
 			"start-rest-picture.png", "start-rest-zoom.png", "pcsettings-rest-launcher-picture.png", "contextmenu-rest.png", "controls-rest.png", "caption-rest.png", "tooltip-rest.png",
 			"pointer-rest.png", "contextmenu-normal-before.png", "controls-normal-before.png", "caption-normal-before.png", "charmsclock-rest.png",
-			"share-rest.png", "devices-rest.png", "search-rest-calc.png", "searchscope-rest.png", "settings-power-rest.png", "toast-rest-icon.png",
-			"actioncenter-rest-notifications.png", "start-rest-appbar.png", "contextmenu-toggles-rest.png", "combo-rest.png", "switcher-rest-selected.png",
+			"share-rest.png", "devices-rest.png", "search-rest-calc.png", "searchscope-rest.png", "settings-power-rest.png",
+			"start-rest-appbar.png", "contextmenu-toggles-rest.png", "combo-rest.png", "switcher-rest-selected.png",
 			"share-normal-before.png", "powerflyout-normal-before.png", "searchpane-built-in-rest-normal.png"
 		};
-		// The toast, the OSD, the tooltip, the caption strips, the menu, the pointers, the charms clock (its size follows the date and time it shows)
+		// The OSD, the tooltip, the caption strips, the menu, the pointers, the charms clock (its size follows the date and time it shows)
 		// and the near-black pattern are small.
 		HashSet<string> small = new HashSet<string>(StringComparer.Ordinal)
 		{
-			"toast-rest.png", "osd-rest.png", "tooltip-rest.png", "caption-rest.png", "caption-normal-before.png", "pointer-rest.png", "contextmenu-rest.png",
-			"contextmenu-normal-before.png", "pattern-nightgrid.png", "charmsclock-rest.png", "toast-rest-icon.png", "searchscope-rest.png", "settings-power-rest.png",
+			"osd-rest.png", "tooltip-rest.png", "caption-rest.png", "caption-normal-before.png", "pointer-rest.png", "contextmenu-rest.png",
+			"contextmenu-normal-before.png", "pattern-nightgrid.png", "charmsclock-rest.png", "searchscope-rest.png", "settings-power-rest.png",
 			"contextmenu-toggles-rest.png", "combo-rest.png", "powerflyout-normal-before.png", "share-normal-before.png", "share-rest.png", "devices-rest.png",
 			"searchpane-built-in-rest-normal.png"
 		};
@@ -1281,10 +1281,12 @@ internal static partial class SeasonalDiagnostics
 				TaskbarTheme.Invalidate();
 				start.QaRenderSeason(Path.Combine(outDir, $"start-{p.Id}.png"), 1920.0, 1080.0, withAmbient: true);
 				start.QaRenderPersonalize(Path.Combine(outDir, $"personalize-{p.Id}.png"));
-				ActionCenter.QaRenderMetro(Path.Combine(outDir, $"actioncenter-{p.Id}.png"), 468.0, 860.0, compact: false, withNotifications: false, currentTheme: true);
+				ActionCenterQaMetrics acSeasonMetrics = ActionCenter.QaRenderMetro(Path.Combine(outDir, $"actioncenter-{p.Id}.png"), ActionCenterQaDevice.Laptop, currentTheme: true);
 				{
-					// an empty part of the panel keeps the season's base hue and some colour (no grey mix of opposite hues)
-					(double ar, double ag, double ab) = RegionAverage(Path.Combine(outDir, $"actioncenter-{p.Id}.png"), 20, 300, 420, 80);
+					// an empty part of the panel (the body band between the tiles and the sliders) keeps the season's base hue
+					// and some colour (no grey mix of opposite hues)
+					Rect band = acSeasonMetrics.BackgroundProbe;
+					(double ar, double ag, double ab) = RegionAverage(Path.Combine(outDir, $"actioncenter-{p.Id}.png"), (int)Math.Round(band.X), (int)Math.Round(band.Y), (int)Math.Round(band.Width), (int)Math.Round(band.Height));
 					(double ah, double asat, double al) = Hsl(ar, ag, ab);
 					Color bcol = SeasonalArt.Hex(p.Base);
 					double bh = Hsl(bcol.R, bcol.G, bcol.B).H;
@@ -1338,7 +1340,7 @@ internal static partial class SeasonalDiagnostics
 			(int diff, int total) = PixelDiff(Path.Combine(outDir, "start-before.png"), Path.Combine(outDir, "start-normal.png"));
 			Check("normal-look-matches-before", beforeSettled && normalSettled && diff == 0, $"differing pixels={diff}/{total} settled={beforeSettled}/{normalSettled} mode={real.StartBgMode}");
 			Metrics["NormalVsBeforeDiffPixels"] = diff;
-			ActionCenter.QaRenderMetro(Path.Combine(outDir, "actioncenter-normal.png"), 468.0, 860.0, compact: false, withNotifications: false, currentTheme: true);
+			ActionCenter.QaRenderMetro(Path.Combine(outDir, "actioncenter-normal.png"), ActionCenterQaDevice.Laptop, currentTheme: true);
 			RenderTaskbarNormal(Path.Combine(outDir, "taskbar-normal.png"), real);
 
 			AmbientChecks(outDir, start, real);

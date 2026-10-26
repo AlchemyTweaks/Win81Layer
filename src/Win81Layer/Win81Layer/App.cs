@@ -297,8 +297,6 @@ public partial class App : System.Windows.Application
 
 	private SnapWatcher? _snapWatcher;
 
-	private NotificationRouter? _notifRouter;
-
 	private HotCorners? _hotCorners;
 
 	private CharmsEdgeGesture? _charmsGesture;
@@ -576,7 +574,7 @@ public partial class App : System.Windows.Application
 		}
 	}
 
-	// Repaints everything that follows the seasonal look right away. Other surfaces (Action Center, Charms, toasts,
+	// Repaints everything that follows the seasonal look right away. Other surfaces (Action Center, Charms,
 	// OSD, Snap, the switcher, thumbnails, PC Settings) read the new accent the next time they open.
 	public void ApplySeasonalLive()
 	{
@@ -1374,6 +1372,15 @@ public partial class App : System.Windows.Application
 			SwitcherEdgeDiagnostics.Begin(this);
 			return;
 		}
+		if (e.Args.Contains("--toasttest"))
+		{
+			// The launcher no longer shows toasts of its own. Old scripts may still pass this switch: exit instead of
+			// falling through to a real shell start.
+			SettingsStore.ReadOnlyDiagnostics = true;
+			PersistenceDiagnostics.SuppressAutomaticPostBootVerification = true;
+			Shutdown(2);
+			return;
+		}
 		if (e.Args.Contains("--seasonaltest"))
 		{
 			// Offscreen QA of the seasonal presets. Read-only: settings/state writes throw and the desktop wallpaper
@@ -1594,7 +1601,7 @@ public partial class App : System.Windows.Application
 		}
 		if (actionCenterTest)
 		{
-			ActionCenterDiagnostics.Begin(this);
+			ActionCenterDiagnostics.Begin(this, e.Args);
 			return;
 		}
 		if (directionalArrowTest)
@@ -2152,7 +2159,6 @@ public partial class App : System.Windows.Application
 					pc.QaRender(Path.Combine(path, "pcsettings_lock.png"), "Lock screen");
 					pc.QaRender(Path.Combine(path, "pcsettings_accounts.png"), "Accounts");
 					pc.QaRender(Path.Combine(path, "pcsettings_searchapps.png"), "Search and apps");
-					pc.QaRender(Path.Combine(path, "pcsettings_notif.png"), "Notifications");
 					pc.QaRender(Path.Combine(path, "pcsettings_update.png"), "Update and recovery");
 					PcSettingsWindow compact = new PcSettingsWindow(st)
 					{
@@ -2237,35 +2243,6 @@ public partial class App : System.Windows.Application
 				catch (Exception value2)
 				{
 					Logger.Log($"SWITCHERTEST: {value2}");
-				}
-				finally
-				{
-					Shutdown();
-				}
-			});
-			return;
-		}
-		if (e.Args.Contains("--toasttest"))
-		{
-			((DispatcherObject)this).Dispatcher.BeginInvoke((DispatcherPriority)6, (Delegate)(Action)delegate
-			{
-				try
-				{
-					string path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Win81Layer");
-					ImageSource icon = null;
-					try
-					{
-						icon = new BitmapImage(new Uri("pack://application:,,,/Assets/user-icon.png"));
-					}
-					catch
-					{
-					}
-					new ToastWindow(icon, "SkyDrive", "Screenshot saved", "The screenshot was added to your library.", null, "3:07 PM").QaRender(Path.Combine(path, "toasttest.png"));
-					new ToastWindow(null, "Personalize", "Start colour updated", "Your Start colour was updated.", null, "3:07 PM").QaRender(Path.Combine(path, "toasttest2.png"));
-				}
-				catch (Exception value2)
-				{
-					Logger.Log($"TOASTTEST: {value2}");
 				}
 				finally
 				{
@@ -3163,7 +3140,6 @@ public partial class App : System.Windows.Application
 					if (pin == null)
 					{
 						Logger.Log("pin-to-taskbar " + path + ": the shortcut does not point to a program or an app");
-						ToastService.Show(null, "Taskbar", "Can't pin to the taskbar", Path.GetFileNameWithoutExtension(path) + " doesn't open a program or an app, so it can't be pinned to the taskbar.");
 					}
 					else if (!list.Any((PinnedApp p) => string.Equals(p.ExePath, path, StringComparison.OrdinalIgnoreCase) || string.Equals(p.LaunchPath, path, StringComparison.OrdinalIgnoreCase) || NativePinSync.LauncherKeys(p).Overlaps(NativePinSync.LauncherKeys(pin))))
 					{
@@ -3517,7 +3493,7 @@ public partial class App : System.Windows.Application
 		{
 			((DispatcherObject)this).Dispatcher.BeginInvoke((Delegate)(Action)delegate
 			{
-				ActionCenter.Toggle();
+				ToggleActionCenterFromKeyboard();
 			}, Array.Empty<object>());
 		};
 		_winHook.WinSnapLeft += delegate
@@ -3731,6 +3707,12 @@ public partial class App : System.Windows.Application
 		// (not a hybrid shutdown that behaves like sleep on this box). Succeeds only when elevated (logon task runs
 		// HighestAvailable); a manual non-elevated launch no-ops. Background, guarded, only writes if not already 0.
 		Task.Run((Action)PowerActions.EnsureFastStartupDisabled);
+		// Notifications are entirely Windows' own: undo the old quiet-hours tile's switch-off of every native toast
+		// (ToastEnabled=0) once, and only when the launcher's own snapshot proves the switch-off was the launcher's.
+		if (!SettingsStore.ReadOnlyDiagnostics && !PerfProbe.Active)
+		{
+			Task.Run((Action)NativeBanner.RestoreLegacySuppression);
+		}
 		// Defer SnapAssist (a full WPF Window + WinEvent hook + a registry write) off the first-paint path; it's only
 		// needed when the user snaps a window. Background priority runs it right after paint; only assigned here and
 		// disposed on exit, so nothing dereferences it in between.
@@ -3744,18 +3726,6 @@ public partial class App : System.Windows.Application
 			try { SnapWatcher.EnsureNativeSnapAssistRestored(); }
 			catch (Exception ex5) { Logger.Log("Native snap-assist restore failed: " + ex5.Message); }
 		}, DispatcherPriority.Background, Array.Empty<object>());
-		if (settings.RouteNotifications)
-		{
-			try
-			{
-				_notifRouter = new NotificationRouter();
-				_notifRouter.Start();
-			}
-			catch (Exception ex6)
-			{
-				Logger.Log("Notification router init failed: " + ex6.Message);
-			}
-		}
 		// Custom Win8.1 system icons are DISABLED (user directive): they kept fighting Windows' icon cache, so we always
 		// keep the NATIVE This PC / Recycle Bin icons regardless of the ReplaceSystemIcons setting (the setting/profile
 		// layer kept flipping it back on). Restore() is change-detected — it no-ops once already native, so it never
@@ -3908,7 +3878,8 @@ public partial class App : System.Windows.Application
 					ApplySeasonalLive();
 					if (!r.Success)
 					{
-						ToastService.Show(null, SeasonalTheme.IsRest(sid) ? "Dark rest" : "Seasonal theme", "Could not apply", r.Message);
+						// log only (PC Settings shows the seasonal status inline); the launcher shows no toasts of its own
+						Logger.Log("Seasonal: tray change could not apply '" + sid + "': " + r.Message);
 					}
 				}
 				catch (Exception exSeason)
@@ -4457,6 +4428,21 @@ public partial class App : System.Windows.Application
 		return _hookLiveness.SilentMove;
 	}
 
+	// Win+A: the Action Center opens at the tray end of the bar on the monitor under the cursor (that bar's edge and rect);
+	// with no launcher bar there, the configured taskbar edge and that monitor's work area.
+	private void ToggleActionCenterFromKeyboard()
+	{
+		System.Windows.Forms.Screen screen = System.Windows.Forms.Screen.FromPoint(System.Windows.Forms.Cursor.Position) ?? System.Windows.Forms.Screen.PrimaryScreen;
+		string edge;
+		System.Drawing.Rectangle? bar;
+		if (_taskbar == null || !_taskbar.TryGetBarPlacement(screen, out edge, out bar))
+		{
+			edge = SettingsStore.FastSnapshot.TaskbarPosition ?? "Bottom";
+			bar = null;
+		}
+		ActionCenter.Toggle(screen, edge, bar, fromKeyboard: true);
+	}
+
 	// True while a shell surface is on screen (idle maintenance never trims under an open surface).
 	private static bool AnyShellSurfaceOpen()
 	{
@@ -4625,7 +4611,7 @@ public partial class App : System.Windows.Application
 	// app-list entries only, so the entry is found by launch path, app id (the window's or pin's, or the shortcut's),
 	// program file, or the Start-menu shortcut that starts the program (NativePinSync.FindStartEntry): Chrome, Discord and
 	// other apps with their own app id are found from an exe path too. Anything outside the app list (a folder, a
-	// document, a portable program) can only go to the Start screen board, and the toast says so. With the Metro style
+	// document, a portable program) can only go to the Start screen board, and the log says so. With the Metro style
 	// everything goes to the board, as before. UI thread.
 	private void PinToActiveStart(string? path, string name, string? appId = null)
 	{
@@ -4669,13 +4655,11 @@ public partial class App : System.Windows.Application
 					if (saved)
 					{
 						_win7Start?.RefreshAfterExternalPinChange();
-						ToastService.Show(entry.Icon, "Start", "Pinned", entry.Name + " was pinned to Start.");
 						Logger.Log("Pin to Start: '" + entry.Name + "' -> Windows 7 menu (" + launchPath + ")");
 					}
 					else
 					{
 						Logger.Log("Pin to Start: '" + entry.Name + "' not saved (the settings could not be read)");
-						ToastService.Show(entry.Icon, "Start", "Not pinned", entry.Name + " couldn't be pinned to Start right now. Try again in a moment.");
 					}
 					return;
 				}
@@ -4690,12 +4674,10 @@ public partial class App : System.Windows.Application
 			start.PinAppByPath(path, name);
 			return;
 		}
-		// Not in the app list, so the Windows 7 menu cannot show it: it goes to the Start screen board, and the toast says
-		// so instead of "pinned to Start".
-		AppEntry? tile = start.PinAppByPath(path, name, showToast: false);
-		string label = tile?.Name ?? (string.IsNullOrWhiteSpace(name) ? Path.GetFileNameWithoutExtension(path) : name);
+		// Not in the app list, so the Windows 7 menu cannot show it: it goes to the Start screen board (logged; the pin itself
+		// is the visible feedback).
+		start.PinAppByPath(path, name);
 		Logger.Log("Pin to Start: '" + path + "' is not in the app list the Windows 7 menu shows; pinned to the Start screen board");
-		ToastService.Show(tile?.Icon, "Start", "Pinned to the Start screen", label + " isn't in the app list, so the Windows 7 Start menu can't show it. It was pinned to the Start screen.");
 	}
 
 	// Target of the Start-menu shortcut an app-list entry came from (by display name), parsed from the file without COM.
@@ -5042,25 +5024,14 @@ public partial class App : System.Windows.Application
 						}
 						bmp.Dispose();
 					}
+					// log only: the launcher shows no toasts of its own
 					if (path != null)
 					{
-						ToastService.Show(null, "Share", "Screen captured", "Saved as " + Path.GetFileName(path) + " - copied to clipboard.", delegate
-						{
-							try
-							{
-								Process.Start(new ProcessStartInfo(path)
-								{
-									UseShellExecute = true
-								});
-							}
-							catch
-							{
-							}
-						});
+						Logger.Log("Share: screen captured -> " + path + " (copied to clipboard)");
 					}
 					else
 					{
-						ToastService.Show(null, "Share", "Screenshot failed", "Couldn't capture the screen.");
+						Logger.Log("Share: screenshot failed (no file captured)");
 					}
 				}, Array.Empty<object>());
 			});
@@ -5308,7 +5279,6 @@ public partial class App : System.Windows.Application
 		TrayHostService.Stop();   // destroy our Shell_TrayWnd + broadcast TaskbarCreated so explorer reclaims the tray
 		_winHook?.Dispose();
 		_snapWatcher?.Dispose();
-		_notifRouter?.Dispose();
 		try
 		{
 			if (!_sessionEnding && SettingsStore.Load().ReplaceSystemIcons)

@@ -82,14 +82,23 @@ internal static partial class PerfProbeDiagnostics
 		double Moved(double px, Motion.Tok tok) => Math.Abs(px) * Motion.Ease(tok).Ease(frame / Motion.TokMs(tok, MotionMode.Authentic));
 		double menu = Moved(MenuMotion.Distance, Motion.Move(MenuMotion.Distance));
 		double flyout = Moved(12.0, Motion.Move(12.0));
-		double ac = Moved(40.0, Motion.Move(40.0));
+		// the Action Center rises 12 DIP like the tray flyouts (it is one of them now)
+		double ac = Moved(12.0, Motion.Move(12.0));
 		double acOpacity = Motion.Ease(Motion.Tok.FadeIn).Ease(frame / Motion.TokMs(Motion.Tok.FadeIn, MotionMode.Authentic));
 		double bar = Moved(86.0, Motion.Move(86.0));
 		double pane = Moved(346.0, Motion.Move(346.0));
-		double toast = Moved(ToastWindow.ToastWidth, Motion.Move(ToastWindow.ToastWidth));
-		bool ok = menu <= 2.0 && flyout <= 3.0 && ac <= 12.0 && acOpacity <= 0.10 && bar <= 1.5 && pane <= 1.5 && toast <= 1.5
+		bool ok = menu <= 2.0 && flyout <= 3.0 && ac <= 3.0 && acOpacity <= 0.10 && bar <= 1.5 && pane <= 1.5
 			&& Motion.Move(86.0) == Motion.Tok.MoveLong && Motion.Move(346.0) == Motion.Tok.MovePanel;
-		UnitCheck("motion-first-frame", ok, $"menu 4->{menu:0.00} flyout 12->{flyout:0.00} AC 40->{ac:0.00} (opacity {acOpacity:0.000}) bar 86->{bar:0.00} pane 346->{pane:0.00} toast 320->{toast:0.00} px");
+		UnitCheck("motion-first-frame", ok, $"menu 4->{menu:0.00} flyout 12->{flyout:0.00} AC 12->{ac:0.00} (opacity {acOpacity:0.000}) bar 86->{bar:0.00} pane 346->{pane:0.00} px");
+	}
+
+	// Notifications are entirely Windows' own: the native hosts the launcher suspends never include the one that shows
+	// toasts, the notification center and quick settings (ShellExperienceHost).
+	private static void UnitNativeHostsExcludeNotificationHost()
+	{
+		string[] hosts = NativeShell.HostNames;
+		bool ok = hosts.Length > 0 && !hosts.Any(h => string.Equals(h, "ShellExperienceHost", StringComparison.OrdinalIgnoreCase));
+		UnitCheck("native-hosts-exclude-notification-host", ok, string.Join(",", hosts));
 	}
 
 	// The tray menu built with the production metrics and renderer: 10.5 pt, 32 px rows, 7 px separators.

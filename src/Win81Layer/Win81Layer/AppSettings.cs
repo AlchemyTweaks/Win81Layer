@@ -43,8 +43,6 @@ public sealed class AppSettings
 
 	public bool ReplaceDesktopMenu { get; set; } = true;
 
-	public bool RouteNotifications { get; set; } = false;
-
 	public bool ReplaceSystemIcons { get; set; } = true;
 
 	public bool Replace81AppIcons { get; set; } = true;

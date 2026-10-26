@@ -97,6 +97,7 @@ internal static class TrayDiagnostics
 			DeliveryChecks(rec);
 			FrameworkChecks(rec);
 			HostTableChecks(rec);
+			BalloonMirrorChecks(rec);
 			RecoveryChecks(rec);
 			IconRectChecks(rec);
 			PolicyChecks();
@@ -115,6 +116,9 @@ internal static class TrayDiagnostics
 			TrayHostService.ClockForTest = null;
 			TrayHostService.IconRectProvider = null;
 			TrayHostService.CommandTargetForTest = null;
+			TrayHostService.MirrorTargetForTest = null;
+			TrayHostService.OwnTrayWindowForTest = IntPtr.Zero;
+			TrayHostService.MirrorResetForTest();
 			TrayHostService.ResetForTest();
 			Breadcrumbs.StallMs = 3000;
 		}
@@ -788,6 +792,109 @@ internal static class TrayDiagnostics
 		rec.Destroy(cmd);
 	}
 
+	// ===================================================================== balloon mirror (notifications stay Windows' own)
+
+	// While the launcher hosts the tray, Explorer's own (hidden) tray must still see what it needs to turn legacy balloons
+	// (NIF_INFO) into native toasts. A test window stands in for Explorer's taskbar; nothing is sent to Explorer.
+	private static void BalloonMirrorChecks(Recorder rec)
+	{
+		const uint NIF_INFO = 0x10u;
+		Fresh();
+		TrayHostService.MirrorResetForTest();
+		// --- which messages go to Explorer
+		bool decide = TrayHostService.ShouldMirrorToExplorer(NIM_ADD, NIF_MESSAGE)
+			&& TrayHostService.ShouldMirrorToExplorer(NIM_DELETE, 0u)
+			&& TrayHostService.ShouldMirrorToExplorer(NIM_SETVERSION, 0u)
+			&& !TrayHostService.ShouldMirrorToExplorer(NIM_MODIFY, NIF_ICON | NIF_TIP)
+			&& !TrayHostService.ShouldMirrorToExplorer(NIM_MODIFY, NIF_MESSAGE)
+			&& TrayHostService.ShouldMirrorToExplorer(NIM_MODIFY, NIF_INFO)
+			&& TrayHostService.ShouldMirrorToExplorer(NIM_MODIFY, NIF_INFO | NIF_TIP)
+			&& !TrayHostService.ShouldMirrorToExplorer(3u /* NIM_SETFOCUS */, 0u);
+		Check("balloon-mirror-decision", decide, "ADD, DELETE and SETVERSION mirror; MODIFY only with NIF_INFO; icon and tooltip churn never");
+
+		// --- the same bytes and wParam reach the stand-in for Explorer's taskbar, as WM_COPYDATA dwData 1
+		nint explorer = rec.Create(Recorder.GenericClass);
+		nint owner = rec.Create(Recorder.GenericClass);
+		TrayHostService.MirrorTargetForTest = () => explorer;
+		byte[] add = Payload(NIM_ADD, owner, 7, NIF_MESSAGE | NIF_ICON | NIF_TIP, cb: CB, icon: 0x1111, tip: "Updater");
+		byte[] balloon = Payload(NIM_MODIFY, owner, 7, NIF_INFO, tip: null);
+		byte[] churn = Payload(NIM_MODIFY, owner, 7, NIF_TIP, tip: "Updater 2");
+		bool q1 = TrayHostService.QueueBalloonMirror(owner, add);
+		bool q2 = TrayHostService.QueueBalloonMirror(owner, balloon);
+		bool q3 = TrayHostService.QueueBalloonMirror(owner, churn);
+		int sent = TrayHostService.DrainBalloonMirror();
+		List<(nint W, nint Data, byte[] Bytes)> got = rec.DrainCopies(explorer);
+		bool same = got.Count == 2 && got.All(c => c.W == owner && c.Data == 1)
+			&& got[0].Bytes.SequenceEqual(add) && got[1].Bytes.SequenceEqual(balloon);
+		// no target, or the target is our own Shell_TrayWnd: nothing is sent
+		TrayHostService.MirrorTargetForTest = () => IntPtr.Zero;
+		TrayHostService.QueueBalloonMirror(owner, add);
+		int sentNone = TrayHostService.DrainBalloonMirror();
+		TrayHostService.OwnTrayWindowForTest = explorer;
+		TrayHostService.MirrorTargetForTest = () => explorer;
+		TrayHostService.QueueBalloonMirror(owner, add);
+		int sentOwn = TrayHostService.DrainBalloonMirror();
+		TrayHostService.OwnTrayWindowForTest = IntPtr.Zero;
+		bool none = sentNone == 0 && sentOwn == 0 && rec.DrainCopies(explorer).Count == 0;
+		Check("balloon-mirror-forwards-bytes", q1 && q2 && !q3 && sent == 2 && same && none,
+			$"queued add={q1} balloon={q2} churn={q3}; sent={sent}; got {got.Count} copy(ies), identical={same}; without a target {sentNone}, to our own window {sentOwn}");
+
+		// --- asynchronous and bounded: the app's call is answered from our table (nothing goes out from inside it), and
+		// the queue keeps the newest 64
+		TrayHostService.MirrorResetForTest();
+		bool answered = Send(Payload(NIM_ADD, owner, 8, NIF_MESSAGE, cb: CB));
+		bool nothingInline = rec.DrainCopies(explorer).Count == 0 && TrayHostService.MirrorQueuedForTest() == 0;
+		for (uint i = 0; i < 70; i++)
+		{
+			TrayHostService.QueueBalloonMirror(owner, Payload(NIM_ADD, owner, 100 + i, NIF_MESSAGE, cb: CB));
+		}
+		int queued = TrayHostService.MirrorQueuedForTest();
+		int dropped = TrayHostService.MirrorDropped;
+		int drained = TrayHostService.DrainBalloonMirror();
+		List<(nint W, nint Data, byte[] Bytes)> burst = rec.DrainCopies(explorer);
+		uint firstUid = burst.Count > 0 ? BitConverter.ToUInt32(burst[0].Bytes, 16) : 0u;
+		uint lastUid = burst.Count > 0 ? BitConverter.ToUInt32(burst[^1].Bytes, 16) : 0u;
+		Check("balloon-mirror-async-bounded", answered && nothingInline && queued == 64 && dropped == 6 && drained == 64 && burst.Count == 64 && firstUid == 106 && lastUid == 169,
+			$"answered={answered} inline sends={(nothingInline ? 0 : 1)}; queued {queued} of 70 (dropped {dropped}); forwarded {burst.Count} uid {firstUid}..{lastUid}");
+
+		// --- Explorer refuses a balloon for an icon it never saw: one ADD built from our table (and its version), then
+		// one retry of the balloon
+		Fresh();
+		TrayHostService.MirrorResetForTest();
+		Send(Payload(NIM_ADD, owner, 9, NIF_MESSAGE | NIF_ICON | NIF_TIP, cb: CB, icon: 0x4321, tip: "Updater"));
+		Send(Payload(NIM_SETVERSION, owner, 9, 0u, version: 4));
+		int refusals = 0;
+		rec.CopyDataAnswer = bytes =>
+		{
+			bool isBalloon = BitConverter.ToUInt32(bytes, 4) == NIM_MODIFY && (BitConverter.ToUInt32(bytes, 20) & NIF_INFO) != 0;
+			if (isBalloon && refusals == 0)
+			{
+				refusals++;
+				return IntPtr.Zero;
+			}
+			return new nint(1);
+		};
+		byte[] balloon9 = Payload(NIM_MODIFY, owner, 9, NIF_INFO);
+		TrayHostService.QueueBalloonMirror(owner, balloon9);
+		int readdSent = TrayHostService.DrainBalloonMirror();
+		rec.CopyDataAnswer = null;
+		List<(nint W, nint Data, byte[] Bytes)> seq = rec.DrainCopies(explorer);
+		uint Msg(int i) => BitConverter.ToUInt32(seq[i].Bytes, 4);
+		uint U(int i, int o) => BitConverter.ToUInt32(seq[i].Bytes, 8 + o);
+		string Tip(int i) => Encoding.Unicode.GetString(seq[i].Bytes, 8 + 24, 128 * 2).TrimEnd('\0');
+		bool readd = seq.Count == 4 && readdSent == 4
+			&& Msg(0) == NIM_MODIFY && seq[0].Bytes.SequenceEqual(balloon9)
+			&& Msg(1) == NIM_ADD && U(1, 4) == (uint)(long)owner && U(1, 8) == 9 && (U(1, 12) & NIF_INFO) == 0
+			&& (U(1, 12) & (NIF_MESSAGE | NIF_ICON | NIF_TIP)) == (NIF_MESSAGE | NIF_ICON | NIF_TIP) && U(1, 16) == CB && U(1, 20) == 0x4321 && Tip(1) == "Updater"
+			&& Msg(2) == NIM_SETVERSION && U(2, 800) == 4
+			&& Msg(3) == NIM_MODIFY && seq[3].Bytes.SequenceEqual(balloon9);
+		Check("balloon-mirror-readd-on-refusal", readd, seq.Count < 4 ? $"{seq.Count} message(s), sent={readdSent}" : $"MODIFY refused, ADD cb=0x{U(1, 16):X} icon=0x{U(1, 20):X} tip='{Tip(1)}', SETVERSION {U(2, 800)}, MODIFY retried; sent={readdSent}");
+		TrayHostService.MirrorTargetForTest = null;
+		TrayHostService.MirrorResetForTest();
+		rec.Destroy(owner);
+		rec.Destroy(explorer);
+	}
+
 	// ===================================================================== recovery on click
 
 	private static void RecoveryChecks(Recorder rec)
@@ -1107,6 +1214,12 @@ internal static class TrayDiagnostics
 
 		private readonly Dictionary<nint, List<Msg>> _log = new Dictionary<nint, List<Msg>>();
 
+		// WM_COPYDATA received per window: wParam, dwData and a copy of the bytes (the pointer is valid only during the call).
+		private readonly Dictionary<nint, List<(nint W, nint Data, byte[] Bytes)>> _copies = new Dictionary<nint, List<(nint, nint, byte[])>>();
+
+		// What a test window answers to WM_COPYDATA (TRUE when unset).
+		public Func<byte[], nint>? CopyDataAnswer { get; set; }
+
 		private readonly HashSet<nint> _mine = new HashSet<nint>();
 
 		private WndProcDelegate? _proc;
@@ -1190,6 +1303,25 @@ internal static class TrayDiagnostics
 				_done.Set();
 				return IntPtr.Zero;
 			}
+			if (msg == 0x004Au && l != IntPtr.Zero)   // WM_COPYDATA
+			{
+				COPYDATA data = Marshal.PtrToStructure<COPYDATA>(l);
+				byte[] bytes = new byte[Math.Max(0, data.cbData)];
+				if (data.lpData != IntPtr.Zero && bytes.Length > 0)
+				{
+					Marshal.Copy(data.lpData, bytes, 0, bytes.Length);
+				}
+				lock (_gate)
+				{
+					if (!_copies.TryGetValue(h, out List<(nint, nint, byte[])>? list))
+					{
+						list = new List<(nint, nint, byte[])>();
+						_copies[h] = list;
+					}
+					list.Add((w, data.dwData, bytes));
+				}
+				return CopyDataAnswer?.Invoke(bytes) ?? new nint(1);
+			}
 			if (msg >= 0x0400u || msg == 0x0111u)
 			{
 				lock (_gate)
@@ -1227,6 +1359,24 @@ internal static class TrayDiagnostics
 			{
 				_mine.Remove(h);
 				_log.Remove(h);
+				_copies.Remove(h);
+			}
+		}
+
+		// The WM_COPYDATA messages delivered so far (sent messages are handled before the posted sentinel).
+		public List<(nint W, nint Data, byte[] Bytes)> DrainCopies(nint h)
+		{
+			PostMessageW(h, Sentinel, IntPtr.Zero, IntPtr.Zero);
+			_done.WaitOne(5000);
+			lock (_gate)
+			{
+				if (!_copies.TryGetValue(h, out List<(nint, nint, byte[])>? list))
+				{
+					return new List<(nint, nint, byte[])>();
+				}
+				List<(nint, nint, byte[])> copy = new List<(nint, nint, byte[])>(list);
+				list.Clear();
+				return copy;
 			}
 		}
 
@@ -1382,6 +1532,14 @@ internal static class TrayDiagnostics
 	// ---- interop ----
 
 	private delegate nint WndProcDelegate(nint hWnd, uint msg, nint wParam, nint lParam);
+
+	[StructLayout(LayoutKind.Sequential)]
+	private struct COPYDATA
+	{
+		public nint dwData;
+		public int cbData;
+		public nint lpData;
+	}
 
 	private static readonly nint HWND_MESSAGE = new nint(-3);
 

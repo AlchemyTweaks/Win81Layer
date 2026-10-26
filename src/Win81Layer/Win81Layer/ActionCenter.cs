@@ -10,45 +10,34 @@ using System.Windows.Controls;
 using System.Windows.Forms;
 using System.Windows.Input;
 using System.Windows.Media;
-using System.Windows.Media.Animation;
 using System.Windows.Threading;
 using Windows.Devices.Radios;
-using Windows.UI.Notifications;
-using Windows.UI.Notifications.Management;
 
 namespace Win81Layer;
 
+// The Action Center: a compact Quick settings panel (toggles, volume and brightness, All settings and Power) anchored at
+// the tray end of the taskbar it was opened from. Notifications are entirely Windows' own: this panel never reads, lists,
+// counts or dismisses them (the Notifications tile opens Windows' own notification center).
 public sealed partial class ActionCenter : Window
 {
-	private struct POINT
-	{
-		public int X;
-
-		public int Y;
-	}
-
 	private static ActionCenter? _instance;
 
 	private Screen? _screen;
 
-	private bool _dockLeft;
+	// The edge of the taskbar the panel opens from ("Bottom", "Top", "Left", "Right") and that bar's physical rect when
+	// known (null: the work area edge is the anchor).
+	private string _edge = "Bottom";
 
-	private double _offScreen;
+	private Rectangle? _barPx;
 
-	// Slide the CONTENT inside the fixed-position window (clipped to its 360px footprint) instead of animating
-	// Window.Left across the virtual desktop — the latter made the off-screen start land on the NEIGHBOURING monitor,
-	// so opening from the primary looked like it came from the secondary. Mirrors the working CharmsBar slide.
+	// "taskbar" or "Win+A", for the show log line.
+	private string _via = "taskbar";
+
+	// The content glides inside the fixed-position window (clipped to the frame) instead of animating Window.Left/Top
+	// across the virtual desktop, so a panel never appears to come from a neighbouring monitor.
 	private readonly TranslateTransform _slide = new TranslateTransform();
 
 	private bool _menuOpen;
-
-	private const double PanelW = 392.0;
-
-	private StackPanel _notifs = null!;
-
-	private TextBlock _notifEmpty = null!;
-
-	private Grid _tiles = null!;
 
 	private Slider? _brightness;
 
@@ -57,8 +46,6 @@ public sealed partial class ActionCenter : Window
 	private readonly AudioController _audio = new AudioController();
 
 	private bool _syncingSliders;
-
-	private bool _quiet;
 
 	private double _scale = 1.0;
 
@@ -77,22 +64,11 @@ public sealed partial class ActionCenter : Window
 	// Stopwatch timestamp of the same show, for the open latency in the log (TickCount64 is quantized to ~15.6 ms).
 	private long _shownStamp;
 
-	private double _finalLeft;
-
-	private readonly List<(Border tile, Func<bool> isOn)> _toggleTiles = new List<(Border, Func<bool>)>();
-
-	private static readonly DependencyProperty OnProp;
-
-	private static readonly SolidColorBrush Hover;
-
 	private bool _airplaneOn;
 
 	private bool _btOn;
 
 	private bool _wifiOn;
-
-	[DllImport("user32.dll", CharSet = CharSet.Auto)]
-	private static extern nint SendMessageTimeout(nint hWnd, uint Msg, nint wParam, string lParam, uint fuFlags, uint uTimeout, out nint lpdwResult);
 
 	[DllImport("user32.dll")]
 	private static extern int GetMessageTime();
@@ -107,7 +83,9 @@ public sealed partial class ActionCenter : Window
 
 	private static bool _hasToggled;
 
-	public static void Toggle(Screen? screen = null, string edge = "Bottom")
+	// screen/edge/barPx: the monitor and taskbar the panel opens from (the taskbar button passes its own; Win+A passes the
+	// bar on the monitor under the cursor). fromKeyboard only labels the show log line.
+	public static void Toggle(Screen? screen = null, string edge = "Bottom", Rectangle? barPx = null, bool fromKeyboard = false)
 	{
 		ShellActivity.Stamp();
 		// Called synchronously from the taskbar button's Click this is the WM_LBUTTONUP's own time; from Win+A, the dispatch time.
@@ -128,7 +106,9 @@ public sealed partial class ActionCenter : Window
 		}
 		ActionCenter ac = _instance ?? (_instance = new ActionCenter());
 		ac._screen = screen;
-		ac._dockLeft = edge == "Left";
+		ac._edge = NormalizeEdge(edge);
+		ac._barPx = barPx is { IsEmpty: false } ? barPx : null;
+		ac._via = fromKeyboard || screen == null ? "Win+A" : "taskbar";
 		ac.ShowPanel();
 	}
 
@@ -158,7 +138,7 @@ public sealed partial class ActionCenter : Window
 		base.Title = "Action Center";
 		base.Deactivated += delegate
 		{
-			if (_menuOpen)   // keep the flyout up while its Power sub-menu is open
+			if (_menuOpen)   // keep the panel up while its Power sub-menu is open
 			{
 				return;
 			}
@@ -181,9 +161,8 @@ public sealed partial class ActionCenter : Window
 		};
 		base.PreviewKeyDown += delegate(object _, System.Windows.Input.KeyEventArgs e)
 		{
-			//IL_0002: Unknown result type (might be due to invalid IL or missing references)
-			//IL_0009: Invalid comparison between Unknown and I4
-			if ((int)e.Key == 13 || (int)e.Key == 27)   // Enter or Escape closes the panel
+			// Escape closes the panel; Enter closes it too unless it activates the focused tile or footer button.
+			if (e.Key == Key.Escape || (e.Key == Key.Enter && !IsActionableFocus()))
 			{
 				Dismiss("key " + e.Key);
 			}
@@ -268,6 +247,8 @@ public sealed partial class ActionCenter : Window
 
 	private const uint SWP_FRAME_REFRESH = 0x0037u;
 
+	private const uint SWP_NOZORDER_NOACTIVATE = 0x0014u;
+
 	// Same treatment as AppSwitcher.ConfigureNativeSurface: as a non-layered HWND the panel would otherwise pick up the
 	// Win11 DWM border, rounded corners and show/hide fade. Affects only this launcher-owned HWND.
 	private void ConfigureNativeSurface()
@@ -300,7 +281,8 @@ public sealed partial class ActionCenter : Window
 		SyncNativeClearColor();
 	}
 
-	// The render target clears to the panel's top colour, so a frame shown before WPF's first render is never black.
+	// The render target clears to the panel's body colour (its first stop), so a frame shown before WPF's first render is
+	// never black.
 	private void SyncNativeClearColor()
 	{
 		try
@@ -381,161 +363,65 @@ public sealed partial class ActionCenter : Window
 		}
 	}
 
+	// Sizes the panel to its content and anchors it at the tray end of the taskbar it opens from (PlacePanel), on the monitor
+	// passed by the invoking taskbar (or the one under the cursor; never blindly the primary).
 	private void PlaceOnEdge()
 	{
-		// Prefer the monitor passed by the invoking taskbar; fall back to the monitor under the cursor
-		// (never blindly PrimaryScreen), matching CharmsBar's target-monitor logic.
 		Screen screen = _screen ?? Screen.FromPoint(System.Windows.Forms.Cursor.Position) ?? Screen.PrimaryScreen;
-		Rectangle b = TaskbarWorkArea.Current(screen);
-		_scale = ScaleFor(b);
-		double availableWidth = (double)b.Width / _scale;
-		double panelWidth = Math.Min(PanelW, Math.Max(344.0, availableWidth * 0.43));
-		panelWidth = Math.Min(panelWidth, availableWidth);
-		base.Width = panelWidth;
-		base.Height = (double)b.Height / _scale;
-		base.Top = (double)b.Top / _scale;
-		if (_dockLeft)
+		Rectangle work = TaskbarWorkArea.Current(screen);
+		if (work.IsEmpty)
 		{
-			base.Left = (_finalLeft = (double)b.Left / _scale);
-			_offScreen = -panelWidth;
+			work = screen.WorkingArea;
 		}
-		else
+		_scale = MonitorDpi.ScaleFor(work);
+		double width = PanelWidthFor(work.Width / _scale);
+		ActionCenterPlacement probe = PlacePanel(work, _barPx, _edge, _scale, width, 1.0, screen.Bounds);
+		double height = LayoutPanel(width, probe.MaxHeightPx / _scale);
+		ActionCenterPlacement p = PlacePanel(work, _barPx, _edge, _scale, width, height, screen.Bounds);
+		_toward = p.Toward;
+		_placedPx = p.Px;
+		_openDevice = screen.DeviceName;
+		if (base.IsVisible)
 		{
-			base.Left = (_finalLeft = (double)b.Right / _scale - panelWidth);
-			_offScreen = panelWidth;
+			// Already on screen (a re-placement after the state snapshot): top and height change together.
+			ApplyPlacementPx();
+			return;
 		}
-		ConfigureMetroLayout(panelWidth, base.Height);
+		// Hidden: WPF converts these with the DPI of the monitor the window was last on; ShowMetroPanel places the shown
+		// window again in physical pixels (ApplyPlacementPx), which corrects a monitor of another DPI.
+		base.Width = p.Px.Width / _scale;
+		base.Height = p.Px.Height / _scale;
+		base.Left = p.Px.Left / _scale;
+		base.Top = p.Px.Top / _scale;
 	}
 
-	private void BuildBrightness(StackPanel host)
+	// Moves and sizes the visible HWND to the physical placement in one call, then lets WPF's values follow with the DPI WPF
+	// now uses for this window (after a move to a monitor of another DPI, WM_DPICHANGED has updated it inside that call).
+	private void ApplyPlacementPx()
 	{
-		int cur = SafeGetBrightness();
-		if (cur < 0)
+		nint hwnd = new System.Windows.Interop.WindowInteropHelper(this).Handle;
+		Rectangle px = _placedPx;
+		if (hwnd == nint.Zero || px.Width <= 0 || px.Height <= 0)
 		{
 			return;
 		}
-		host.Children.Add(new TextBlock
-		{
-			Text = "Brightness",
-			Foreground = new SolidColorBrush(System.Windows.Media.Color.FromArgb(204, byte.MaxValue, byte.MaxValue, byte.MaxValue)),
-			FontFamily = new System.Windows.Media.FontFamily("Segoe UI"),
-			FontSize = 12.0,
-			Margin = new Thickness(0.0, 0.0, 0.0, 2.0)
-		});
-		_brightness = new Slider
-		{
-			Minimum = 0.0,
-			Maximum = 100.0,
-			Value = cur,
-			SmallChange = 5.0,
-			LargeChange = 10.0
-		};
-		_brightness.ValueChanged += delegate(object _, RoutedPropertyChangedEventArgs<double> e)
-		{
-			if (_syncingSliders)
-			{
-				return;
-			}
-			try
-			{
-				MonitorBrightness.SetThrottled((int)e.NewValue);
-				OsdService.ShowBrightness((int)e.NewValue);
-			}
-			catch
-			{
-			}
-		};
-		host.Children.Add(_brightness);
-	}
-
-	private void SyncBrightness()
-	{
-		// The DDC/CI brightness read is a slow I2C round-trip (50-300ms, worse on external monitors). ShowPanel calls
-		// this BEFORE Show()+the slide, so reading it synchronously stalls every Action Center open. Read it off the
-		// UI thread and settle the slider a beat later — the panel now slides open immediately.
-		if (_brightness == null)
-		{
-			return;
-		}
-		System.Threading.Tasks.Task.Run(delegate
-		{
-			int cur = SafeGetBrightness();
-			if (cur < 0)
-			{
-				return;
-			}
-			((DispatcherObject)this).Dispatcher.BeginInvoke((Delegate)(Action)delegate
-			{
-				if (_brightness != null)
-				{
-					_syncingSliders = true;
-					_brightness.Value = cur;
-					_syncingSliders = false;
-				}
-			}, Array.Empty<object>());
-		});
-	}
-
-	private void BuildVolume(StackPanel host)
-	{
-		float v;
+		SetWindowPos(hwnd, IntPtr.Zero, px.Left, px.Top, px.Width, px.Height, SWP_NOZORDER_NOACTIVATE);
+		double s = _scale;
 		try
 		{
-			v = _audio.GetVolume();
+			double wpf = VisualTreeHelper.GetDpi(this).DpiScaleX;
+			if (wpf > 0.0 && !double.IsNaN(wpf))
+			{
+				s = wpf;
+			}
 		}
 		catch
 		{
-			return;
 		}
-		host.Children.Add(new TextBlock
-		{
-			Text = "Volume",
-			Foreground = new SolidColorBrush(System.Windows.Media.Color.FromArgb(204, byte.MaxValue, byte.MaxValue, byte.MaxValue)),
-			FontFamily = new System.Windows.Media.FontFamily("Segoe UI"),
-			FontSize = 12.0,
-			Margin = new Thickness(0.0, 10.0, 0.0, 2.0)
-		});
-		_volume = new Slider
-		{
-			Minimum = 0.0,
-			Maximum = 100.0,
-			Value = Math.Round(v * 100f),
-			SmallChange = 5.0,
-			LargeChange = 10.0
-		};
-		_volume.ValueChanged += delegate(object _, RoutedPropertyChangedEventArgs<double> e)
-		{
-			if (_syncingSliders)
-			{
-				return;
-			}
-			try
-			{
-				_audio.SetVolume((float)(e.NewValue / 100.0));
-				OsdService.ShowVolume((int)e.NewValue, muted: false);
-			}
-			catch
-			{
-			}
-		};
-		host.Children.Add(_volume);
-	}
-
-	private void SyncVolume()
-	{
-		if (_volume != null)
-		{
-			try
-			{
-				_syncingSliders = true;
-				_volume.Value = Math.Round(_audio.GetVolume() * 100f);
-				_syncingSliders = false;
-			}
-			catch
-			{
-				_syncingSliders = false;
-			}
-		}
+		base.Width = px.Width / s;
+		base.Height = px.Height / s;
+		base.Left = px.Left / s;
+		base.Top = px.Top / s;
 	}
 
 	private static int SafeGetBrightness()
@@ -547,126 +433,6 @@ public sealed partial class ActionCenter : Window
 		catch
 		{
 			return -1;
-		}
-	}
-
-	private void BuildTiles()
-	{
-		BuildMetroTiles();
-	}
-
-	private Border QuickTile(int glyph, string label, Func<Task> click, bool toggle)
-	{
-		StackPanel host = new StackPanel
-		{
-			Orientation = System.Windows.Controls.Orientation.Vertical,
-			HorizontalAlignment = System.Windows.HorizontalAlignment.Center,
-			VerticalAlignment = VerticalAlignment.Center
-		};
-		host.Children.Add(new TextBlock
-		{
-			Text = char.ConvertFromUtf32(glyph),
-			FontFamily = new System.Windows.Media.FontFamily("Segoe MDL2 Assets"),
-			FontSize = 22.0,
-			Foreground = System.Windows.Media.Brushes.White,
-			HorizontalAlignment = System.Windows.HorizontalAlignment.Center,
-			Margin = new Thickness(0.0, 0.0, 0.0, 4.0)
-		});
-		host.Children.Add(new TextBlock
-		{
-			Text = label,
-			FontFamily = new System.Windows.Media.FontFamily("Segoe UI"),
-			FontSize = 11.0,
-			Foreground = new SolidColorBrush(System.Windows.Media.Color.FromArgb(221, byte.MaxValue, byte.MaxValue, byte.MaxValue)),
-			TextAlignment = TextAlignment.Center,
-			TextWrapping = TextWrapping.Wrap,
-			HorizontalAlignment = System.Windows.HorizontalAlignment.Center
-		});
-		Border b = new Border
-		{
-			Height = 74.0,
-			Margin = new Thickness(4.0),
-			CornerRadius = new CornerRadius(2.0),
-			Cursor = System.Windows.Input.Cursors.Hand,
-			Background = TileBrush(on: false),
-			Child = host,
-			Tag = toggle
-		};
-		b.MouseEnter += delegate
-		{
-			if (!IsOn((DependencyObject)(object)b))
-			{
-				b.Background = Hover;
-			}
-		};
-		b.MouseLeave += delegate
-		{
-			b.Background = TileBrush(IsOn((DependencyObject)(object)b));
-		};
-		b.MouseLeftButtonUp += async delegate
-		{
-			if (!b.IsHitTestVisible)
-			{
-				return;
-			}
-			b.IsHitTestVisible = false;
-			b.Opacity = 0.72;
-			try
-			{
-				await click();
-			}
-			catch (Exception ex)
-			{
-				Logger.Log("Action Center '" + label.Replace("\n", " ") + "' failed: " + ex.Message);
-				ToastService.Show(null, "Action center", label.Replace("\n", " "), "Windows could not complete this action. The corresponding Settings page will be used when available.");
-			}
-			finally
-			{
-				b.Opacity = 1.0;
-				b.IsHitTestVisible = true;
-				RefreshTileStates();
-			}
-		};
-		return b;
-	}
-
-	private void RefreshTileStates()
-	{
-		RefreshMetroTileStates(animate: false);
-	}
-
-	private static bool IsOn(DependencyObject d)
-	{
-		return (bool)d.GetValue(OnProp);
-	}
-
-	private static SolidColorBrush TileBrush(bool on)
-	{
-		if (on)
-		{
-			return Frozen(StartAccent.Color());
-		}
-		// Flat skin: slightly more opaque off-cells so they read as solid tiles; glass: fainter over the translucent pane.
-		byte off = (byte)(ShellSkin.GlassOn ? 24 : 40);
-		return Frozen(System.Windows.Media.Color.FromArgb(off, byte.MaxValue, byte.MaxValue, byte.MaxValue));
-	}
-
-	private void ToggleQuiet()
-	{
-		_quiet = !_quiet;
-		try
-		{
-			if (_quiet)
-			{
-				NativeBanner.Suppress();
-			}
-			else
-			{
-				NativeBanner.Restore();
-			}
-		}
-		catch
-		{
 		}
 	}
 
@@ -798,19 +564,6 @@ public sealed partial class ActionCenter : Window
 		}
 	}
 
-	// Dark/Light system theme — documented HKCU keys + WM_SETTINGCHANGE broadcast so Explorer/UWP repaint live.
-	private static bool ThemeIsDark()
-	{
-		return ShellTheme.IsDark;   // single source of truth (cached + change-signalled)
-	}
-
-	private void ToggleTheme()
-	{
-		// Flip through the single authority: it writes the registry, broadcasts to Explorer/UWP, rebuilds the menu
-		// palette and repaints the launcher's own open surfaces live (via ApplyResourceTokens + the Changed event).
-		ShellTheme.Toggle();
-	}
-
 	private static Task RunSync(Action action)
 	{
 		action();
@@ -835,37 +588,70 @@ public sealed partial class ActionCenter : Window
 		// system flyout can own foreground focus; the native Start/Search hosts remain suspended and cannot interfere.
 		// HardHide (not a raw Hide) so refresh timers stop and the open/close state stays in sync with visibility.
 		HardHide();
-		await Task.Delay(40);
-		try
+		if (QaChords == null)
 		{
-			Keystroke.Chord(91, 75);
+			await Task.Delay(40);
+		}
+		if (SendChord(91, 75))
+		{
 			Logger.Log("Action Center 'Connect': Win+K dispatched");
+			return;
 		}
-		catch (Exception ex)
+		Logger.Log("Action Center 'Connect': Win+K could not be sent; opening Settings instead");
+		await OpenExternal("Connect", ConnectedDevicesTarget, ProjectSettingsTarget);
+	}
+
+	// The Notifications tile: Windows' own notification center (Win+N), exactly like Connect hands over to Win+K. The
+	// launcher shows no notifications of its own.
+	private async Task OpenNotificationCenter()
+	{
+		HardHide();
+		if (QaChords == null)
 		{
-			Logger.Log("Connect flyout failed: " + ex.Message);
-			await OpenExternal("Connect", ConnectedDevicesTarget, ProjectSettingsTarget);
+			await Task.Delay(40);
 		}
+		if (SendChord(91, 78))
+		{
+			Logger.Log("Action Center 'notifications': Win+N dispatched (native notification center)");
+			return;
+		}
+		Logger.Log("Action Center 'notifications': Win+N could not be sent; opening Settings > Notifications instead");
+		await OpenExternal("Notifications", NotificationsPageTarget);
+	}
+
+	// QA seams: when QaChords is set, a chord is recorded there instead of being sent as real input (QaChordFails makes it
+	// report a failure); when QaLaunches is set, an external target is recorded there instead of being opened.
+	internal List<byte[]>? QaChords;
+
+	internal bool QaChordFails;
+
+	internal List<string>? QaLaunches;
+
+	private bool SendChord(params byte[] vks)
+	{
+		if (QaChords != null)
+		{
+			QaChords.Add(vks);
+			return !QaChordFails;
+		}
+		return Keystroke.Chord(vks);
 	}
 
 	private async Task OpenExternal(string label, string primary, string? fallback = null)
 	{
+		if (QaLaunches != null)
+		{
+			QaLaunches.Add(primary);
+			return;
+		}
 		// Settings activation can block for over a second, so launch on a ShellLaunch worker and let the close
-		// animation run meanwhile. A failure toast is marshalled back to this window's dispatcher.
+		// animation run meanwhile. A failure is logged (Windows' own surfaces carry any user-facing message).
 		ShellLaunch.AllowForeground();
 		Dismiss();
-		Dispatcher dispatcher = ((DispatcherObject)this).Dispatcher;
 		ShellLaunch.Run(delegate
 		{
 			bool opened = TryStart(primary) || (!string.IsNullOrWhiteSpace(fallback) && TryStart(fallback));
 			Logger.Log("Action Center '" + label + "': " + (opened ? "opened" : "failed") + " (" + primary + ")");
-			if (!opened)
-			{
-				dispatcher.BeginInvoke((Action)delegate
-				{
-					ToastService.Show(null, "Action center", label, "Windows could not open the corresponding system control.");
-				});
-			}
 		});
 		await Task.CompletedTask;
 	}
@@ -893,130 +679,10 @@ public sealed partial class ActionCenter : Window
 		};
 	}
 
-	private static void BroadcastSettingChange(string section)
-	{
-		// off the UI thread: a hung top-level window can make the broadcast block up to ~200ms
-		Task.Run(delegate
-		{
-			try
-			{
-				SendMessageTimeout((nint)65535, 26u, (nint)0, section, 2u, 200u, out var _);
-			}
-			catch
-			{
-			}
-		});
-	}
-
-	private async void LoadNotifications()
-	{
-		try
-		{
-			UserNotificationListener listener = UserNotificationListener.Current;
-			if (await listener.RequestAccessAsync() != UserNotificationListenerAccessStatus.Allowed)
-			{
-				ShowNotifs(null);
-				return;
-			}
-			IReadOnlyList<UserNotification> list = await listener.GetNotificationsAsync(NotificationKinds.Toast);
-			List<(uint id, string app, string title, string body, string aumid, ImageSource? icon)> rows = new List<(uint, string, string, string, string, ImageSource?)>();
-			foreach (UserNotification n in list)
-			{
-				string app = "";
-				string aumid = "";
-				try
-				{
-					app = n.AppInfo?.DisplayInfo?.DisplayName ?? "";
-					aumid = n.AppInfo?.AppUserModelId ?? "";
-				}
-				catch
-				{
-				}
-				string title = "";
-				string body = "";
-				try
-				{
-					IReadOnlyList<AdaptiveNotificationText> texts = n.Notification.Visual.GetBinding(KnownNotificationBindings.ToastGeneric)?.GetTextElements();
-					if (texts != null && texts.Count > 0)
-					{
-						title = texts[0].Text;
-						if (texts.Count > 1)
-						{
-							body = texts[1].Text;
-						}
-					}
-				}
-				catch
-				{
-				}
-				rows.Add((n.Id, app, title, body, aumid, ResolveNotifIcon(aumid, app)));
-			}
-			((DispatcherObject)this).Dispatcher.Invoke((Action)delegate
-			{
-				ShowNotifs(rows);
-			});
-		}
-		catch
-		{
-			((DispatcherObject)this).Dispatcher.Invoke((Action)delegate
-			{
-				ShowNotifs(null);
-			});
-		}
-	}
-
-	// The card icon: the seasonal app icon (34 DIP card image) while one applies, then the 8.1 override, then the app's own.
-	internal static ImageSource ResolveNotifIcon(string aumid, string app = null)
-	{
-		try
-		{
-			if (SeasonalAppIcons.KeyForNotification(aumid, app) is string seasonalKey
-				&& SeasonalAppIcons.Frame(seasonalKey, SeasonalAppIcons.Px(34.0)) is ImageSource art)
-			{
-				return art;
-			}
-		}
-		catch
-		{
-		}
-		if (string.IsNullOrEmpty(aumid))
-		{
-			return null;
-		}
-		try
-		{
-			ImageSource ov = AppIconOverrides.ResolveByAumid(aumid);
-			if (ov != null)
-			{
-				return ov;
-			}
-			return AppInventory.LoadIcon("shell:AppsFolder\\" + aumid);
-		}
-		catch
-		{
-			return null;
-		}
-	}
-
-	private void ShowNotifs(List<(uint id, string app, string title, string body, string aumid, ImageSource? icon)>? rows)
-	{
-		ShowMetroNotifications(rows);
-	}
-
-	private async void DismissOne(uint id, Border card)
-	{
-		await DismissMetroNotificationAsync(id, card);
-	}
-
-	private async void ClearAllNotifications()
-	{
-		await ClearMetroNotificationsAsync();
-	}
-
-	// Power tile → a small boot/shutdown menu (Sign out / Restart / Shut down / Advanced startup) styled like the
-	// rest of the shell, instead of opening the Power Options (power PLANS) control panel. Advanced startup reboots
+	// Power (footer) → a small boot/shutdown menu (Sign out / Sleep / Restart / Shut down / Advanced startup) styled like
+	// the rest of the shell, instead of opening the Power Options (power PLANS) control panel. Advanced startup reboots
 	// into the Windows recovery / boot-options page (UEFI firmware, startup settings, …). The _menuOpen guard keeps
-	// the flyout from dismissing itself while the sub-menu takes activation.
+	// the panel from dismissing itself while the sub-menu takes activation.
 	private void ShowPowerMenu()
 	{
 		System.Windows.Controls.ContextMenu ctx = new System.Windows.Controls.ContextMenu
@@ -1032,7 +698,7 @@ public sealed partial class ActionCenter : Window
 		ctx.Items.Add(TaskbarContextMenu.Leaf("Restart", delegate { PowerActions.Restart(); }));
 		ctx.Items.Add(TaskbarContextMenu.Leaf("Shut down", delegate { PowerActions.ShutDown(); }));
 		ctx.Items.Add(TaskbarContextMenu.Leaf("Advanced startup", delegate { PowerActions.AdvancedStartup(); }));
-		ctx.PlacementTarget = _tiles;   // anchor the popup to THIS window's presentation source
+		ctx.PlacementTarget = _powerButton;   // anchor the popup to THIS window's presentation source
 		ctx.Placement = System.Windows.Controls.Primitives.PlacementMode.MousePoint;
 		ctx.Closed += delegate
 		{
@@ -1045,87 +711,9 @@ public sealed partial class ActionCenter : Window
 		ctx.IsOpen = true;
 	}
 
-	private static void Launch(string cmd)
+	// --uxpaneltest: the panel as the laptop sees it (every tile, both sliders); returns the number of defined tiles.
+	internal static int QaRenderPanel(string outPath)
 	{
-		try
-		{
-			CharmListPane.Launch(cmd);
-		}
-		catch
-		{
-		}
-	}
-
-	private static System.Windows.Controls.Button LinkButton(string text)
-	{
-		System.Windows.Controls.Button b = new System.Windows.Controls.Button
-		{
-			Content = text,
-			Cursor = System.Windows.Input.Cursors.Hand,
-			FocusVisualStyle = null,
-			Background = System.Windows.Media.Brushes.Transparent,
-			BorderThickness = new Thickness(0.0),
-			FontFamily = new System.Windows.Media.FontFamily("Segoe UI"),
-			FontSize = 12.0
-		};
-		b.SetResourceReference(System.Windows.Controls.Control.ForegroundProperty, "MenuAccentLight");   // pattern 5: hyperlinks carry the accent, live
-		b.Template = LinkTemplate();
-		return b;
-	}
-
-	private static ControlTemplate LinkTemplate()
-	{
-		ControlTemplate t = new ControlTemplate(typeof(System.Windows.Controls.Button));
-		FrameworkElementFactory cp = new FrameworkElementFactory(typeof(ContentPresenter));
-		cp.SetValue(FrameworkElement.VerticalAlignmentProperty, VerticalAlignment.Center);
-		t.VisualTree = cp;
-		return t;
-	}
-
-	private static SolidColorBrush Frozen(System.Windows.Media.Color c)
-	{
-		SolidColorBrush b = new SolidColorBrush(c);
-		((Freezable)b).Freeze();
-		return b;
-	}
-
-	private double ScaleFor(Rectangle b)
-	{
-		try
-		{
-			POINT c = new POINT
-			{
-				X = b.Left + b.Width / 2,
-				Y = b.Top + b.Height / 2
-			};
-			nint mon = MonitorFromPoint(c, 2u);
-			if (mon != IntPtr.Zero && GetDpiForMonitor(mon, 0u, out var dx, out var _) == 0 && dx != 0)
-			{
-				return (double)dx / 96.0;
-			}
-		}
-		catch
-		{
-		}
-		return 1.0;
-	}
-
-	internal static int QaRenderPanel(string outPath, double width = 468.0, double height = 900.0)
-	{
-		return QaRenderMetro(outPath, Math.Max(width, 420.0), height, compact: height < 800.0, withNotifications: false).DefinedTiles;
-	}
-
-	[DllImport("user32.dll")]
-	private static extern nint MonitorFromPoint(POINT p, uint flags);
-
-	[DllImport("shcore.dll")]
-	private static extern int GetDpiForMonitor(nint mon, uint type, out uint dx, out uint dy);
-
-	static ActionCenter()
-	{
-		//IL_001f: Unknown result type (might be due to invalid IL or missing references)
-		//IL_0029: Expected O, but got Unknown
-		OnProp = DependencyProperty.RegisterAttached("AcOn", typeof(bool), typeof(ActionCenter), new PropertyMetadata((object)false));
-		Hover = Frozen(System.Windows.Media.Color.FromArgb(42, byte.MaxValue, byte.MaxValue, byte.MaxValue));
+		return QaRenderMetro(outPath, ActionCenterQaDevice.Laptop).DefinedTiles;
 	}
 }

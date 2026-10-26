@@ -1212,6 +1212,12 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 
 	private static readonly SolidColorBrush RestFlyoutSelection = Fz(DarkRestPalette.AccentFillColor);
 
+	// QA (--action-center-test): the flyouts' normal tone for a seed, through this window's own tone path.
+	internal static System.Windows.Media.Color QaSoundTone(System.Windows.Media.Color seed, double hueShift, double saturationFloor, double lightness)
+	{
+		return NormalSoundTone(seed, hueShift, saturationFloor, lightness);
+	}
+
 	// The normal SoundTone colour (without the Dark rest rule), for tiles that Dark rest mutes.
 	private static System.Windows.Media.Color NormalSoundTone(System.Windows.Media.Color seed, double hueShift, double saturationFloor, double lightness)
 	{
@@ -1519,46 +1525,9 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 
 	private static System.Windows.Media.Color SoundTone(System.Windows.Media.Color seed, double hueShift, double saturationFloor, double lightness)
 	{
-		if (s_restTones)
-		{
-			// Dark rest: no saturation floor and at most 0.20, and the dark tones a quarter darker, so nothing glows.
-			saturationFloor = 0.0;
-			if (lightness < 0.40)
-			{
-				lightness *= 0.75;
-			}
-		}
-		ColorMath.RgbToHsl((double)seed.R / 255.0, (double)seed.G / 255.0, (double)seed.B / 255.0, out double h, out double s, out _);
-		if (s_restTones)
-		{
-			s = Math.Min(s, 0.20);
-		}
-		if (s < 0.06)
-		{
-			if (saturationFloor >= 0.4)
-			{
-				h = 0.58;
-				s = saturationFloor;
-			}
-			else
-			{
-				s = 0.0;
-			}
-		}
-		else
-		{
-			s = Math.Clamp(Math.Max(s, saturationFloor), 0.0, 0.84);
-		}
-		h = (h + hueShift) % 1.0;
-		if (h < 0.0)
-		{
-			h += 1.0;
-		}
-		ColorMath.HslToRgb(h, s, Math.Clamp(lightness, 0.0, 1.0), out double r, out double g, out double b);
-		return System.Windows.Media.Color.FromRgb(
-			(byte)Math.Clamp((int)Math.Round(r * 255.0), 0, 255),
-			(byte)Math.Clamp((int)Math.Round(g * 255.0), 0, 255),
-			(byte)Math.Clamp((int)Math.Round(b * 255.0), 0, 255));
+		// One tone function for the flyouts and the Action Center (FlyoutPalette); Dark rest tones it down (no saturation
+		// floor, at most 0.20, the dark tones a quarter darker), so nothing glows.
+		return FlyoutPalette.Tone(seed, hueShift, saturationFloor, lightness, s_restTones);
 	}
 
 	private static SolidColorBrush Fz(System.Windows.Media.Color c)
@@ -1586,11 +1555,7 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 
 	private static System.Windows.Media.Color Brighten(System.Windows.Media.Color c)
 	{
-		return System.Windows.Media.Color.FromRgb(Up(c.R), Up(c.G), Up(c.B));
-		static byte Up(byte v)
-		{
-			return (byte)Math.Min(255, v + 82 + (255 - v) * 22 / 100);
-		}
+		return FlyoutPalette.Brighten(c);
 	}
 
 	private void ApplyPerfMode()
@@ -5040,7 +5005,7 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		return _audioSwitchImage;
 	}
 
-	// Left-click the audio switcher: make the NEXT active output device the default (cycles), with a toast. Works for any
+	// Left-click the audio switcher: make the NEXT active output device the default (cycles), logged. Works for any
 	// device type (wired/wireless headset, speakers) — it just cycles whatever endpoints Windows reports as active.
 	private void CycleAudioOutput()
 	{
@@ -5064,11 +5029,8 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 				{
 					AudioDevices.SetDefault(next.Id);
 				}
-				string name = next.Name;
-				((System.Windows.Threading.DispatcherObject)this).Dispatcher.BeginInvoke((Delegate)(Action)delegate
-				{
-					ToastService.Show(AudioSwitchImage(), "Sound", switched ? "Output switched" : "Output device", name);
-				}, Array.Empty<object>());
+				// log only: the switcher's own icon and Windows' volume UI show the new default (no launcher toast)
+				Logger.Log("Audio switcher: default output -> " + next.Name + (switched ? "" : " (only one active output)"));
 			}
 			catch (Exception ex)
 			{
@@ -10433,8 +10395,36 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 	private void OnActionCenter(object sender, RoutedEventArgs e)
 	{
 		PulsePress(sender as UIElement);
-		ActionCenter.Toggle(_screen, _position);
+		ActionCenter.Toggle(_screen, _position, TryGetBarRect(out System.Drawing.Rectangle bar) ? bar : null);
 	}
+
+	// This bar's physical rect while it is on screen (an auto-hidden bar that has slid away has none), for anchoring the
+	// Action Center to it.
+	internal bool TryGetBarRect(out System.Drawing.Rectangle px)
+	{
+		px = System.Drawing.Rectangle.Empty;
+		try
+		{
+			if (_stopped || _hidden || base.Visibility != Visibility.Visible)
+			{
+				return false;
+			}
+			nint hwnd = new WindowInteropHelper(this).Handle;
+			if (hwnd == IntPtr.Zero || !GetWindowRect(hwnd, out RECT r) || r.right <= r.left || r.bottom <= r.top)
+			{
+				return false;
+			}
+			px = System.Drawing.Rectangle.FromLTRB(r.left, r.top, r.right, r.bottom);
+			return true;
+		}
+		catch
+		{
+			return false;
+		}
+	}
+
+	// The edge this bar sits on ("Bottom", "Top", "Left", "Right").
+	internal string BarEdge => _position ?? "Bottom";
 
 	protected override void OnClosing(CancelEventArgs e)
 	{

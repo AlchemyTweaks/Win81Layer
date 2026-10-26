@@ -30,6 +30,12 @@ namespace Win81Layer;
 // as an orphan (so the icon still shows), NIM_MODIFY answers FALSE as Explorer does, and the owner window gets a
 // targeted, throttled TaskbarCreated, which every common framework answers by adding its icons again.
 //
+// Notifications stay entirely Windows' own. A legacy balloon (NIF_INFO: WinForms ShowBalloonTip and many tray apps) is
+// turned into a native toast by Explorer's tray, so while this window hosts the tray every icon's add / delete / version
+// and every MODIFY that carries a balloon is also handed, asynchronously and bounded, to Explorer's own (hidden)
+// Shell_TrayWnd (QueueBalloonMirror / DrainBalloonMirror). Icon and tooltip churn is never mirrored, and the app's call
+// is answered from our table before anything goes to Explorer.
+//
 // On shutdown we destroy the window and broadcast TaskbarCreated again so explorer reclaims the tray (reversible).
 // Runs on its own background thread with a Win32 message loop so the high-frequency tooltip MODIFY traffic never
 // touches the UI thread; consumers get a single coalesced Changed event.
@@ -97,6 +103,7 @@ public static class TrayHostService
 	private const int WM_DESTROY = 0x0002;
 	private const int WM_TIMER = 0x0113;
 	private const uint WM_APP_NUDGE = 0x8000u + 0x2A1u;   // posted to the host window: wParam = owner window, lParam = reason
+	private const uint WM_APP_BALLOON_MIRROR = 0x8000u + 0x2A2u;   // posted to the host window: drain the balloon mirror queue
 	private const uint REASSERT_TIMER = 1u;
 	private const uint BROADCAST_TIMER = 2u;
 	private const uint COLLAPSE_TIMER = 3u;
@@ -115,6 +122,7 @@ public static class TrayHostService
 	private const uint NIF_ICON = 0x02u;
 	private const uint NIF_TIP = 0x04u;
 	private const uint NIF_STATE = 0x08u;
+	private const uint NIF_INFO = 0x10u;   // a balloon (szInfo / szInfoTitle): Explorer turns it into a native toast
 	private const uint NIF_GUID = 0x20u;   // guidItem is only valid when this flag is set; otherwise it is uninitialized
 	private const uint NIS_HIDDEN = 0x01u;
 
@@ -449,7 +457,13 @@ public static class TrayHostService
 					if (data.dwData == new IntPtr(1))
 					{
 						byte[] payload = CopyPayload(data);
-						return (payload != null && HandleTrayPayload(payload, payload.Length)) ? new nint(1) : IntPtr.Zero;
+						bool handled = payload != null && HandleTrayPayload(payload, payload.Length);
+						if (payload != null)
+						{
+							// after our own table update and reply: Explorer gets what it needs to show balloons natively
+							QueueBalloonMirror(wParam, payload);
+						}
+						return handled ? new nint(1) : IntPtr.Zero;
 					}
 					if (data.dwData == new IntPtr(3))
 					{
@@ -490,6 +504,9 @@ public static class TrayHostService
 				return IntPtr.Zero;
 			case WM_APP_NUDGE:
 				NudgeNow(wParam, (NudgeReason)(int)lParam);
+				return IntPtr.Zero;
+			case WM_APP_BALLOON_MIRROR:
+				SignalMirror();   // never drain on the host thread
 				return IntPtr.Zero;
 			case WM_COMMAND:
 				ForwardTrayCommand(wParam, lParam);
@@ -559,6 +576,289 @@ public static class TrayHostService
 		{
 			return false;
 		}
+	}
+
+	// ----- Balloon mirror (notifications stay Windows' own)
+
+	private const int BalloonMirrorMax = 64;
+
+	private static readonly object _mirrorGate = new object();
+
+	private static readonly Queue<(nint WParam, byte[] Payload)> _mirrorQueue = new Queue<(nint, byte[])>();
+
+	private static long _lastMirrorDropLog = long.MinValue;
+
+	// The queue is drained on its own background thread, never on the tray host thread: every app's Shell_NotifyIcon
+	// waits on the host, so a slow Explorer must not be able to stall it. Read-only diagnostics drain explicitly.
+	private static readonly AutoResetEvent _mirrorSignal = new AutoResetEvent(false);
+
+	private static Thread _mirrorThread;
+
+	// --traytest seams: the window standing in for Explorer's taskbar, and one standing in for our own Shell_TrayWnd.
+	internal static Func<nint> MirrorTargetForTest;
+
+	internal static nint OwnTrayWindowForTest;
+
+	internal static int MirrorDropped;
+
+	// Which tray messages Explorer's own tray must also see: an icon's add, delete and version (so it knows the icon a
+	// balloon belongs to) and a MODIFY that carries a balloon. Icon and tooltip churn is never mirrored.
+	internal static bool ShouldMirrorToExplorer(uint dwMessage, uint uFlags)
+	{
+		return dwMessage == NIM_ADD || dwMessage == NIM_DELETE || dwMessage == NIM_SETVERSION
+			|| (dwMessage == NIM_MODIFY && (uFlags & NIF_INFO) != 0);
+	}
+
+	private static uint WireFlags(byte[] payload)
+	{
+		return payload.Length >= 24 ? BitConverter.ToUInt32(payload, 20) : 0u;
+	}
+
+	// Copies a message Explorer must see into a bounded queue (64; the oldest is dropped) and wakes the mirror thread to
+	// forward it. Never blocks and never talks to Explorer itself.
+	internal static bool QueueBalloonMirror(nint wParam, byte[] payload)
+	{
+		if (payload == null || payload.Length < 12)
+		{
+			return false;
+		}
+		uint dwMessage = BitConverter.ToUInt32(payload, 4);
+		if (!ShouldMirrorToExplorer(dwMessage, WireFlags(payload)))
+		{
+			return false;
+		}
+		bool dropped = false;
+		lock (_mirrorGate)
+		{
+			if (_mirrorQueue.Count >= BalloonMirrorMax)
+			{
+				_mirrorQueue.Dequeue();
+				MirrorDropped++;
+				dropped = true;
+			}
+			_mirrorQueue.Enqueue((wParam, (byte[])payload.Clone()));
+		}
+		if (dropped)
+		{
+			long now = Environment.TickCount64;
+			if (_lastMirrorDropLog == long.MinValue || now - _lastMirrorDropLog > 60000)
+			{
+				_lastMirrorDropLog = now;
+				Logger.Log($"[trayhost] balloon mirror queue full ({BalloonMirrorMax}); oldest dropped (dropped so far={MirrorDropped})");
+			}
+		}
+		SignalMirror();
+		return true;
+	}
+
+	private static void SignalMirror()
+	{
+		if (SettingsStore.ReadOnlyDiagnostics)
+		{
+			return;
+		}
+		if (_mirrorThread == null)
+		{
+			lock (_mirrorGate)
+			{
+				if (_mirrorThread == null)
+				{
+					Thread t = new Thread(MirrorLoop)
+					{
+						IsBackground = true,
+						Name = "TrayBalloonMirror"
+					};
+					t.Start();
+					_mirrorThread = t;
+				}
+			}
+		}
+		_mirrorSignal.Set();
+	}
+
+	private static void MirrorLoop()
+	{
+		while (true)
+		{
+			_mirrorSignal.WaitOne();
+			try
+			{
+				DrainBalloonMirror();
+			}
+			catch (Exception ex)
+			{
+				Logger.Log("[trayhost] balloon mirror failed: " + ex.Message);
+			}
+		}
+	}
+
+	internal static int MirrorQueuedForTest()
+	{
+		lock (_mirrorGate)
+		{
+			return _mirrorQueue.Count;
+		}
+	}
+
+	internal static void MirrorResetForTest()
+	{
+		lock (_mirrorGate)
+		{
+			_mirrorQueue.Clear();
+		}
+		MirrorDropped = 0;
+	}
+
+	// Hands the queued messages to Explorer's (hidden) Shell_TrayWnd, in order, each with a bounded wait (200 ms; a hung
+	// Explorer is skipped at once). Its answer is ignored, except that a refused balloon MODIFY (Explorer never saw the
+	// icon's ADD) is followed by one ADD built from our table, the icon's version, and one retry. Returns how many
+	// messages went out.
+	internal static int DrainBalloonMirror()
+	{
+		int sent = 0;
+		while (true)
+		{
+			(nint WParam, byte[] Payload) item;
+			lock (_mirrorGate)
+			{
+				if (_mirrorQueue.Count == 0)
+				{
+					break;
+				}
+				item = _mirrorQueue.Dequeue();
+			}
+			nint target;
+			try
+			{
+				target = (MirrorTargetForTest != null) ? MirrorTargetForTest() : AppBar.PrimaryNativeTaskbar();
+			}
+			catch
+			{
+				target = IntPtr.Zero;
+			}
+			if (target == IntPtr.Zero || target == _hwndTray || (OwnTrayWindowForTest != IntPtr.Zero && target == OwnTrayWindowForTest))
+			{
+				continue;
+			}
+			bool accepted = SendTrayCopyData(target, item.WParam, item.Payload);
+			sent++;
+			uint dwMessage = BitConverter.ToUInt32(item.Payload, 4);
+			if (!accepted && dwMessage == NIM_MODIFY && (WireFlags(item.Payload) & NIF_INFO) != 0)
+			{
+				(byte[] Add, byte[] Version)? readd = BuildReAdd(item.Payload);
+				if (readd != null)
+				{
+					SendTrayCopyData(target, item.WParam, readd.Value.Add);
+					sent++;
+					if (readd.Value.Version != null)
+					{
+						SendTrayCopyData(target, item.WParam, readd.Value.Version);
+						sent++;
+					}
+					SendTrayCopyData(target, item.WParam, item.Payload);
+					sent++;
+				}
+			}
+		}
+		return sent;
+	}
+
+	// WM_COPYDATA (dwData 1, the tray channel) with the same bytes; TRUE when the receiver answered TRUE in time.
+	private static bool SendTrayCopyData(nint target, nint wParam, byte[] payload)
+	{
+		nint buffer = IntPtr.Zero;
+		nint cds = IntPtr.Zero;
+		try
+		{
+			buffer = Marshal.AllocHGlobal(payload.Length);
+			Marshal.Copy(payload, 0, buffer, payload.Length);
+			COPYDATASTRUCT data = new COPYDATASTRUCT
+			{
+				dwData = new IntPtr(1),
+				cbData = payload.Length,
+				lpData = buffer
+			};
+			cds = Marshal.AllocHGlobal(Marshal.SizeOf<COPYDATASTRUCT>());
+			Marshal.StructureToPtr(data, cds, fDeleteOld: false);
+			// SMTO_ABORTIFHUNG | SMTO_BLOCK, 200 ms
+			return SendMessageTimeoutW(target, WM_COPYDATA, wParam, cds, 0x0003u, 200u, out nint result) != IntPtr.Zero && result != IntPtr.Zero;
+		}
+		catch
+		{
+			return false;
+		}
+		finally
+		{
+			if (cds != IntPtr.Zero)
+			{
+				Marshal.FreeHGlobal(cds);
+			}
+			if (buffer != IntPtr.Zero)
+			{
+				Marshal.FreeHGlobal(buffer);
+			}
+		}
+	}
+
+	// From a refused balloon MODIFY: an ADD for the same icon built from our table (window, id, guid, callback, icon and
+	// tooltip; no balloon) and, when the icon set a version, the NIM_SETVERSION for it. Null when we do not hold the icon.
+	private static (byte[] Add, byte[] Version)? BuildReAdd(byte[] modify)
+	{
+		WIRE_NID nid = ParseNid(modify, 8, modify.Length - 8);
+		bool hasGuid = (nid.uFlags & NIF_GUID) != 0 && nid.guidItem != Guid.Empty;
+		uint hwnd;
+		uint uid;
+		Guid guid;
+		uint callback;
+		uint version;
+		nint icon;
+		string tip;
+		lock (_gate)
+		{
+			Entry e = Find(nid, hasGuid, out _);
+			if (e == null)
+			{
+				return null;
+			}
+			hwnd = e.HWnd;
+			uid = e.UID;
+			guid = e.Guid;
+			callback = e.Callback;
+			version = e.Version;
+			icon = e.HIcon;
+			tip = e.Tip ?? "";
+		}
+		const int NidSize = 956;
+		byte[] Build(uint message, uint flags)
+		{
+			byte[] b = new byte[8 + NidSize];
+			Buffer.BlockCopy(modify, 0, b, 0, 4);   // the channel's magic, as the app's shell32 wrote it
+			Buffer.BlockCopy(BitConverter.GetBytes(message), 0, b, 4, 4);
+			Buffer.BlockCopy(BitConverter.GetBytes((uint)NidSize), 0, b, 8, 4);
+			Buffer.BlockCopy(BitConverter.GetBytes(hwnd), 0, b, 12, 4);
+			Buffer.BlockCopy(BitConverter.GetBytes(uid), 0, b, 16, 4);
+			Buffer.BlockCopy(BitConverter.GetBytes(flags | (guid != Guid.Empty ? NIF_GUID : 0u)), 0, b, 20, 4);
+			if (guid != Guid.Empty)
+			{
+				Buffer.BlockCopy(guid.ToByteArray(), 0, b, 8 + 936, 16);
+			}
+			return b;
+		}
+		byte[] add = Build(NIM_ADD, (callback != 0 ? NIF_MESSAGE : 0u) | (icon != IntPtr.Zero ? NIF_ICON : 0u) | (tip.Length > 0 ? NIF_TIP : 0u));
+		Buffer.BlockCopy(BitConverter.GetBytes(callback), 0, add, 8 + 16, 4);
+		Buffer.BlockCopy(BitConverter.GetBytes((uint)(long)icon), 0, add, 8 + 20, 4);
+		if (tip.Length > 0)
+		{
+			byte[] t = Encoding.Unicode.GetBytes(tip.Length > 127 ? tip.Substring(0, 127) : tip);
+			Buffer.BlockCopy(t, 0, add, 8 + 24, t.Length);
+		}
+		byte[] ver = null;
+		if (version != 0)
+		{
+			ver = Build(NIM_SETVERSION, 0u);
+			Buffer.BlockCopy(BitConverter.GetBytes(version), 0, ver, 8 + 800, 4);
+		}
+		return (add, ver);
 	}
 
 	private static nint ForwardAppBarRequest(nint sender, nint payload, COPYDATASTRUCT data)

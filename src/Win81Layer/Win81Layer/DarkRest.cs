@@ -17,7 +17,7 @@ namespace Win81Layer;
 // Dark rest: the fourth choice of the seasonal picker (Normal / Halloween / Christmas / Dark rest). Windows itself is
 // switched to dark mode by the seasonal engine, so everything that already follows light/dark goes dark on its own.
 // The surfaces that never followed light/dark (Metro Start, the taskbar and its flyouts, Action Center, the charms and
-// their panes, toasts, the OSD, PC Settings and the 8.1 captions) draw a dark variant only while the marker says
+// their panes, the OSD, PC Settings and the 8.1 captions) draw a dark variant only while the marker says
 // "rest"; with Normal, or under High Contrast, every one of those branches is skipped.
 internal static class DarkRest
 {
@@ -287,26 +287,6 @@ internal static class DarkRestPalette
 	public static readonly Brush FieldInk = Ink;
 
 	public static readonly Brush FieldHint = Hint;
-
-	// ----- toasts
-	public static readonly Brush ToastCard = Popup;
-
-	public static readonly Brush ToastCardGlass = Hex("#F00F0F0F");
-
-	public static readonly Brush ToastBorder = PopupEdge;
-
-	public static readonly Brush ToastApp = Ink2;
-
-	public static readonly Brush ToastTitle = Ink;
-
-	public static readonly Brush ToastMessage = Ink2;
-
-	public static readonly Brush ToastTime = Hint;
-
-	public static readonly Brush ToastClose = Ink2;
-
-	// the close button under the mouse: the menus' hover row (1.5:1 on the card)
-	public static readonly Brush ToastCloseHover = Hex("#FF323232");
 
 	// ----- volume and brightness OSD
 	public static readonly Brush OsdCard = Hex("#F20F0F0F");

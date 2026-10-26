@@ -6901,9 +6901,9 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 		thread.Start();
 	}
 
-	// Pins to this board (the Metro Start screen). Returns the entry it pinned; showToast false lets a caller that pins
-	// here in place of the Windows 7 menu say so itself.
-	public AppEntry? PinAppByPath(string? exePath, string fallbackName, bool showToast = true)
+	// Pins to this board (the Metro Start screen). Returns the entry it pinned (the new tile is the visible feedback; the
+	// log records it).
+	public AppEntry? PinAppByPath(string? exePath, string fallbackName)
 	{
 		if (!string.IsNullOrEmpty(exePath))
 		{
@@ -6925,10 +6925,7 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 				RaiseAppsReloaded();
 			}
 			PinEntryToStart(entry);
-			if (showToast)
-			{
-				ToastService.Show(entry.Icon, "Start", "Pinned", entry.Name + " was pinned to Start.");
-			}
+			Logger.Log("Pin to Start: '" + entry.Name + "' -> Start screen board");
 			return entry;
 		}
 		return null;
@@ -6974,7 +6971,7 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 		return PinSyncTiles().Any(x => NativePinSync.SameLaunchTarget(x.Tile.Entry.LaunchPath, launchPath));
 	}
 
-	// Pins without the toast (the user did not act in this window). False when a tile for it already exists.
+	// Pins for the native pin sync (the user did not act in this window). False when a tile for it already exists.
 	internal bool PinToStartForPinSync(AppEntry entry)
 	{
 		if (HasStartTileForPinSync(entry.LaunchPath))

@@ -1014,15 +1014,6 @@ internal static class SeasonalAppIcons
 		return KeyForIdentity(new SeasonalIdentity(exePath, null, null, null, processName));
 	}
 
-	internal static string? KeyForNotification(string? aumid, string? displayName)
-	{
-		if (!Current().Active || (string.IsNullOrEmpty(aumid) && string.IsNullOrEmpty(displayName)))
-		{
-			return null;
-		}
-		return KeyForIdentity(new SeasonalIdentity(null, null, aumid, displayName, null));
-	}
-
 	private static string? LinkTarget(string lnkPath)
 	{
 		try

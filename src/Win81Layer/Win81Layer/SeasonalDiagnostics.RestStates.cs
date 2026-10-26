@@ -14,7 +14,7 @@ using System.Windows.Threading;
 namespace Win81Layer;
 
 // --seasonaltest, Dark rest: the surfaces and states a review found hidden or too bright on black. The volume flyout's
-// device rows and an app card with a dark icon, a toast and an Action Center notification with a dark icon, the
+// device rows and an app card with a dark icon, the
 // switcher's selection ring, the Share and Devices panes, a search result card, the Settings pane's power flyout, the
 // Start tile app bar with a selected tile, menu toggles in every row state, the keyboard row of an open drop-down list
 // and the search scope drop-down. Then the startup upgrade with a wallpaper the user chose, dark coloured glyph icons,
@@ -374,12 +374,6 @@ internal static partial class SeasonalDiagnostics
         f.Search.QaRender(Path.Combine(outDir, "search-rest-calc.png"), "12*7", 920.0);
         f.Search.QaRenderScopeMenu(Path.Combine(outDir, "searchscope-rest.png"));
         f.Settings.QaRenderPowerFlyout(Path.Combine(outDir, "settings-power-rest.png"));
-        // a toast and an Action Center notification from an app with a black monochrome logo
-        BitmapSource black = GlyphIcon(Colors.Black);
-        ToastWindow toast = new ToastWindow(black, "Player", "Now playing", "A dark app icon on the toast.", null, "3:07 PM");
-        toast.QaRender(Path.Combine(outDir, "toast-rest-icon.png"));
-        toast.Close();
-        ActionCenter.QaRenderMetro(Path.Combine(outDir, "actioncenter-rest-notifications.png"), 468.0, 860.0, compact: false, withNotifications: true, currentTheme: true, qaNotificationIcon: black);
         // the Start tile app bar with the first tile selected
         start.QaRenderTileAppBar(Path.Combine(outDir, "start-rest-appbar.png"), 1920.0, 1080.0);
 
@@ -481,27 +475,6 @@ internal static partial class SeasonalDiagnostics
                 Metrics["RestVolumeRows"] = $"default {Hex(dFill)} name {dName:F2}; other {Hex(oFill)} outline {Hex(oEdge)} name {oName:F2}; logo {Hex(icon)} on {Hex(plate)} {Contrast(icon, plate):F2}";
             }
             Check("rest-volume-rows", bad.Count == 0, bad.Count == 0 ? Metrics["RestVolumeRows"]?.ToString() ?? "" : string.Join(" ; ", bad));
-        }
-        // a black app logo on the toast and on an Action Center notification card: lifted, 3:1 or more on the card; the
-        // card's body text 7:1
-        {
-            List<string> bad = new List<string>();
-            string toast = P("toast-rest-icon.png");
-            // the logo's solid left part (the 32 px icon sits at 13,14; the glyph has a hole in its middle)
-            (double tr, double tg, double tb) = RegionAverage(toast, 20, 21, 5, 5);
-            Color tIcon = Color.FromRgb((byte)tr, (byte)tg, (byte)tb);
-            Color tCard = Px(toast, 3, 3);
-            if (Contrast(tIcon, tCard) < 3.0) bad.Add($"toast logo {Hex(tIcon)} on {Hex(tCard)}");
-            string ac = P("actioncenter-rest-notifications.png");
-            (int ix, int iy) = _restNotificationIcon;
-            (double ar, double ag, double ab) = RegionAverage(ac, ix - 10, iy - 7, 4, 12);
-            Color aIcon = Color.FromRgb((byte)ar, (byte)ag, (byte)ab);
-            Color aCard = Px(ac, ix + 30, iy - 26);
-            if (Contrast(aIcon, aCard) < 3.0) bad.Add($"notification logo {Hex(aIcon)} on {Hex(aCard)}");
-            double bodyHover = Contrast(ActionCenter.RestCardBodyInk.Color, DarkRestPalette.PressedColor);
-            double bodyRest = Contrast(ActionCenter.RestCardBodyInk.Color, DarkRestPalette.HoverColor);
-            if (bodyHover < 7.0 || bodyRest < 7.0) bad.Add($"card body {bodyRest:F2} / hover {bodyHover:F2}");
-            Check("rest-dark-logos", bad.Count == 0, bad.Count == 0 ? $"toast {Hex(tIcon)} on {Hex(tCard)} {Contrast(tIcon, tCard):F2}; notification {Hex(aIcon)} on {Hex(aCard)} {Contrast(aIcon, aCard):F2}; body {bodyRest:F2} / hover {bodyHover:F2}" : string.Join(" ; ", bad));
         }
         // the switcher's keyboard selection: the ring 3:1 or more against the panel and against what it frames
         {
@@ -643,10 +616,6 @@ internal static partial class SeasonalDiagnostics
         RestStartPictureStateChecks(outDir, start, real);
         RestSearchScrollBarCheck(outDir, start, real);
     }
-
-    // The notification card's icon centre in actioncenter-rest-notifications.png (found from the render; the compact
-    // header moved the first card up 15 px, so the logo sample sits inside the logo again and the card sample on the card).
-    private static readonly (int X, int Y) _restNotificationIcon = (48, 137);
 
     // The bottom edge of a secondary action button ("Restore previous") in pcsettings-rest-launcher.png.
     private static readonly (int X, int Y) _restSecondaryButton = (150, 349);

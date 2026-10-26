@@ -1355,6 +1355,7 @@ internal static partial class PerfProbeDiagnostics
 		UnitWardenDryRun();
 		UnitMotionTokens();
 		UnitMotionFirstFrame();
+		UnitNativeHostsExcludeNotificationHost();
 		UnitTrayMenuMetrics();
 		Report["unit"] = UnitResults.ToArray();
 		Report["unitPassed"] = UnitResults.Count(r => r.StartsWith("PASS", StringComparison.Ordinal));

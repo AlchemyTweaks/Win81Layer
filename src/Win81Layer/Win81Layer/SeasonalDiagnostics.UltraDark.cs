@@ -653,10 +653,6 @@ internal static partial class SeasonalDiagnostics
 		Pair("start focus ring/canvas", ((SolidColorBrush)DarkRestPalette.StartFocusRing).Color, canvas, 3.0);
 		Pair("start new/canvas", ((SolidColorBrush)DarkRestPalette.StartNewInk).Color, canvas, 4.5);
 		Pair("start hover/canvas", Win7Palette.Over(((SolidColorBrush)DarkRestPalette.StartHover).Color, canvas), canvas, 1.3);
-		// the toasts and the OSD
-		Pair("toast title/card", ((SolidColorBrush)DarkRestPalette.ToastTitle).Color, popup, 4.5);
-		Pair("toast message/card", ((SolidColorBrush)DarkRestPalette.ToastMessage).Color, popup, 7.0);
-		Pair("toast time/card", ((SolidColorBrush)DarkRestPalette.ToastTime).Color, popup, 4.5);
 		// the muted Action Center tiles keep 4.5:1 for their soft ink
 		foreach (string hex in new string[6] { "#FF00A0E7", "#FFCF2056", "#FF2DB72C", "#FFFFC40D", "#FF007EE5", "#FF009BAA" })
 		{
@@ -667,6 +663,12 @@ internal static partial class SeasonalDiagnostics
 	}
 
 	// ===================================================================== rendered checks
+
+	// A pixel rect from DIP metrics (the QA renders are at 96 DPI, so one DIP is one pixel).
+	private static Int32Rect R32(double x, double y, double w, double h)
+	{
+		return new Int32Rect((int)Math.Round(x), (int)Math.Round(y), Math.Max(1, (int)Math.Round(w)), Math.Max(1, (int)Math.Round(h)));
+	}
 
 	// WCAG contrast between the 98th-percentile pixel (by luminance) of inkRect and the median of bgRect.
 	private static double ContrastIn(string path, Int32Rect inkRect, Int32Rect bgRect)
@@ -1035,7 +1037,6 @@ internal static partial class SeasonalDiagnostics
 		// the text column only (the result icons are left out)
 		yield return ("searchpane-rest.png", new Int32Rect[1] { new Int32Rect(0, 210, 56, 600) });
 		yield return ("charms-rest.png", none);
-		yield return ("toast-rest.png", none);
 		yield return ("osd-rest.png", none);
 		yield return ("flyout-clock-rest.png", none);
 		// the app cards' logos left out (a lifted dark logo is light by design)
@@ -1059,7 +1060,7 @@ internal static partial class SeasonalDiagnostics
 		yield return ("charmsclock-rest.png", none);
 		// the surfaces added with the review of what stayed hidden or bright: the Share and Devices panes, a result card,
 		// the scope drop-down, the power flyout, the menu toggles, the drop-down list, the tile app bar (the board above
-		// it left out), and the toast and notifications with an app logo (the lifted logos left out)
+		// it left out)
 		yield return ("share-rest.png", none);
 		yield return ("devices-rest.png", none);
 		yield return ("search-rest-calc.png", new Int32Rect[1] { new Int32Rect(0, 210, 56, 700) });
@@ -1068,8 +1069,6 @@ internal static partial class SeasonalDiagnostics
 		yield return ("contextmenu-toggles-rest.png", none);
 		yield return ("combo-rest.png", none);
 		yield return ("start-rest-appbar.png", new Int32Rect[2] { new Int32Rect(0, 120, 1920, 868), new Int32Rect(1695, 45, 50, 50) });
-		yield return ("toast-rest-icon.png", new Int32Rect[1] { new Int32Rect(10, 10, 40, 40) });
-		yield return ("actioncenter-rest-notifications.png", new Int32Rect[1] { new Int32Rect(_restNotificationIcon.X - 20, 0, 40, 860) });
 		yield return ("switcher-rest-selected.png", new Int32Rect[1] { new Int32Rect(0, 40, 200, 812) });
 	}
 
@@ -1108,8 +1107,28 @@ internal static partial class SeasonalDiagnostics
 		Spot("search query in the field", "searchpane-rest.png", new Int32Rect(26, 108, 120, 20), new Int32Rect(160, 104, 60, 20), 4.5);
 		Spot("search hint line", "searchpane-rest.png", new Int32Rect(20, 150, 250, 14), new Int32Rect(20, 166, 280, 10), 4.5);
 		Spot("search row", "searchpane-rest.png", new Int32Rect(62, 266, 140, 18), new Int32Rect(220, 262, 70, 24), 4.5);
-		Spot("action center title", "actioncenter-rest.png", new Int32Rect(22, 28, 210, 40), new Int32Rect(250, 20, 120, 50), 4.5);
-		Spot("toast title", "toast-rest.png", new Int32Rect(56, 8, 160, 40), new Int32Rect(4, 4, 10, 60), 4.5);
+		// the Action Center (its rects come from the render's own metrics): the footer link's text against the footer band
+		// right of it, and a switch tile's label (Off and On) against an empty part of that tile (between icon and check)
+		if (_restActionCenter == null)
+		{
+			bad.Add("action center: not rendered");
+		}
+		else
+		{
+			Rect link = _restActionCenter.FooterLinkRect;
+			Spot("action center footer link", "actioncenter-rest.png", R32(link.X + 35.0, link.Y + 12.0, link.Width - 43.0, 16.0), R32(link.Right + 12.0, link.Y + 10.0, 28.0, 20.0), 4.5);
+			ActionCenterQaTile? off = _restActionCenter.Tiles.FirstOrDefault(t => t.Toggle && !t.On);
+			ActionCenterQaTile? on = _restActionCenter.Tiles.FirstOrDefault(t => t.Toggle && t.On);
+			foreach ((string what, ActionCenterQaTile? t) in new[] { ("off", off), ("on", on) })
+			{
+				if (t == null || t.LabelRect.IsEmpty)
+				{
+					bad.Add("action center tile " + what + ": none rendered");
+					continue;
+				}
+				Spot("action center tile " + what, "actioncenter-rest.png", R32(t.LabelRect.X, t.LabelRect.Y, t.LabelRect.Width, t.LabelRect.Height), R32(t.TileRect.X + 32.0, t.TileRect.Y + 8.0, 16.0, 14.0), 4.5);
+			}
+		}
 		Spot("clock digits", "flyout-clock-rest.png", new Int32Rect(20, 20, 200, 60), new Int32Rect(240, 10, 80, 30), 4.5);
 		// the QA menu at (20, 20): 1 px border, 3 px padding, 32 px rows (row tops 24, 56, 88; separator 120-127; the keyboard
 		// row 127-159), text from x = 50
@@ -1119,27 +1138,12 @@ internal static partial class SeasonalDiagnostics
 		Spot("caption title active", "caption-rest.png", new Int32Rect(40, 8, 100, 16), new Int32Rect(200, 4, 200, 24), 4.5);
 		Spot("caption title inactive", "caption-rest.png", new Int32Rect(40, 46, 100, 16), new Int32Rect(200, 42, 200, 24), 4.5);
 		Spot("tooltip text", "tooltip-rest.png", new Int32Rect(28, 26, 200, 18), new Int32Rect(30, 20, 4, 4), 4.5);
-		Spot("action center tile off", "actioncenter-rest.png", new Int32Rect(246, 566, 80, 18), new Int32Rect(300, 530, 30, 20), 4.5);
-		Spot("action center tile on", "actioncenter-rest.png", new Int32Rect(28, 566, 80, 18), new Int32Rect(60, 530, 30, 20), 4.5);
 		// the OSD card is 376 DIP wide now (12x20 segments): its value sits at the right, before the 14 px padding
 		Spot("osd value", "osd-rest.png", new Int32Rect(326, 10, 40, 28), new Int32Rect(4, 4, 10, 38), 4.5);
-		// the review follow-ups: the selected calendar day, "Clear all" with nothing to clear, the zoomed-out group name,
+		// the review follow-ups: the selected calendar day, the zoomed-out group name,
 		// the hollow OSD segments, the outline of a plain button and of a slider's remainder, and the open category of
 		// PC Settings (its fill against the navigation pane and its ink on it)
 		Spot("clock selected day", "flyout-clock-rest.png", new Int32Rect(66, 398, 32, 30), new Int32Rect(66, 398, 32, 30), 4.5);
-		// "Clear all" with nothing to clear is not shown at all now (it used to be a dimmed link): nothing is drawn there
-		{
-			string acPath = Path.Combine(outDir, "actioncenter-rest.png");
-			if (File.Exists(acPath))
-			{
-				double c = ContrastIn(acPath, new Int32Rect(398, 36, 52, 16), new Int32Rect(320, 30, 60, 30));
-				got.Add($"action center clear all hidden={c:F2}");
-				if (c > 1.2)
-				{
-					bad.Add($"action center clear all is drawn with nothing to clear ({c:F2})");
-				}
-			}
-		}
 		Spot("zoom group name", "start-rest-zoom.png", new Int32Rect(370, 384, 80, 20), new Int32Rect(470, 384, 80, 20), 4.5);
 		Spot("osd empty outline", "osd-rest.png", new Int32Rect(240, 12, 30, 20), new Int32Rect(247, 15, 8, 10), 3.0);
 		Spot("button outline", "controls-rest.png", new Int32Rect(240, 559, 70, 6), new Int32Rect(240, 540, 70, 8), 3.0);
