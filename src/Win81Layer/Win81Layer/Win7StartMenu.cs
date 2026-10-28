@@ -324,7 +324,7 @@ public sealed partial class Win7StartMenu : Window
     }
 
     // Palette, account, a fresh main view and the layout that follows it. Icons for the new rows are requested here.
-    private void PrepareForShow(double maxWindowDip)
+    private void PrepareForShow(double maxWindowDip, bool forOpen = true)
     {
         _maxWindowDip = maxWindowDip;
         EnsurePalette();
@@ -334,8 +334,13 @@ public sealed partial class Win7StartMenu : Window
         RefreshMain();
         ApplyLayout(LayoutFor(_mainPins, _mainRecent, maxWindowDip, _rw));
         EnsureShortcutIndex();
-        // The system search index (Settings, Control Panel, tools): the disk cache or a build, off the UI thread.
-        EnsureSystemIndex();
+        // The system search index (Settings, Control Panel, tools): the disk cache or a build, off the UI thread, on the
+        // first open (not at the boot prewarm: a session that never searches never holds it; every keystroke asks too, and
+        // the results fill in place when it arrives).
+        if (forOpen)
+        {
+            EnsureSystemIndex();
+        }
     }
 
     // True once Prewarm has run (a later inventory reload then prewarms again at idle).
@@ -367,7 +372,7 @@ public sealed partial class Win7StartMenu : Window
                 PrimaryTarget(out scale, out maxWindowDip);
             }
             _iconScale = scale;
-            PrepareForShow(maxWindowDip);
+            PrepareForShow(maxWindowDip, forOpen: false);
             EnsureAllPrograms();
             _root.Measure(new Size(_layout.W, _layout.H));
             _root.Arrange(new Rect(0.0, 0.0, _layout.W, _layout.H));

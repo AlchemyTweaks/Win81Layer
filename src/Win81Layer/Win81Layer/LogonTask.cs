@@ -29,6 +29,7 @@ public static class LogonTask
 
 	public static bool SetEnabled(bool enabled)
 	{
+		SettingsGuard.ThrowIfReadOnly("logon task");
 		try
 		{
 			if (!enabled)

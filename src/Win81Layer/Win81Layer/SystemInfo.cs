@@ -17,13 +17,30 @@ internal static class SystemInfo
 			{
 				using RegistryKey k = Registry.LocalMachine.OpenSubKey("SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion");
 				string s = (k?.GetValue("ProductName") as string)?.Trim();
-				return (s != null && s.Length > 0) ? s : "Windows";
+				int.TryParse(k?.GetValue("CurrentBuild") as string ?? k?.GetValue("CurrentBuildNumber") as string, NumberStyles.Integer, CultureInfo.InvariantCulture, out int build);
+				return EditionName(s, build);
 			}
 			catch
 			{
 				return "Windows";
 			}
 		}
+	}
+
+	// Windows 11 keeps ProductName "Windows 10 Pro" in the registry: from build 22000 on the name says Windows 11 (the rule
+	// of ExperimentRegistry's audit too).
+	internal static string EditionName(string productName, int build)
+	{
+		string s = (productName ?? "").Trim();
+		if (s.Length == 0)
+		{
+			return "Windows";
+		}
+		if (build >= 22000 && s.StartsWith("Windows 10", StringComparison.OrdinalIgnoreCase))
+		{
+			s = "Windows 11" + s.Substring(10);
+		}
+		return s;
 	}
 
 	public static string Processor

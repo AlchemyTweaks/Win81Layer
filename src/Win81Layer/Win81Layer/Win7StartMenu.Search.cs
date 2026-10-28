@@ -69,6 +69,7 @@ public sealed partial class Win7StartMenu
         {
             SearchGroup.Programs => "Programs",
             SearchGroup.Settings => "Settings",
+            SearchGroup.PcSettings => "PC settings",
             _ => "Control Panel"
         };
     }
@@ -311,7 +312,54 @@ public sealed partial class Win7StartMenu
         {
             groups[SearchGroup.ControlPanel] = control;
         }
+        List<SearchResult> hub = RankPcSettings(query);
+        if (hub.Count > 0)
+        {
+            groups[SearchGroup.PcSettings] = hub;
+        }
         return groups;
+    }
+
+    // The launcher's PC settings rows whose name (English, Greek or another name of the setting) matches: runtime hits
+    // from HubCatalog's own small index, ranked by the same ranker, never written into the system index or its cache.
+    // Only rows with a control of their own (a toggle, a choice, a slider), not the links to Windows pages the other
+    // groups already list, and not the rows that need hardware or a policy this PC may not have. They open PC settings at
+    // that row (win81:pcsettings?row=...). Typo matches are left out.
+    private List<SearchResult> RankPcSettings(SearchQuery query)
+    {
+        List<SearchResult> list = new List<SearchResult>();
+        if (query.Alts.Count == 0 || (_qa && _qaSystemIndexOff))
+        {
+            return list;
+        }
+        try
+        {
+            HubCaps? caps = PcSettingsWindow.LastCaps;
+            foreach ((SystemHit h, int m) in HubCatalog.SearchIndex.Rank(query))
+            {
+                if (m < SystemSearchIndex.NameFloor || !h.Id.StartsWith("hub:", StringComparison.Ordinal))
+                {
+                    continue;
+                }
+                HubRow? row = HubCatalog.Row(h.Id.Substring(4));
+                if (row == null || !HubCatalog.StartSearchable(row, caps))
+                {
+                    continue;
+                }
+                list.Add(new SearchResult(null, h, m + UsageBonusOf(SearchUsageKey(h)), m, h.Name));
+            }
+        }
+        catch (Exception ex)
+        {
+            Trace("Win7 Start: PC settings rows failed: " + ex.Message);
+        }
+        StringComparer byName = StringComparer.CurrentCultureIgnoreCase;
+        list.Sort((SearchResult x, SearchResult y) =>
+        {
+            int c = y.Score.CompareTo(x.Score);
+            return c != 0 ? c : byName.Compare(x.Name, y.Name);
+        });
+        return list;
     }
 
     // Default order Programs, Settings, Control Panel. A group moves before Programs only when its best match tier is
@@ -324,8 +372,14 @@ public sealed partial class Win7StartMenu
         int Best(SearchGroup g) => groups[g].Max((SearchResult r) => r.Match);
         List<SearchGroup> others = present.Where((SearchGroup g) => g != SearchGroup.Programs)
             .OrderByDescending(Best).ThenBy((SearchGroup g) => Array.IndexOf(defaults, g)).ToList();
+        // PC settings rows always come last: they never move Windows' own results.
+        bool hub = groups.TryGetValue(SearchGroup.PcSettings, out List<SearchResult>? hubRows) && hubRows.Count > 0;
         if (!present.Contains(SearchGroup.Programs))
         {
+            if (hub)
+            {
+                others.Add(SearchGroup.PcSettings);
+            }
             return others;
         }
         int pb = Best(SearchGroup.Programs);
@@ -334,6 +388,10 @@ public sealed partial class Win7StartMenu
         List<SearchGroup> ahead = others.Where((SearchGroup g) => Best(g) > pb && (weak || Best(g) >= PromoteTier)).ToList();
         List<SearchGroup> order = new List<SearchGroup>(ahead) { SearchGroup.Programs };
         order.AddRange(others.Where((SearchGroup g) => !ahead.Contains(g)));
+        if (hub)
+        {
+            order.Add(SearchGroup.PcSettings);
+        }
         return order;
     }
 
@@ -731,6 +789,23 @@ public sealed partial class Win7StartMenu
     // Elevation only for programs: a task Windows marks needsElevation, or Run as administrator.
     private void LaunchHitCore(SystemHit h, bool asAdmin)
     {
+        if (h.Target.StartsWith("win81:pcsettings", StringComparison.OrdinalIgnoreCase))
+        {
+            // A PC settings row: the launcher's own window at that row, through the launch delegate (like the PC settings
+            // place on the right).
+            Act(h.Describe(), delegate
+            {
+                _launch(new AppEntry { Name = "PC settings", LaunchPath = h.Target, TileBrush = System.Windows.Media.Brushes.Transparent }, false);
+                try
+                {
+                    UsageStore.RecordLaunch(SearchUsageKey(h), DateTime.UtcNow.Ticks);
+                }
+                catch
+                {
+                }
+            });
+            return;
+        }
         bool elevate = h.CanElevate && (asAdmin || h.Elevate);
         Act((elevate ? "runas " : string.Empty) + h.Describe(), delegate
         {
@@ -746,45 +821,10 @@ public sealed partial class Win7StartMenu
     }
 
     // On a launch worker, never on the UI thread: pages and shell names through the shell as they are, programs with
-    // their arguments (an .msc or .cpl opens with its own program).
+    // their arguments (an .msc or .cpl opens with its own program). The one launch path shared with PC settings.
     private static void RunHit(SystemHit h, bool elevate)
     {
-        ShellLaunch.Run(delegate
-        {
-            try
-            {
-                ProcessStartInfo psi;
-                if (h.Launch == SystemLaunchKind.Uri)
-                {
-                    psi = new ProcessStartInfo(h.Target)
-                    {
-                        UseShellExecute = true
-                    };
-                }
-                else
-                {
-                    string file = Environment.ExpandEnvironmentVariables(h.Target);
-                    psi = new ProcessStartInfo(file)
-                    {
-                        UseShellExecute = true,
-                        WorkingDirectory = Path.GetDirectoryName(file) ?? Environment.SystemDirectory
-                    };
-                    if (!string.IsNullOrEmpty(h.Args))
-                    {
-                        psi.Arguments = Environment.ExpandEnvironmentVariables(h.Args);
-                    }
-                }
-                if (elevate)
-                {
-                    psi.Verb = "runas";
-                }
-                Process.Start(psi)?.Dispose();
-            }
-            catch (Exception ex)
-            {
-                Logger.Log("Win7Start system launch " + h.Describe() + " (or cancelled): " + ex.Message);
-            }
-        });
+        SettingsLink.Run(h, elevate);
     }
 
     // The program file behind an entry, for 'Open file location' (not for hosts such as control.exe).

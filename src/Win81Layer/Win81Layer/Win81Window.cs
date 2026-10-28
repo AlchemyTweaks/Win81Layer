@@ -547,7 +547,7 @@ public partial class Win81Window : Window, IComponentConnector
 	{
 		try
 		{
-			Color accent = StartAccent.Color();
+			Color accent = StartAccent.FrameColor();
 			_active = new SolidColorBrush(accent);
 			((Freezable)_active).Freeze();
 			_inactive = new SolidColorBrush(ColorMath.Lighten(accent, 0.42));

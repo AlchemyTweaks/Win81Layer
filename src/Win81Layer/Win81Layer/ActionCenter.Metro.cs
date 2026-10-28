@@ -69,6 +69,9 @@ public sealed class ActionCenterQaMetrics
 	public bool SlidersAreLiveControls { get; set; }
 	public string NotificationsChord { get; set; } = string.Empty;
 	public bool NotificationsChordCaptured { get; set; }
+	// All settings: what a click opens and what a Shift+click opens (recorded through the QA seam).
+	public string AllSettingsClick { get; set; } = string.Empty;
+	public string AllSettingsShiftClick { get; set; } = string.Empty;
 	public string[] Texts { get; set; } = Array.Empty<string>();
 	public int ScrollViewers { get; set; }
 	public bool OnlyScrollViewerIsTileViewport { get; set; }
@@ -381,7 +384,7 @@ public sealed partial class ActionCenter
 		["project"] = "shell:DisplaySwitch.exe|fallback:" + ProjectSettingsTarget,
 		["connect"] = "shell:Win+K|fallback:" + ConnectedDevicesTarget,
 		["battery"] = "settings:" + BatterySaverSettingsTarget,
-		["settings"] = "settings:" + SettingsHomeTarget,
+		["settings"] = "launcher:pc-settings|shift:" + SettingsHomeTarget,
 		["power"] = "launcher:power-menu",
 		["nightlight"] = "settings:" + NightLightSettingsTarget
 	};
@@ -477,6 +480,7 @@ public sealed partial class ActionCenter
 		_settingsLink = FooterButton(linkContent, "All settings");
 		_settingsLink.Padding = new Thickness(SidePaddingDip + gearInset, 0.0, 8.0, 0.0);
 		_settingsLink.HorizontalAlignment = HorizontalAlignment.Left;
+		_settingsLink.ToolTip = "PC settings (Shift+click: Windows Settings)";
 		_settingsLink.Click += async delegate { await RunFooterActionAsync("settings"); };
 		Grid.SetColumn(_settingsLink, 0);
 		footerGrid.Children.Add(_settingsLink);
@@ -491,7 +495,7 @@ public sealed partial class ActionCenter
 		Grid.SetRow(_footer, 2);
 		_metroRoot.Children.Add(_footer);
 		_footerActions.Clear();
-		_footerActions.Add(("settings", MetroRouteContracts["settings"], () => OpenExternal("All settings", SettingsHomeTarget)));
+		_footerActions.Add(("settings", MetroRouteContracts["settings"], () => OpenAllSettings((Keyboard.Modifiers & ModifierKeys.Shift) != 0)));
 		_footerActions.Add(("power", MetroRouteContracts["power"], () => RunSync(ShowPowerMenu)));
 
 		_frame = new Border

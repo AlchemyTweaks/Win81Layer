@@ -835,6 +835,23 @@ public sealed partial class Win7StartMenu
             return (ok, $"actions {n}->{_qaActions.Count} last='{(_qaActions.Count > 0 ? _qaActions[^1] : "")}' visible={IsVisible}");
         });
 
+        // The PC settings hub sits in the right column directly above Control Panel and opens through the launch
+        // delegate as "win81:pcsettings".
+        QaTry("places-pc-settings", delegate
+        {
+            ShowMenu("qa");
+            List<W7Row> right = RightRows();
+            int pc = right.FindIndex((W7Row r) => r.Text == "PC settings");
+            int cp = right.FindIndex((W7Row r) => r.Text == "Control Panel");
+            int n = _qaActions.Count;
+            if (pc >= 0)
+            {
+                QaClick(right[pc]);
+            }
+            bool recorded = _qaActions.Count == n + 1 && _qaActions[^1] == "win81:pcsettings";
+            return (pc >= 0 && cp == pc + 1 && recorded, $"PC settings at {pc}, Control Panel at {cp}, last action '{(_qaActions.Count > 0 ? _qaActions[^1] : "")}'");
+        });
+
         QaTry("settings-writes-injected", delegate
         {
             ShowMenu("qa");
@@ -1322,8 +1339,9 @@ public sealed partial class Win7StartMenu
                 }
                 expectTop += fe.ActualHeight;
             }
-            ok &= Near(expectTop, 419.0);
-            return (ok, $"last row ends at G y {expectTop:0.##} (expected 419); " + string.Join(" ", rows));
+            // twelve 31 px rows and two 13 px separators: 52 + 12 x 31 + 26 (the PC settings row added 31)
+            ok &= Near(expectTop, 450.0);
+            return (ok, $"last row ends at G y {expectTop:0.##} (expected 450); " + string.Join(" ", rows));
         });
 
         QaTry("ellipsis", delegate

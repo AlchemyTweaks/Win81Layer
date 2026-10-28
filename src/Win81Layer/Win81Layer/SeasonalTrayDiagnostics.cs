@@ -1660,7 +1660,7 @@ internal static class SeasonalTrayDiagnostics
 			};
 			try
 			{
-				pc.QaRenderTall(path, "Launcher");
+				pc.QaRenderTall(path, "Appearance");
 			}
 			finally
 			{

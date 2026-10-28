@@ -1590,7 +1590,7 @@ public sealed class AppSwitcher : Window
 			}
 			else if (w is PcSettingsWindow { IsVisible: not false } pc)
 			{
-				pc.Close();
+				pc.CloseForShowDesktop();
 			}
 		}
 		foreach (var box in _boxes)

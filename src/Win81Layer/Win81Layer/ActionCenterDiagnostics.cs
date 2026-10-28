@@ -82,10 +82,12 @@ internal static class ActionCenterDiagnostics
 						&& Math.Abs(laptop.TileWidthDiu - 85.0) < 0.5,
 					["exact-route-contracts"] = metrics.All(m => m.RouteContracts == 13 && m.FunctionalRoutes == 13 && m.ExactRouteContracts
 						&& m.RouteContractMap.TryGetValue("notifications", out string n) && n == "shell:Win+N|fallback:ms-settings:notifications"
-						&& m.RouteContractMap.TryGetValue("settings", out string st) && st == "settings:ms-settings:"
+						&& m.RouteContractMap.TryGetValue("settings", out string st) && st == "launcher:pc-settings|shift:ms-settings:"
 						&& m.RouteContractMap.TryGetValue("power", out string pw) && pw == "launcher:power-menu"
 						&& !m.RouteContractMap.ContainsKey("quiet")),
 					["notifications-tile-dispatches-win-n"] = metrics.All(m => m.NotificationsChordCaptured && m.NotificationsChord == "91,78"),
+					// All settings opens the PC settings hub; Shift+click opens Windows Settings
+					["all-settings-opens-pc-settings"] = metrics.All(m => m.AllSettingsClick == ActionCenter.PcSettingsTarget && m.AllSettingsShiftClick == "ms-settings:"),
 					["maps-opens-google-maps-in-default-browser"] = metrics.All(m => m.MapsUsesGoogleMaps && m.ExternalLinksUseDefaultHandler && m.MapsTarget == "https://www.google.com/maps"),
 					["premium-vector-icons-and-active-state"] = metrics.All(m => m.IconsAreVectors && m.IconsUseUniformPremiumGeometry && m.TileIconSizeDiu == 20.0
 						&& m.ActiveChecksPresent && m.StatefulTiles >= 5) && laptop.ChecksShown >= 1,

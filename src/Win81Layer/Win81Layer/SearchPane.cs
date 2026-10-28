@@ -1798,6 +1798,9 @@ public sealed class SearchPane : Window
 		icon.Bindings.Add(new System.Windows.Data.Binding("Icon") { Source = a });
 		icon.Bindings.Add(new System.Windows.Data.Binding("SeasonalKey") { Source = a });
 		img.SetBinding(System.Windows.Controls.Image.SourceProperty, icon);
+		// Windows 7 Start mode loads a Start tile's icon only with Metro Start: one shown here loads now (it arrives through
+		// the binding).
+		StartScreen.RequestIcon(a);
 	}
 
 	private System.Windows.Controls.Button AppRow(AppEntry a)

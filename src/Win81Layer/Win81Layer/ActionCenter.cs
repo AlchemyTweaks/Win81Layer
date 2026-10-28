@@ -661,6 +661,36 @@ public sealed partial class ActionCenter : Window
 		return Keystroke.Chord(vks);
 	}
 
+	// All settings (the footer link): the launcher's PC settings hub, where Windows' settings, Control Panel and the
+	// launcher's own are gathered; Shift+click (or AllSettingsOpensHub off) opens Windows Settings instead.
+	internal const string PcSettingsTarget = "win81:pcsettings";
+
+	internal static string AllSettingsTarget(bool shift)
+	{
+		return !shift && SettingsStore.FastSnapshot.AllSettingsOpensHub ? PcSettingsTarget : SettingsHomeTarget;
+	}
+
+	private async Task OpenAllSettings(bool shift)
+	{
+		string target = AllSettingsTarget(shift);
+		if (target != PcSettingsTarget)
+		{
+			await OpenExternal("All settings", target);
+			return;
+		}
+		if (QaLaunches != null)
+		{
+			QaLaunches.Add(target);
+			return;
+		}
+		Dismiss();
+		System.Windows.Application.Current?.Dispatcher.BeginInvoke(DispatcherPriority.Normal, (Action)delegate
+		{
+			(System.Windows.Application.Current as App)?.OpenPcSettings(null);
+		});
+		Logger.Log("Action Center 'All settings': PC settings");
+	}
+
 	private async Task OpenExternal(string label, string primary, string? fallback = null)
 	{
 		if (QaLaunches != null)

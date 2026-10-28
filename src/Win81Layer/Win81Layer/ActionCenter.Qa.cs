@@ -221,6 +221,8 @@ public sealed partial class ActionCenter
 		string notificationsFallback = string.Empty;
 		string connectChord = string.Empty;
 		string connectFallback = string.Empty;
+		string allSettingsClick = string.Empty;
+		string allSettingsShift = string.Empty;
 		try
 		{
 			panel.OpenNotificationCenter().GetAwaiter().GetResult();
@@ -238,6 +240,13 @@ public sealed partial class ActionCenter
 			panel.QaChordFails = true;
 			panel.OpenConnect().GetAwaiter().GetResult();
 			connectFallback = string.Join("|", panel.QaLaunches);
+			// All settings: PC settings on a click, Windows Settings on a Shift+click (recorded, never opened)
+			panel.QaLaunches.Clear();
+			panel.OpenAllSettings(shift: false).GetAwaiter().GetResult();
+			allSettingsClick = string.Join("|", panel.QaLaunches);
+			panel.QaLaunches.Clear();
+			panel.OpenAllSettings(shift: true).GetAwaiter().GetResult();
+			allSettingsShift = string.Join("|", panel.QaLaunches);
 		}
 		catch
 		{
@@ -288,6 +297,8 @@ public sealed partial class ActionCenter
 			SlidersAreLiveControls = panel._volume is MetroSlider && panel._brightness is MetroSlider,
 			NotificationsChord = chord == null ? string.Empty : string.Join(",", chord),
 			NotificationsChordCaptured = chord != null && chord.SequenceEqual(new byte[] { 91, 78 }),
+			AllSettingsClick = allSettingsClick,
+			AllSettingsShiftClick = allSettingsShift,
 			Texts = texts.Distinct().ToArray(),
 			ScrollViewers = scrollViewers,
 			OnlyScrollViewerIsTileViewport = scrollViewers == 1 && onlyTileScroll,

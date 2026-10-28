@@ -2115,17 +2115,34 @@ internal static class SystemSearchBuilder
             {
             }
             c.Npu = NpuPresent();
-            c.Policy = PagePolicy();
-            string p = c.Policy.ToLowerInvariant();
+            c.ApplyPolicy(PagePolicy());
+            return c;
+        }
+
+        // Fixtures (PC Settings QA): a probe result with the given policy string and hardware, nothing read from the PC.
+        internal static PcCaps FromPolicy(string policy, bool touchpad, bool touch)
+        {
+            PcCaps c = new PcCaps
+            {
+                Touchpad = touchpad,
+                Touch = touch
+            };
+            c.ApplyPolicy(policy);
+            return c;
+        }
+
+        private void ApplyPolicy(string? policy)
+        {
+            Policy = (policy ?? string.Empty).Trim();
+            string p = Policy.ToLowerInvariant();
             if (p.StartsWith("showonly:", StringComparison.Ordinal))
             {
-                c._showOnly = new HashSet<string>(PolicyPages(p.Substring(9)), StringComparer.OrdinalIgnoreCase);
+                _showOnly = new HashSet<string>(PolicyPages(p.Substring(9)), StringComparer.OrdinalIgnoreCase);
             }
             else if (p.StartsWith("hide:", StringComparison.Ordinal))
             {
-                c._hide.UnionWith(PolicyPages(p.Substring(5)));
+                _hide.UnionWith(PolicyPages(p.Substring(5)));
             }
-            return c;
         }
 
         // uri: the ms-settings name without the scheme.

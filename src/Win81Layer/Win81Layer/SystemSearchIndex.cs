@@ -31,12 +31,14 @@ internal enum SystemLaunchKind
     Command
 }
 
-// The Windows 7 Start menu's search groups, in their default order.
+// The Windows 7 Start menu's search groups, in their default order. PcSettings: the launcher's own PC settings rows
+// (runtime hits from HubCatalog, never part of this index or its cache), always shown last.
 internal enum SearchGroup
 {
     Programs,
     Settings,
-    ControlPanel
+    ControlPanel,
+    PcSettings
 }
 
 // One searchable system entry: a Settings page or setting, a Windows Security page, a Control Panel item or task, or a
@@ -299,13 +301,18 @@ internal sealed class SystemSearchIndex
     // A keyword word carried by more than this share of the entries says nothing ('change', 'adjust').
     private const double CommonKeywordShare = 0.08;
 
-    private SystemSearchIndex(SystemSearchData data, string source, double loadMs, bool compact)
+    // hashNow: the content hash is computed now, before compaction drops the raw keywords (only when a refresh will
+    // compare it); an index that keeps its keywords computes it when first asked.
+    private SystemSearchIndex(SystemSearchData data, string source, double loadMs, bool compact, bool hashNow = false)
     {
         Data = data;
         Source = source;
         LoadMs = loadMs;
         UiGreek = data.UiLanguage.StartsWith("el", StringComparison.OrdinalIgnoreCase);
-        ContentHash = HashOf(data);
+        if (hashNow)
+        {
+            _contentHash = HashOf(data);
+        }
         Prepare();
         if (compact)
         {
@@ -324,8 +331,11 @@ internal sealed class SystemSearchIndex
     // False while the build behind it is incomplete (it is used, retried later, never cached as a good one).
     internal bool Complete => Data.IncompleteReason == null;
 
-    // Every field of every entry, hashed before compaction: a refresh with the same content changes nothing.
-    internal ulong ContentHash { get; }
+    // Every field of every entry, hashed before compaction: a refresh with the same content changes nothing. Computed only
+    // when a refresh is due (or on demand while the keywords are still there); 0 for a compacted index nobody hashed.
+    private ulong? _contentHash;
+
+    internal ulong ContentHash => _contentHash ??= Compacted ? 0UL : HashOf(Data);
 
     internal SystemSearchData Data { get; }
 
@@ -773,6 +783,7 @@ internal sealed class SystemSearchIndex
     // until a later call (a minute on) builds again.
     internal static void Ensure(bool synchronous, Dispatcher? dispatcher = null, Action? onReady = null)
     {
+        Interlocked.Exchange(ref s_lastUseMs, Environment.TickCount64);
         SystemSearchIndex? current = Volatile.Read(ref s_current);
         if (current != null && current.Complete)
         {
@@ -804,53 +815,16 @@ internal sealed class SystemSearchIndex
             }
             return;
         }
+        Interlocked.Exchange(ref s_working, 1);
         Thread t = new Thread(delegate ()
         {
-            bool refresh = false;
-            SystemSearchIndex index;
             try
             {
-                index = LoadOrBuild(out refresh);
-                Swap(index);
-                Logger.Log($"Win7 Start: system index {index.Source} ({index.Hits.Count} entries, {index.LoadMs:0} ms){(refresh ? "; refreshing an old cache" : string.Empty)}");
-                Post(dispatcher, onReady);
+                LoadInBackground(dispatcher, onReady);
             }
-            catch (Exception ex)
+            finally
             {
-                Fail(ex);
-                return;
-            }
-            if (!index.Complete)
-            {
-                Incomplete(index);
-                return;
-            }
-            if (refresh)
-            {
-                try
-                {
-                    Stopwatch sw = Stopwatch.StartNew();
-                    SystemSearchData data = BuildData();
-                    if (data.IncompleteReason != null)
-                    {
-                        // The cached index stays: an incomplete build never replaces a good one.
-                        Logger.Log("Win7 Start: system index refresh incomplete (" + data.IncompleteReason + "); the cached index stays");
-                        return;
-                    }
-                    SaveCache(data);
-                    SystemSearchIndex fresh = new SystemSearchIndex(data, "built", sw.Elapsed.TotalMilliseconds, compact: true);
-                    if (fresh.ContentHash == index.ContentHash)
-                    {
-                        Logger.Log("Win7 Start: system index refresh found no change");
-                        return;
-                    }
-                    Swap(fresh);
-                    Post(dispatcher, onReady);
-                }
-                catch (Exception ex)
-                {
-                    Logger.Log("Win7 Start: system index refresh failed: " + ex.Message);
-                }
+                Interlocked.Exchange(ref s_working, 0);
             }
         })
         {
@@ -859,6 +833,84 @@ internal sealed class SystemSearchIndex
             Name = "Win7 Start system index"
         };
         t.Start();
+    }
+
+    // A background load (or build) is running, including the refresh of an old cache after it.
+    private static int s_working;
+
+    // When the index was last asked for: an open or a keystroke of the Windows 7 menu, an open of PC settings.
+    private static long s_lastUseMs;
+
+    internal const long ReleaseAfterMs = 300000L;
+
+    // Nothing asked for the index for 5 minutes and neither the Windows 7 menu nor PC settings is open (inUse): it is given
+    // back (a couple of MB of managed memory while the shell idles). The next open loads the disk cache again off the UI
+    // thread and the menu fills in place when it arrives. true when it was released.
+    internal static bool MaybeRelease(long nowMs, bool inUse)
+    {
+        if (inUse || Volatile.Read(ref s_working) != 0 || Volatile.Read(ref s_current) == null)
+        {
+            return false;
+        }
+        if (nowMs - Interlocked.Read(ref s_lastUseMs) < ReleaseAfterMs)
+        {
+            return false;
+        }
+        Volatile.Write(ref s_current, null);
+        Interlocked.Increment(ref s_revision);
+        Volatile.Write(ref s_started, 0);
+        Logger.Log("Win7 Start: system index released after 5 min unused");
+        return true;
+    }
+
+    private static void LoadInBackground(Dispatcher? dispatcher, Action? onReady)
+    {
+        bool refresh = false;
+        SystemSearchIndex index;
+        try
+        {
+            index = LoadOrBuild(out refresh);
+            Swap(index);
+            Logger.Log($"Win7 Start: system index {index.Source} ({index.Hits.Count} entries, {index.LoadMs:0} ms){(refresh ? "; refreshing an old cache" : string.Empty)}");
+            Post(dispatcher, onReady);
+        }
+        catch (Exception ex)
+        {
+            Fail(ex);
+            return;
+        }
+        if (!index.Complete)
+        {
+            Incomplete(index);
+            return;
+        }
+        if (refresh)
+        {
+            try
+            {
+                Stopwatch sw = Stopwatch.StartNew();
+                SystemSearchData data = BuildData();
+                if (data.IncompleteReason != null)
+                {
+                    // The cached index stays: an incomplete build never replaces a good one.
+                    Logger.Log("Win7 Start: system index refresh incomplete (" + data.IncompleteReason + "); the cached index stays");
+                    return;
+                }
+                SaveCache(data);
+                SystemSearchIndex fresh = new SystemSearchIndex(data, "built", sw.Elapsed.TotalMilliseconds, compact: true, hashNow: true);
+                if (fresh.ContentHash == index.ContentHash)
+                {
+                    Logger.Log("Win7 Start: system index refresh found no change");
+                    return;
+                }
+                Swap(fresh);
+                Post(dispatcher, onReady);
+            }
+            catch (Exception ex)
+            {
+                Logger.Log("Win7 Start: system index refresh failed: " + ex.Message);
+            }
+        }
     }
 
     private static void Fail(Exception ex)
@@ -910,7 +962,7 @@ internal sealed class SystemSearchIndex
             if (SystemSearchBuilder.VerifyCached(cached, out string why))
             {
                 refresh = DateTime.UtcNow - cached.BuiltUtc > RefreshAge;
-                return new SystemSearchIndex(cached, "cache", sw.Elapsed.TotalMilliseconds, compact: true);
+                return new SystemSearchIndex(cached, "cache", sw.Elapsed.TotalMilliseconds, compact: true, hashNow: refresh);
             }
             Logger.Log("Win7 Start: system index cache rejected (" + why + "); building it again");
         }

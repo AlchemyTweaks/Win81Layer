@@ -632,8 +632,10 @@ internal static partial class SeasonalDiagnostics
         RestSearchScrollBarCheck(outDir, start, real);
     }
 
-    // The bottom edge of a secondary action button ("Restore previous") in pcsettings-rest-launcher.png.
-    private static readonly (int X, int Y) _restSecondaryButton = (150, 349);
+    // The bottom edge of a secondary action button ("Restore previous", Launcher > Profiles of the PC settings hub) in
+    // pcsettings-rest-launcher.png (900 DIP wide, the content column centred). Stage 3 added two rows above it (Lighter
+    // rendering, Action Center opens PC settings): 106 DIP lower.
+    private static readonly (int X, int Y) _restSecondaryButton = (256, 978);
 
     // The brightest pixel of a region.
     private static Color Brightest(string path, Int32Rect r)

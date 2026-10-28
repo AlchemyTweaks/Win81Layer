@@ -889,6 +889,33 @@ public sealed partial class Win7StartMenu
             return (med < 10.0, $"programs + system ranking median {med:0.00} ms (max {sys.Max():0.00}) over 5 queries x 5; keystroke 'mouse' with rows and layout median {Median(keys):0.00} ms");
         });
 
+        QaTry("search-pc-settings-rows", delegate
+        {
+            // The launcher's own PC settings rows, ranked at search time from HubCatalog (never part of the system index or
+            // its cache): a group of their own after Windows' groups; a click opens PC settings at that row.
+            ShowMenu("qa");
+            QaType("pointer speed");
+            bool listed = QaGroupResults(SearchGroup.PcSettings).Any((SearchResult r) => r.Hit?.Id == "hub:mouse.speed");
+            bool last = _searchGroups.Count > 0 && _searchGroups[^1].Group == SearchGroup.PcSettings && _searchGroups[^1].Header.Text.StartsWith("PC settings (", StringComparison.Ordinal);
+            string summary = QaGroupsSummary();
+            W7Row? row = ListRows().FirstOrDefault((W7Row r) => r.Payload is SystemHit h && h.Id == "hub:mouse.speed");
+            int actions = _qaActions.Count;
+            if (row != null)
+            {
+                UpdateLayout();
+                QaClick(row);
+            }
+            string opened = _qaActions.Count > actions ? _qaActions[^1] : "(none)";
+            ShowMenu("qa");
+            QaType("ταχύτητα δείκτη");
+            bool greek = QaGroupResults(SearchGroup.PcSettings).Any((SearchResult r) => r.Hit?.Id == "hub:mouse.speed");
+            QaType("mouse");
+            bool mouseLast = !_searchGroups.Any((SearchGroupInfo g) => g.Group == SearchGroup.PcSettings) || _searchGroups[^1].Group == SearchGroup.PcSettings;
+            bool notCached = SystemSearchIndex.Current == null || SystemSearchIndex.Current.Hits.All((SystemHit h) => !h.Id.StartsWith("hub:", StringComparison.Ordinal));
+            bool ok = listed && last && row != null && opened == "win81:pcsettings?row=mouse.speed" && greek && mouseLast && notCached;
+            return (ok, $"'pointer speed': hub row listed={listed} group last={last} ({summary}); click -> '{opened}'; Greek name finds it={greek}; 'mouse' keeps it last={mouseLast}; never in the index={notCached}");
+        });
+
         QaWriteSearchDump();
     }
 
@@ -912,8 +939,11 @@ public sealed partial class Win7StartMenu
                     {
                         if (r.Hit != null)
                         {
-                            bool valid = SystemSearchIndex.TargetExists(r.Hit, out string why);
-                            sb.AppendLine($"     {r.Match,5} {r.Hit.Kind,-16} {r.Name}  -> {r.Hit.Describe()}  [{(valid ? "ok" : "MISSING " + why)}]");
+                            // a PC settings row opens the launcher's own window (no protocol to check)
+                            bool hub = r.Hit.Target.StartsWith("win81:pcsettings", StringComparison.OrdinalIgnoreCase);
+                            string why = string.Empty;
+                            bool valid = hub || SystemSearchIndex.TargetExists(r.Hit, out why);
+                            sb.AppendLine($"     {r.Match,5} {r.Hit.Kind,-16} {r.Name}  -> {r.Hit.Describe()}  [{(hub ? "PC settings" : valid ? "ok" : "MISSING " + why)}]");
                         }
                         else
                         {

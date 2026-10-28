@@ -79,6 +79,7 @@ internal static class AccessibilityKeys
 
 	public static void SetSticky(bool on)
 	{
+		SettingsGuard.ThrowIfReadOnly("keyboard.sticky");
 		STICKYKEYS s = new STICKYKEYS
 		{
 			cbSize = (uint)Marshal.SizeOf<STICKYKEYS>()
@@ -86,7 +87,7 @@ internal static class AccessibilityKeys
 		try
 		{
 			SystemParametersInfo(58u, s.cbSize, ref s, 0u);
-			s.dwFlags = (on ? (s.dwFlags | 1 | 2) : (s.dwFlags & 0xFFFFFFFEu));
+			s.dwFlags = on ? (s.dwFlags | FLAG_ON) : (s.dwFlags & ~FLAG_ON);   // only the *_ON bit; the hotkey and the other flags are kept
 			SystemParametersInfo(59u, s.cbSize, ref s, 3u);
 		}
 		catch (Exception ex)
@@ -113,6 +114,7 @@ internal static class AccessibilityKeys
 
 	public static void SetToggle(bool on)
 	{
+		SettingsGuard.ThrowIfReadOnly("keyboard.toggle");
 		TOGGLEKEYS s = new TOGGLEKEYS
 		{
 			cbSize = (uint)Marshal.SizeOf<TOGGLEKEYS>()
@@ -120,7 +122,7 @@ internal static class AccessibilityKeys
 		try
 		{
 			SystemParametersInfo(52u, s.cbSize, ref s, 0u);
-			s.dwFlags = (on ? (s.dwFlags | 1 | 2) : (s.dwFlags & 0xFFFFFFFEu));
+			s.dwFlags = on ? (s.dwFlags | FLAG_ON) : (s.dwFlags & ~FLAG_ON);   // only the *_ON bit; the hotkey and the other flags are kept
 			SystemParametersInfo(53u, s.cbSize, ref s, 3u);
 		}
 		catch (Exception ex)
@@ -147,6 +149,7 @@ internal static class AccessibilityKeys
 
 	public static void SetFilter(bool on)
 	{
+		SettingsGuard.ThrowIfReadOnly("keyboard.filter");
 		FILTERKEYS s = new FILTERKEYS
 		{
 			cbSize = (uint)Marshal.SizeOf<FILTERKEYS>()
@@ -154,7 +157,7 @@ internal static class AccessibilityKeys
 		try
 		{
 			SystemParametersInfo(50u, s.cbSize, ref s, 0u);
-			s.dwFlags = (on ? (s.dwFlags | 1 | 2) : (s.dwFlags & 0xFFFFFFFEu));
+			s.dwFlags = on ? (s.dwFlags | FLAG_ON) : (s.dwFlags & ~FLAG_ON);   // only the *_ON bit; the hotkey and the other flags are kept
 			SystemParametersInfo(51u, s.cbSize, ref s, 3u);
 		}
 		catch (Exception ex)

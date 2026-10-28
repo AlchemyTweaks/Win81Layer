@@ -786,7 +786,7 @@ public sealed class SettingsPane : Window
 				}
 				else if (w is PcSettingsWindow { IsVisible: not false } pc)
 				{
-					pc.Close();
+					pc.CloseForShowDesktop();
 				}
 			}
 			// Shell.Application's MinimizeAll posts the tray's minimize-all command to Shell_TrayWnd; while the launcher

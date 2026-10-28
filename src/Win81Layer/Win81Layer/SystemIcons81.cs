@@ -96,6 +96,7 @@ internal static class SystemIcons81
 
 	internal static void Apply()
 	{
+		SettingsGuard.ThrowIfReadOnly("shell icons");
 		try
 		{
 			Directory.CreateDirectory(StableDir);
@@ -238,6 +239,7 @@ internal static class SystemIcons81
 
 	internal static void Restore()
 	{
+		SettingsGuard.ThrowIfReadOnly("shell icons");
 		try
 		{
 			// Any revert path stops the live empty<->full watcher (no-op if it was never started).

@@ -248,6 +248,34 @@
       </Setter.Value>
     </Setter>
   </Style>
+  <!-- PC Settings rows: a 40x20 square track (1 DIP outline) with a 10x20 thumb and no On/Off text; the state is the
+       ToggleButton's own (UI Automation reads it). On fills the track with the accent, Off with the field colour. The thumb
+       jumps to its end here; PcSettingsWindow slides it there (Motion Micro) when the user flips it. -->
+  <Style x:Key="Metro81.ToggleSwitch.Compact" TargetType="ToggleButton" BasedOn="{StaticResource Metro81.ToggleSwitch}">
+    <Setter Property="MinWidth" Value="40" /><Setter Property="MinHeight" Value="28" /><Setter Property="Padding" Value="0" /><Setter Property="VerticalAlignment" Value="Center" />
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="ToggleButton">
+          <Border Background="Transparent" Padding="{TemplateBinding Padding}">
+            <Grid x:Name="Switch" Width="40" Height="20" VerticalAlignment="Center" HorizontalAlignment="Center">
+              <Border x:Name="Track" BorderBrush="{DynamicResource Metro81.Border}" BorderThickness="1" Background="{DynamicResource Metro81.Surface}" />
+              <Border x:Name="Thumb" Width="10" Background="{DynamicResource Metro81.ToggleThumb}" HorizontalAlignment="Left" />
+            </Grid>
+          </Border>
+          <ControlTemplate.Triggers>
+            <Trigger Property="IsChecked" Value="True">
+              <Setter TargetName="Track" Property="Background" Value="{DynamicResource MenuAccent}" />
+              <Setter TargetName="Track" Property="BorderBrush" Value="{DynamicResource MenuAccent}" />
+              <Setter TargetName="Thumb" Property="HorizontalAlignment" Value="Right" />
+            </Trigger>
+            <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Track" Property="BorderBrush" Value="{DynamicResource Metro81.Ink}" /></Trigger>
+            <Trigger Property="IsPressed" Value="True"><Setter TargetName="Thumb" Property="Background" Value="{DynamicResource Metro81.ToggleThumbPressed}" /></Trigger>
+            <Trigger Property="IsEnabled" Value="False"><Setter TargetName="Switch" Property="Opacity" Value="{DynamicResource Metro81.DisabledOpacity}" /></Trigger>
+          </ControlTemplate.Triggers>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
   <Style x:Key="Metro81.FieldButton" TargetType="Button" BasedOn="{StaticResource Metro81.Button}">
     <Setter Property="MinWidth" Value="32" /><Setter Property="MinHeight" Value="32" />
     <Setter Property="Width" Value="32" /><Setter Property="Padding" Value="0" />

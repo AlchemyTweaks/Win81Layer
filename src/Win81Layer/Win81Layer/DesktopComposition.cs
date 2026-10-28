@@ -1094,7 +1094,7 @@ public static class DesktopComposition
 	{
 		try
 		{
-			Color c = StartAccent.Color();
+			Color c = StartAccent.FrameColor();
 			if (AccentMatches(c))
 			{
 				return true;

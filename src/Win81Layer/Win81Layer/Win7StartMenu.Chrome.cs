@@ -28,7 +28,8 @@ public sealed partial class Win7StartMenu
 
     private const double ShadowBand = 8.0;
 
-    private const double VMin = 376.0;
+    // 376 fitted the eleven place rows; the PC settings row (31 px) adds its height.
+    private const double VMin = 407.0;
 
     // Left edge of the search hint inside the search box (see BuildSearchBox).
     private const double SearchCueX = 8.0;
@@ -93,7 +94,7 @@ public sealed partial class Win7StartMenu
 
     private static readonly string[] FixedLinkLabels =
     {
-        "Documents", "Pictures", "Music", "Recent Items", "Computer", "Network", "Control Panel", "Devices and Printers",
+        "Documents", "Pictures", "Music", "Recent Items", "Computer", "Network", "PC settings", "Control Panel", "Devices and Printers",
         "Default Programs", "Help and Support"
     };
 
@@ -496,6 +497,9 @@ public sealed partial class Win7StartMenu
         _rightLinks.Children.Add(PlaceRow("Computer", () => Act("shell:MyComputerFolder", () => OpenShell("shell:MyComputerFolder"))));
         _rightLinks.Children.Add(PlaceRow("Network", () => Act("shell:NetworkPlacesFolder", () => OpenShell("shell:NetworkPlacesFolder"))));
         _rightLinks.Children.Add(GlassSeparator());
+        // The launcher's own PC settings hub, right above Control Panel (it opens through the launch delegate like a
+        // program, as "win81:pcsettings").
+        _rightLinks.Children.Add(PlaceRow("PC settings", () => Act("win81:pcsettings", () => _launch(new AppEntry { Name = "PC settings", LaunchPath = "win81:pcsettings", TileBrush = System.Windows.Media.Brushes.Transparent }, false))));
         _rightLinks.Children.Add(PlaceRow("Control Panel", () => Act("control.exe", () => RunShell("control.exe", null))));
         _rightLinks.Children.Add(PlaceRow("Devices and Printers", () => Act("control.exe printers", () => RunShell("control.exe", "printers"))));
         _rightLinks.Children.Add(PlaceRow("Default Programs", () => Act("control.exe /name Microsoft.DefaultPrograms", () => RunShell("control.exe", "/name Microsoft.DefaultPrograms"))));

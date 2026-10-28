@@ -1215,6 +1215,27 @@ public partial class App : System.Windows.Application
 	[DllImport("user32.dll")]
 	private static extern bool GetMonitorInfo(nint hMonitor, ref MONITORINFO mi);
 
+	// Lighter rendering: every window of the process renders in software, so no Direct3D device is created (about 55-60
+	// MB less private memory and the GPU memory the device holds). Read once at start, before the first window.
+	internal static bool ProcessSoftwareRendering { get; private set; }
+
+	internal static void ApplyProcessRenderMode(AppSettings s)
+	{
+		try
+		{
+			if (s != null && s.ProcessSoftwareRender)
+			{
+				RenderOptions.ProcessRenderMode = System.Windows.Interop.RenderMode.SoftwareOnly;
+				ProcessSoftwareRendering = true;
+				Logger.Log("Lighter rendering: every window renders in software (no Direct3D device)");
+			}
+		}
+		catch (Exception ex)
+		{
+			Logger.Log("Lighter rendering could not be set: " + ex.Message);
+		}
+	}
+
 	// Tooltips and context menus are their own HwndSources: one drawn in hardware on a secondary monitor would create
 	// that monitor's Direct3D device for the rest of the session, so they render in software there (as the bars do).
 	private static void HookSecondaryMonitorPopupRendering()
@@ -1416,6 +1437,17 @@ public partial class App : System.Windows.Application
 			SettingsStore.ReadOnlyDiagnostics = true;
 			PersistenceDiagnostics.SuppressAutomaticPostBootVerification = true;
 			TrayDiagnostics.Begin(this, e.Args);
+			return;
+		}
+		if (e.Args.Contains("--pchubtest") || e.Args.Contains("--pcsettingstest"))
+		{
+			// Offscreen QA of the PC Settings hub. Read-only: a fake settings world records every would-be change,
+			// settings and state writes throw, windows stay offscreen and are never activated, and it never creates a
+			// taskbar, tray host, hook, supervisor or watchdog. Its own 180 s deadline; exits by itself (0 pass, 1 fail,
+			// 2 bad arguments or refused folder, 3 deadline). --pcsettingstest is the retired name and needs a folder.
+			SettingsStore.ReadOnlyDiagnostics = true;
+			PersistenceDiagnostics.SuppressAutomaticPostBootVerification = true;
+			PcHubDiagnostics.Begin(this, e.Args);
 			return;
 		}
 		if (e.Args.Contains("--cursortest"))
@@ -2132,53 +2164,6 @@ public partial class App : System.Windows.Application
 			});
 			return;
 		}
-		if (e.Args.Contains("--pcsettingstest"))
-		{
-			StartScreen st = new StartScreen();
-			PcSettingsWindow pc = new PcSettingsWindow(st)
-			{
-				Left = -4000.0,
-				Top = -4000.0
-			};
-			((DispatcherObject)this).Dispatcher.BeginInvoke((DispatcherPriority)6, (Delegate)(Action)delegate
-			{
-				try
-				{
-					string path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Win81Layer");
-					pc.QaRender(Path.Combine(path, "pcsettingstest.png"));
-					pc.QaRender(Path.Combine(path, "pcsettings_launcher.png"), "Launcher");
-					pc.QaRenderTall(Path.Combine(path, "launcher_tall.png"), "Launcher");
-					pc.QaRender(Path.Combine(path, "pcsettings_eoa.png"), "Ease of Access");
-					pc.QaRender(Path.Combine(path, "pcsettings_net.png"), "Network");
-					pc.QaRender(Path.Combine(path, "pcsettings_time.png"), "Time and language");
-					pc.QaRender(Path.Combine(path, "pcsettings_display.png"), "Display");
-					pc.QaRender(Path.Combine(path, "pcsettings_composition.png"), "Desktop composition");
-					pc.QaRenderTall(Path.Combine(path, "pcsettings_composition_tall.png"), "Desktop composition");
-					pc.QaRender(Path.Combine(path, "pcsettings_pcinfo.png"), "PC info");
-					pc.QaRender(Path.Combine(path, "pcsettings_power.png"), "Power & sleep");
-					pc.QaRender(Path.Combine(path, "pcsettings_lock.png"), "Lock screen");
-					pc.QaRender(Path.Combine(path, "pcsettings_accounts.png"), "Accounts");
-					pc.QaRender(Path.Combine(path, "pcsettings_searchapps.png"), "Search and apps");
-					pc.QaRender(Path.Combine(path, "pcsettings_update.png"), "Update and recovery");
-					PcSettingsWindow compact = new PcSettingsWindow(st)
-					{
-						Left = -4000.0,
-						Top = -4000.0
-					};
-					compact.QaRender(Path.Combine(path, "pcsettings_launcher_1024.png"), "Launcher", 1024.0, 768.0);
-					compact.Close();
-				}
-				catch (Exception value2)
-				{
-					Logger.Log($"PCSETTINGSTEST: {value2}");
-				}
-				finally
-				{
-					Shutdown();
-				}
-			});
-			return;
-		}
 		if (e.Args.Contains("--win7starttest"))
 		{
 			// Offscreen QA of the Win7 Start menu: PNG renders of its states plus PASS/FAIL checks, a trace and the recorded
@@ -2760,6 +2745,8 @@ public partial class App : System.Windows.Application
 			}
 			Logger.Log("Self-heal (--healed): acquired the shell from the degraded instance.");
 		}
+		// Lighter rendering (PC settings > Launcher > Performance): set before the shell's first window, read once.
+		ApplyProcessRenderMode(SettingsStore.FastSnapshot);
 		object obj = _003C_003Ec._003C_003E9__30_2;
 		if (obj == null)
 		{
@@ -4369,6 +4356,8 @@ public partial class App : System.Windows.Application
 	private void OnShellMaintenance(long now, long inputIdleMs)
 	{
 		try { _startScreen?.MaybeReleaseVisuals(now); } catch (Exception ex) { ShellClock.LogFailure("Start visual release", ex); }
+		// The Settings/Control Panel search index: given back after 5 min unused while neither Start nor PC settings is open.
+		try { SystemSearchIndex.MaybeRelease(now, _win7Start?.IsOpen == true || _pcSettings != null); } catch (Exception ex) { ShellClock.LogFailure("search index release", ex); }
 		try { _idleMaintenance?.Tick(now, inputIdleMs); } catch (Exception ex) { ShellClock.LogFailure("idle maintenance", ex); }
 		ShellClock.Mode mode = _shellClock?.CurrentMode ?? ShellClock.Mode.Active;
 		try
@@ -4494,9 +4483,13 @@ public partial class App : System.Windows.Application
 		OpenPcSettings(null);
 	}
 
-	// page: an optional PC settings category to open (for example "Launcher").
+	// page: an optional PC settings category or page id to open (for example "Launcher"); a deep link
+	// (win81:pcsettings?page=...&row=...) left by Start or the Windows 7 Start menu is taken too.
 	internal void OpenPcSettings(string? page)
 	{
+		string? link = PcSettingsWindow.TakePendingLink();
+		(string? linkPage, string? linkRow) = HubCatalog.ParseUri(link);
+		page ??= linkPage;
 		try
 		{
 			PcSettingsWindow existing = _pcSettings;
@@ -4506,8 +4499,16 @@ public partial class App : System.Windows.Application
 				{
 					if (existing.IsVisible)
 					{
+						if (existing.WindowState == WindowState.Minimized)
+						{
+							existing.WindowState = WindowState.Normal;
+						}
 						existing.Activate();
-						if (!string.IsNullOrEmpty(page))
+						if (linkRow != null)
+						{
+							existing.OpenUri(link);
+						}
+						else if (!string.IsNullOrEmpty(page))
 						{
 							existing.OpenCategory(page);
 						}
@@ -4518,15 +4519,11 @@ public partial class App : System.Windows.Application
 				{
 				}
 				// A stale/broken instance (e.g. an earlier render failure that never fired Closed) would otherwise
-				// block reopening â€” drop it and rebuild a fresh window.
+				// block reopening: drop it and build a fresh window.
 				try { existing.Close(); } catch { }
 				_pcSettings = null;
 			}
 			PcSettingsWindow win = new PcSettingsWindow(_startScreen);
-			win.SearchRequested += delegate
-			{
-				_searchPane.ShowPane();
-			};
 			win.Closed += delegate
 			{
 				if (_pcSettings == win)
@@ -4535,11 +4532,7 @@ public partial class App : System.Windows.Application
 				}
 			};
 			_pcSettings = win;
-			win.ShowFullScreen();
-			if (!string.IsNullOrEmpty(page))
-			{
-				win.OpenCategory(page);
-			}
+			win.ShowHub(page, linkRow);
 		}
 		catch (Exception ex)
 		{

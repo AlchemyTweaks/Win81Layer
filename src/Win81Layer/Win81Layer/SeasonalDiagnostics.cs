@@ -1320,7 +1320,7 @@ internal static partial class SeasonalDiagnostics
 				};
 				if (p.Id == SeasonalTheme.Halloween)
 				{
-					pc.QaRenderTall(Path.Combine(outDir, $"pcsettings-seasonal-{p.Id}.png"), "Launcher");
+					pc.QaRenderTall(Path.Combine(outDir, $"pcsettings-seasonal-{p.Id}.png"), "Appearance");
 				}
 				else
 				{

@@ -570,6 +570,12 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 		_screen = Screen.PrimaryScreen;
 		_tray = new TrayVm();
 		_audio = new AudioController();
+		if (!SettingsStore.ReadOnlyDiagnostics)
+		{
+			// the shared audio service tells the tray when the level, the mute or the default device changes: the tray reads
+			// the cached values, no COM poll per tick
+			_audioSub = AudioEndpointService.Shared.Subscribe(OnAudioEndpointChanged);
+		}
 		_perf = new PerfMonitor();
 		_appIcons = new ObservableCollection<TrayAppIcon>();
 		_appByKey = new Dictionary<string, TrayAppIcon>();
@@ -2578,6 +2584,8 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 	public void StopBar()
 	{
 		_stopped = true;
+		_audioSub?.Dispose();
+		_audioSub = null;
 		_minuteTimer?.Stop();
 		DispatcherTimer? timer = _timer;
 		if (timer != null)
@@ -2755,6 +2763,11 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 				}
 			}
 			catch { }
+		}
+		if (msg == WM_SETTINGCHANGE && _isPrimary)
+		{
+			// "intl": the region formats changed (PC Settings or Windows): the clock and the calendar flyout read them again
+			IntlWatch.OnSettingChange(lParam);
 		}
 		if (msg == WM_SETTINGCHANGE && ((IntPtr)wParam).ToInt32() == SPI_SETDESKWALLPAPER)
 		{
@@ -4567,6 +4580,34 @@ public partial class TaskbarWindow : Window, IComponentConnector, IStyleConnecto
 	}
 
 	private long _lastTrayBackstopMs = long.MinValue / 2;
+
+	private IDisposable? _audioSub;
+
+	private int _audioEventQueued;
+
+	// A Core Audio thread reported a change: one coalesced read of the cached values on the UI thread.
+	private void OnAudioEndpointChanged()
+	{
+		if (System.Threading.Interlocked.Exchange(ref _audioEventQueued, 1) != 0)
+		{
+			return;
+		}
+		try
+		{
+			Dispatcher.BeginInvoke(DispatcherPriority.Background, (Action)delegate
+			{
+				_audioEventQueued = 0;
+				if (!_stopped && QaAudioSink == null)
+				{
+					ReadVolume();
+				}
+			});
+		}
+		catch
+		{
+			_audioEventQueued = 0;
+		}
+	}
 
 	private void ReadVolume()
 	{

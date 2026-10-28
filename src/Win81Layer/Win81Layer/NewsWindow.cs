@@ -30,7 +30,8 @@ internal sealed class NewsSourcePicker : StackPanel
 		Grid row = new();
 		row.ColumnDefinitions.Add(new ColumnDefinition());
 		row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-		UrlBox = new TextBox { Text = current, Height = 34, Padding = new Thickness(8, 4, 8, 4), VerticalContentAlignment = VerticalAlignment.Center, MinWidth = 80 };
+		// no fixed height: the Metro text box's own padding plus 8,4 cut the descenders at 34 DIP ("https" read "httos")
+		UrlBox = new TextBox { Text = current, MinHeight = 34, Padding = new Thickness(8, 0, 8, 0), VerticalContentAlignment = VerticalAlignment.Center, MinWidth = 80 };
 		UrlBox.SetResourceReference(Control.ForegroundProperty, "Metro81.Ink");
 		UrlBox.SetResourceReference(Control.BackgroundProperty, "Metro81.Surface");
 		AutomationProperties.SetName(UrlBox, "RSS or Atom feed URL");

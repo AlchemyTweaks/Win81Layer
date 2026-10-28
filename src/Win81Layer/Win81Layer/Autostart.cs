@@ -24,6 +24,7 @@ public static class Autostart
 
 	public static void SetEnabled(bool enabled)
 	{
+		SettingsGuard.ThrowIfReadOnly("Run key");
 		try
 		{
 			using RegistryKey key = Registry.CurrentUser.CreateSubKey("Software\\Microsoft\\Windows\\CurrentVersion\\Run");

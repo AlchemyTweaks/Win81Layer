@@ -30,6 +30,7 @@ internal static class RadioQuick
 
 	public static async Task<bool> ToggleAirplane()
 	{
+		SettingsGuard.ThrowIfReadOnly("radios");
 		try
 		{
 			if (await Radio.RequestAccessAsync() != RadioAccessStatus.Allowed)
@@ -65,6 +66,7 @@ internal static class RadioQuick
 	// Direction-aware setters (so "turn off bluetooth" ends OFF regardless of current state, unlike Toggle*).
 	public static async Task<bool> SetKind(RadioKind kind, bool on)
 	{
+		SettingsGuard.ThrowIfReadOnly("radio");
 		try
 		{
 			if (await Radio.RequestAccessAsync() != RadioAccessStatus.Allowed)
@@ -86,6 +88,7 @@ internal static class RadioQuick
 
 	public static async Task<bool> SetAirplane(bool on)
 	{
+		SettingsGuard.ThrowIfReadOnly("radios");
 		try
 		{
 			if (await Radio.RequestAccessAsync() != RadioAccessStatus.Allowed)
@@ -119,6 +122,7 @@ internal static class RadioQuick
 
 	public static async Task<bool> ToggleBluetooth()
 	{
+		SettingsGuard.ThrowIfReadOnly("bluetooth");
 		try
 		{
 			if (await Radio.RequestAccessAsync() != RadioAccessStatus.Allowed)

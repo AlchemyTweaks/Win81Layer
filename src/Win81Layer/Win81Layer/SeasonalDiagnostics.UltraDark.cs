@@ -1044,8 +1044,8 @@ internal static partial class SeasonalDiagnostics
 		// the app cards' logos left out (a lifted dark logo is light by design)
 		yield return ("flyout-volume-rest.png", new Int32Rect[1] { _restVolumeLogos });
 		yield return ("flyout-network-rest.png", none);
-		// the hub tiles at the top of the page carry large tile glyphs (left out like the preview tiles)
-		yield return ("pcsettings-rest-devices.png", new Int32Rect[1] { new Int32Rect(360, 94, 770, 150) });
+		// the hero's mini-tile glyph on Home of the PC settings hub (left out like the preview tiles)
+		yield return ("pcsettings-rest-devices.png", new Int32Rect[1] { new Int32Rect(488, 60, 40, 40) });
 		yield return ("actioncenter-rest.png", none);
 		yield return ("contextmenu-rest.png", none);
 		yield return ("caption-rest.png", none);
@@ -1154,13 +1154,15 @@ internal static partial class SeasonalDiagnostics
 		Spot("osd empty outline", "osd-rest.png", new Int32Rect(240, 12, 30, 20), new Int32Rect(247, 15, 8, 10), 3.0);
 		Spot("button outline", "controls-rest.png", new Int32Rect(240, 559, 70, 6), new Int32Rect(240, 540, 70, 8), 3.0);
 		Spot("slider remainder outline", "controls-rest.png", new Int32Rect(300, 304, 140, 12), new Int32Rect(300, 320, 140, 6), 3.0);
-		Spot("pc nav selected ink", "pcsettings-rest-devices.png", new Int32Rect(40, 176, 110, 22), new Int32Rect(200, 170, 80, 30), 4.5);
+		// the hub's sidebar: "Home" selected (28 DIP rows from y 126), its ink against the selected wash right of the text
+		Spot("pc nav selected ink", "pcsettings-rest-devices.png", new Int32Rect(36, 132, 40, 16), new Int32Rect(120, 129, 90, 22), 4.5);
 		{
 			string devices = Path.Combine(outDir, "pcsettings-rest-devices.png");
 			if (File.Exists(devices))
 			{
-				(double sr, double sg, double sb) = RegionAverage(devices, 220, 170, 70, 30);
-				(double pr, double pg, double pb) = RegionAverage(devices, 220, 250, 70, 30);
+				// the selected Home row against the unselected Sound row, right of their labels
+				(double sr, double sg, double sb) = RegionAverage(devices, 120, 129, 90, 22);
+				(double pr, double pg, double pb) = RegionAverage(devices, 120, 231, 90, 22);
 				double navC = Contrast(Color.FromRgb((byte)sr, (byte)sg, (byte)sb), Color.FromRgb((byte)pr, (byte)pg, (byte)pb));
 				got.Add($"pc nav selected fill={navC:F2}");
 				if (navC < 3.0)

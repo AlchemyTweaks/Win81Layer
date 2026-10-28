@@ -32,6 +32,23 @@ public static class StartAccent
 		return Color();
 	}
 
+	// The colour of window frames and 8.1 captions: the accent, or the frame colour of its own when the user chose one.
+	public static Color FrameColor()
+	{
+		try
+		{
+			AppSettings s = SettingsStore.Load();
+			if (s.FrameAccentSeparate && !string.IsNullOrWhiteSpace(s.FrameAccentColor))
+			{
+				return (Color)ColorConverter.ConvertFromString(s.FrameAccentColor);
+			}
+		}
+		catch
+		{
+		}
+		return Color();
+	}
+
 	public static Color Tint(double towardWhite)
 	{
 		Color c = Color();

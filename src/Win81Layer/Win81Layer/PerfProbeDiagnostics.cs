@@ -56,7 +56,7 @@ internal static class PerfProbe
 	}
 }
 
-// --perfprobe <outDir> <scenario> [--policy legacy|new] [--assume-idle]
+// --perfprobe <outDir> <scenario> [--policy legacy|new] [--assume-idle] [--software-render]
 // Scenarios: mem (memory and decoded-pixel census), open (offscreen open latency with and without a preceding trim),
 // idle (timer wake-ups and context switches of the idle shell schedule), stall (UI dispatch delay while the periodic
 // maintenance runs). Every window stays offscreen (Left/Top <= -3000), is never activated and carries WS_EX_NOACTIVATE.
@@ -105,6 +105,7 @@ internal static partial class PerfProbeDiagnostics
 		PerfProbe.LegacyPolicy = pol >= 0 && pol + 1 < args.Length && string.Equals(args[pol + 1], "legacy", StringComparison.OrdinalIgnoreCase);
 		_assumeIdle = args.Contains("--assume-idle");
 		_metroCold = args.Contains("--cold");
+		bool softwareRender = args.Contains("--software-render");
 		Directory.CreateDirectory(_outDir);
 		// Hard deadline: whatever happens on the UI thread, the process is gone within 115 s.
 		Thread deadline = new Thread(delegate()
@@ -135,7 +136,11 @@ internal static partial class PerfProbeDiagnostics
 			{
 				_stateBefore = HashState();
 				AppSettings s = UserLikeSettings(SettingsStore.Load());
+				// --software-render: Lighter rendering on (through the override only), applied as App.OnStartup applies it
+				s.ProcessSoftwareRender = softwareRender;
 				SettingsStore.DiagnosticsOverride = s;
+				App.ApplyProcessRenderMode(s);
+				Report["softwareRender"] = App.ProcessSoftwareRendering;
 				Report["scenario"] = _scenario;
 				Report["policy"] = PerfProbe.LegacyPolicy ? "legacy" : "new";
 				Report["pid"] = Environment.ProcessId;
@@ -167,6 +172,9 @@ internal static partial class PerfProbeDiagnostics
 					break;
 				case "modeswitch":
 					await RunModeSwitch();
+					break;
+				case "pcsettings":
+					await RunPcSettings();
 					break;
 				default:
 					Note("unknown scenario " + _scenario);

@@ -1421,7 +1421,7 @@ internal static class SeasonalAppIconsDiagnostics
 		};
 		try
 		{
-			pc.QaRenderTall(path, "Launcher");
+			pc.QaRenderTall(path, "Appearance");
 		}
 		finally
 		{

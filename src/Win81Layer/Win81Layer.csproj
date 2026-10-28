@@ -62,8 +62,10 @@
     <PackageReference Include="System.ServiceModel.Syndication" Version="10.0.11" />
   </ItemGroup>
   <ItemGroup>
+    <!-- pcsettings_gear.png and start-bg.orig.png are not loaded by anything (the gear is drawn as a vector, the Start
+         background is start-bg.png): left out of the assembly (about 0.5 MB). -->
     <Resource Include="assets\**\*.png"
-              Exclude="assets\Wallpapers\**\*.png;assets\Win81Icons\uwp\**\*.png;assets\Windows81\**\*.png" />
+              Exclude="assets\Wallpapers\**\*.png;assets\Win81Icons\uwp\**\*.png;assets\Windows81\**\*.png;assets\pcsettings_gear.png;assets\start-bg.orig.png" />
     <Resource Include="assets\**\*.ico" Exclude="assets\Windows81\**\*.ico" />
   </ItemGroup>
 

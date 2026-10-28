@@ -91,18 +91,16 @@ public static class AudioDevices
 		}
 	}
 
+	internal static string? FriendlyNameOf(IMMDevice dev) => FriendlyName(dev);
+
+	// The default device for the console and multimedia roles (the communications device keeps its own choice; PC
+	// Settings offers "Also use for calls"), through the shared audio service.
 	public static void SetDefault(string deviceId)
 	{
+		SettingsGuard.ThrowIfReadOnly("default audio device");
 		try
 		{
-			Type t = Type.GetTypeFromCLSID(CLSID_PolicyConfigClient);
-			if (!(t == null))
-			{
-				IPolicyConfig pc = (IPolicyConfig)Activator.CreateInstance(t);
-				pc.SetDefaultEndpoint(deviceId, 0);
-				pc.SetDefaultEndpoint(deviceId, 1);
-				pc.SetDefaultEndpoint(deviceId, 2);
-			}
+			AudioEndpointService.Shared.SetDefault(deviceId, communications: false);
 		}
 		catch (Exception ex)
 		{

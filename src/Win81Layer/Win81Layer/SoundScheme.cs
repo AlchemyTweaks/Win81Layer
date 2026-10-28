@@ -73,6 +73,7 @@ public static class SoundScheme
 
 	public static void Apply()
 	{
+		SettingsGuard.ThrowIfReadOnly("sound scheme");
 		try
 		{
 			Dictionary<string, string> wavs = Win81Wavs();
@@ -160,6 +161,7 @@ public static class SoundScheme
 
 	public static void Revert()
 	{
+		SettingsGuard.ThrowIfReadOnly("sound scheme");
 		try
 		{
 			if (!File.Exists(SnapshotPath))

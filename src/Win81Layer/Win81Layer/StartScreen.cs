@@ -143,6 +143,13 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 
 	private int _deferredIconPixels = 64;
 
+	// Windows 7 Start mode: the icons of apps that are only Start tiles (not taskbar pins) wait until Metro Start's
+	// visuals are realized, then load at the same full size as the priority pass (no pixel changes). Guarded by
+	// _deferredIconGate.
+	private List<AppEntry>? _deferredTileIconApps;
+
+	private bool _tileIconsWanted;
+
 	private readonly object _priorityIconGate = new object();
 
 	private HashSet<string> _priorityIconPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -614,6 +621,7 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 		}
 		_visualsDeferred = false;
 		Stopwatch sw = Stopwatch.StartNew();
+		EnsureDeferredTileIconsLoaded();
 		if (_bgPending)
 		{
 			_bgPending = false;
@@ -2948,6 +2956,9 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 					? $"Profile pre-read OK off-UI ({preProfileJson.Length} chars)"
 					: "Profile pre-read returned null (file missing or unreadable for full window)");
 				HashSet<string> priorityIconPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+				// Windows 7 Start mode with Metro's visuals deferred: the tiles' icons wait for the board (taskbar pins load now).
+				HashSet<string> tileIconPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+				bool tileIconsLater = false;
 				((DispatcherObject)this).Dispatcher.Invoke((Action)delegate
 				{
 					if (!apps.Any((AppEntry a) => a.LaunchPath == "win81:desktop"))
@@ -2976,11 +2987,12 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 						Logger.Log("Migrations SKIPPED: settings load was degraded (cold-boot lock) - layout left exactly as saved");
 					}
 					AssignInitialLayout();
+					tileIconsLater = _visualsDeferred;
 					foreach (TileVm tile in _groups.SelectMany((GroupVm group) => group.Tiles))
 					{
 						if (!string.IsNullOrWhiteSpace(tile.Entry.LaunchPath))
 						{
-							priorityIconPaths.Add(tile.Entry.LaunchPath);
+							(tileIconsLater ? tileIconPaths : priorityIconPaths).Add(tile.Entry.LaunchPath);
 						}
 					}
 					TilePanel.BandRowCapacity = StartRowCapacity();
@@ -3023,6 +3035,7 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 				bool replace81AppIcons = SettingsStore.Current.Replace81AppIcons;
 				List<(AppEntry Entry, ImageSource Icon, bool Over)> batch = new List<(AppEntry, ImageSource, bool)>(16);
 				List<AppEntry> deferred = new List<AppEntry>();
+				List<AppEntry> tileDeferred = new List<AppEntry>();
 				int priorityLoaded = 0;
 				if (list != null)
 				{
@@ -3034,7 +3047,7 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 							AppInventory.IShellItem item2 = item5.Item2;
 							if (!priorityIconPaths.Contains(item.LaunchPath))
 							{
-								deferred.Add(item);
+								(tileIconPaths.Contains(item.LaunchPath) ? tileDeferred : deferred).Add(item);
 								continue;
 							}
 							ImageSource imageSource = (replace81AppIcons ? AppIconOverrides.TryGet(item) : null);
@@ -3068,7 +3081,7 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 					{
 						if (!priorityIconPaths.Contains(current3.LaunchPath))
 						{
-							deferred.Add(current3);
+							(tileIconPaths.Contains(current3.LaunchPath) ? tileDeferred : deferred).Add(current3);
 							continue;
 						}
 						ImageSource imageSource3 = (replace81AppIcons ? AppIconOverrides.TryGet(current3) : null);
@@ -3094,7 +3107,8 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 					_priorityIconPaths = new HashSet<string>(priorityIconPaths, StringComparer.OrdinalIgnoreCase);
 				}
 				SetDeferredIconApps(deferred);
-				Logger.Log($"Priority icon loading finished: {priorityLoaded} Start/taskbar apps; deferred={deferred.Count}");
+				SetDeferredTileIcons(tileDeferred);
+				Logger.Log($"Priority icon loading finished: {priorityLoaded} {(tileIconsLater ? "taskbar" : "Start/taskbar")} apps; deferred={deferred.Count}" + (tileIconsLater ? $", tile-only waiting for Metro Start={tileDeferred.Count}" : string.Empty));
 			}
 			catch (Exception value2)
 			{
@@ -3248,6 +3262,185 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 		if (start != null)
 		{
 			StartDeferredIconLoader(start, preferredPixels);
+		}
+	}
+
+	// The tile-only icons of Windows 7 Start mode: held until Metro Start's visuals are realized (or loaded at once when
+	// that already happened while the app list was loading).
+	private void SetDeferredTileIcons(List<AppEntry> apps)
+	{
+		List<AppEntry>? start = null;
+		lock (_deferredIconGate)
+		{
+			if (apps.Count == 0)
+			{
+				return;
+			}
+			if (_tileIconsWanted)
+			{
+				start = apps;
+			}
+			else
+			{
+				_deferredTileIconApps = apps;
+			}
+		}
+		if (start != null)
+		{
+			StartFullIconLoader(start, "tile");
+		}
+	}
+
+	// Metro Start's visuals are realized: the tiles' icons load now (full size, like the priority pass).
+	private void EnsureDeferredTileIconsLoaded()
+	{
+		List<AppEntry>? start;
+		lock (_deferredIconGate)
+		{
+			_tileIconsWanted = true;
+			start = _deferredTileIconApps;
+			_deferredTileIconApps = null;
+		}
+		if (start is { Count: > 0 })
+		{
+			StartFullIconLoader(start, "tile");
+		}
+	}
+
+	private readonly HashSet<AppEntry> _iconRequests = new HashSet<AppEntry>();
+
+	// A surface that shows an app whose tile icon is still waiting for Metro Start (the Search charm's rows): that icon is
+	// loaded now at full size on a worker and arrives through the Icon property (a letter tile shows meanwhile). Any other
+	// app keeps the loading it had.
+	internal static void RequestIcon(AppEntry? entry)
+	{
+		StartScreen? s = Current;
+		if (s == null || entry == null || entry.Icon != null || string.IsNullOrWhiteSpace(entry.LaunchPath))
+		{
+			return;
+		}
+		lock (s._deferredIconGate)
+		{
+			if (s._deferredTileIconApps == null || !s._deferredTileIconApps.Remove(entry) || !s._iconRequests.Add(entry))
+			{
+				return;
+			}
+			s._onDemandQueue.Add(entry);
+			if (s._onDemandRunning)
+			{
+				// the running worker takes it with the next batch
+				return;
+			}
+			s._onDemandRunning = true;
+		}
+		s.StartOnDemandLoader();
+	}
+
+	// Apps asked for by RequestIcon, waiting for the one on-demand worker (under _deferredIconGate).
+	private readonly List<AppEntry> _onDemandQueue = new List<AppEntry>();
+
+	private bool _onDemandRunning;
+
+	// One STA worker for every on-demand icon: it loads what is queued, then whatever was asked for meanwhile (a results
+	// list asks for several apps at once), and ends when the queue is empty.
+	private void StartOnDemandLoader()
+	{
+		Thread thread = new Thread((ThreadStart)delegate
+		{
+			while (true)
+			{
+				List<AppEntry> batch;
+				lock (_deferredIconGate)
+				{
+					if (_onDemandQueue.Count == 0)
+					{
+						_onDemandRunning = false;
+						return;
+					}
+					batch = new List<AppEntry>(_onDemandQueue);
+					_onDemandQueue.Clear();
+				}
+				LoadFullIcons(batch, "on demand");
+			}
+		})
+		{
+			IsBackground = true,
+			Name = "OnDemandIconLoader",
+			Priority = ThreadPriority.BelowNormal
+		};
+		thread.SetApartmentState(ApartmentState.STA);
+		thread.Start();
+	}
+
+	// Loads full-size icons (the priority pass's size) for these apps on an STA worker; they count as priority icons from
+	// then on, so the all-apps idle hibernation never swaps them for small copies.
+	private void StartFullIconLoader(List<AppEntry> apps, string why)
+	{
+		Thread thread = new Thread((ThreadStart)delegate
+		{
+			LoadFullIcons(apps, why);
+		})
+		{
+			IsBackground = true,
+			Name = "FullIconLoader",
+			Priority = ThreadPriority.BelowNormal
+		};
+		thread.SetApartmentState(ApartmentState.STA);
+		thread.Start();
+	}
+
+	// The loading itself, on the calling STA worker.
+	private void LoadFullIcons(List<AppEntry> apps, string why)
+	{
+		{
+			Stopwatch sw = Stopwatch.StartNew();
+			int loaded = 0;
+			List<(AppEntry Entry, ImageSource Icon, bool Over)> batch = new List<(AppEntry, ImageSource, bool)>(16);
+			try
+			{
+				bool replace81AppIcons = SettingsStore.Current.Replace81AppIcons;
+				foreach (AppEntry entry in apps)
+				{
+					if (entry.Icon != null)
+					{
+						continue;
+					}
+					lock (_priorityIconGate)
+					{
+						_priorityIconPaths.Add(entry.LaunchPath);
+					}
+					ImageSource over = replace81AppIcons ? AppIconOverrides.TryGet(entry) : null;
+					ImageSource icon = over ?? AppInventory.LoadIcon(entry.LaunchPath);
+					if (icon != null)
+					{
+						batch.Add((entry, icon, over != null));
+						loaded++;
+						if (batch.Count >= 16)
+						{
+							QueueIconBatch(batch);
+						}
+					}
+				}
+				QueueIconBatch(batch);
+				if (apps.Count > 1)
+				{
+					Logger.Log($"{why} icon loading finished: {loaded}/{apps.Count} apps in {sw.ElapsedMilliseconds}ms");
+				}
+			}
+			catch (Exception ex)
+			{
+				Logger.Log(why + " icon loading failed: " + ex.Message);
+			}
+			finally
+			{
+				lock (_deferredIconGate)
+				{
+					foreach (AppEntry e in apps)
+					{
+						_iconRequests.Remove(e);
+					}
+				}
+			}
 		}
 	}
 
@@ -3581,9 +3774,11 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 					priority = new HashSet<string>(_priorityIconPaths, StringComparer.OrdinalIgnoreCase);
 				}
 				List<AppEntry> deferred = new List<AppEntry>();
+				// tile icons still waiting for Metro Start load at full size later, never as small all-apps copies
+				HashSet<AppEntry>? waiting = _deferredTileIconApps is { Count: > 0 } w ? new HashSet<AppEntry>(w) : null;
 				foreach (AppEntry entry in _apps)
 				{
-					if (priority.Contains(entry.LaunchPath))
+					if (priority.Contains(entry.LaunchPath) || (waiting != null && waiting.Contains(entry)))
 					{
 						continue;
 					}
@@ -5943,9 +6138,10 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 			HideStart(animate: true);
 			return;
 		}
-		if (entry.LaunchPath == "win81:pcsettings")
+		if (entry.LaunchPath != null && entry.LaunchPath.StartsWith("win81:pcsettings", StringComparison.OrdinalIgnoreCase))
 		{
 			HideStart();
+			PcSettingsWindow.SetPendingLink(entry.LaunchPath);
 			PcSettingsRequested?.Invoke();
 			return;
 		}
@@ -5996,8 +6192,9 @@ public partial class StartScreen : Window, IComponentConnector, IStyleConnector
 			return;
 		}
 		string launchPath = entry.LaunchPath;
-		if (launchPath == "win81:pcsettings")
+		if (launchPath != null && launchPath.StartsWith("win81:pcsettings", StringComparison.OrdinalIgnoreCase))
 		{
+			PcSettingsWindow.SetPendingLink(launchPath);
 			PcSettingsRequested?.Invoke();
 			return;
 		}

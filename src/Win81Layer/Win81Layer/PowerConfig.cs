@@ -40,11 +40,13 @@ internal static class PowerConfig
 
 	public static void SetMonitorTimeoutAcMin(int min)
 	{
+		SettingsGuard.ThrowIfReadOnly("power.screen");
 		Write(ref _subVideo, ref _videoIdle, min);
 	}
 
 	public static void SetStandbyTimeoutAcMin(int min)
 	{
+		SettingsGuard.ThrowIfReadOnly("power.sleep");
 		Write(ref _subSleep, ref _standbyIdle, min);
 	}
 

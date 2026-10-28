@@ -89,7 +89,19 @@ internal static class MetroIntegrationProbe
                     Audit(pcRoot, "pc-launcher-1024", controls);
                     SaveScene(pcRoot, "pc-launcher-normal", 1366, 768, output, images, checks);
                     Audit(pcRoot, "pc-launcher-normal", controls);
-                    CheckLauncher(pcRoot, checks, metro);
+                    // The launcher's own settings now span four hub pages (Launcher, Desktop & taskbar, Start & search,
+                    // Appearance): the audit covers all of them with the same thresholds.
+                    List<FrameworkElement> hubPages = new() { pcRoot };
+                    foreach (string page in new[] { "launcher", "taskbar", "start", "appearance" })
+                    {
+                        ScrollViewer body = (ScrollViewer)Invoke(pc, "BuildPage", page)!;
+                        pc.Content = body;
+                        body.Measure(new Size(900, 4000)); body.Arrange(new Rect(0, 0, 900, 4000)); body.UpdateLayout();
+                        Audit(body, "pc-" + page, controls);
+                        hubPages.Add(body);
+                    }
+                    pc.Content = pcRoot;
+                    CheckLauncher(hubPages, checks, metro);
 
                     // QaRender calls Show(). Build the same real Launcher page and keep WPF resource inheritance instead.
                     ScrollViewer tall = (ScrollViewer)Invoke(pc, "BuildPage", "Launcher")!;
@@ -247,9 +259,10 @@ internal static class MetroIntegrationProbe
         static Style? appStyle(string key) => Application.Current.TryFindResource(key) as Style;
     }
 
-    private static void CheckLauncher(FrameworkElement root, List<Check> checks, bool metro)
+    private static void CheckLauncher(IEnumerable<FrameworkElement> roots, List<Check> checks, bool metro)
     {
-        var controls = Tree(root).OfType<Control>().Where(c => c.TemplatedParent == null).ToArray();
+        FrameworkElement root = roots.First();
+        var controls = roots.SelectMany(r => Tree(r)).OfType<Control>().Where(c => c.TemplatedParent == null).Distinct().ToArray();
         var toggles = controls.OfType<ToggleButton>().Where(c => c is not CheckBox && c is not RadioButton).ToArray();
         var combos = controls.OfType<ComboBox>().ToArray();
         checks.Add(new("Launcher toggle adoption", metro && toggles.Length >= 10 && toggles.All(c => StyleKey(c) == "Metro81.ToggleSwitch"), "Actual Launcher controls, no diagnostic style substitutions."));

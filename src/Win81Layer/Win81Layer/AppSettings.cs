@@ -84,8 +84,6 @@ public sealed class AppSettings
 
 	public bool RunFirstTask { get; set; }
 
-	public bool NativeChrome { get; set; }
-
 	public int AutoLockMinutes { get; set; }
 
 	public string ScreenshotApp { get; set; } = "";
@@ -103,6 +101,31 @@ public sealed class AppSettings
 	public string StartBgColor { get; set; } = "#FF3C1E70";
 
 	public string StartAccentColor { get; set; } = "";
+
+	// Window frames and 8.1 captions keep a colour of their own (FrameAccentColor, one of the Windows 8.1 window-border
+	// colours) instead of following StartAccentColor. Off by default.
+	public bool FrameAccentSeparate { get; set; }
+
+	public string FrameAccentColor { get; set; } = "";
+
+	// PC settings: the window's bounds per monitor ("device|x,y,w,h,max;..." in physical pixels) and the immersive
+	// full-screen mode instead of the compact window.
+	public string PcSettingsBounds { get; set; } = "";
+
+	public bool PcSettingsFullScreen { get; set; }
+
+	// PC settings: the rows starred as Favourites (row ids, ";"-separated, shown live on Home) and the user's Setups
+	// (one "name|row=value,row=value" per line; at most 6, applied by hand as one undoable group).
+	public string PcFavorites { get; set; } = "";
+
+	public string PcSetups { get; set; } = "";
+
+	// The Action Center's "All settings" opens PC settings (Shift+click opens Windows Settings); false: Windows Settings.
+	public bool AllSettingsOpensHub { get; set; } = true;
+
+	// Lighter rendering: every window of the launcher renders in software (no Direct3D device at all). Less memory; read
+	// once at start, so a change needs a restart.
+	public bool ProcessSoftwareRender { get; set; }
 
 	public string StartPattern { get; set; } = "waves";
 
