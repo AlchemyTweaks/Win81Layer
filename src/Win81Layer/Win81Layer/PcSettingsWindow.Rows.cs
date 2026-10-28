@@ -1571,6 +1571,23 @@ public sealed partial class PcSettingsWindow
 		return b;
 	}
 
+	// A one-line text field of the hub's 28 DIP control height. The window's Metro81.TextBox style asks for 36 DIP and
+	// 4 DIP of vertical padding; left as is, a 28 DIP field is laid out 36 tall and its text sits low, so both are reset.
+	internal static TextBox FieldBox(double width)
+	{
+		TextBox box = new TextBox
+		{
+			Width = width,
+			Height = 28.0,
+			MinHeight = 28.0,
+			FontSize = 13.5,
+			Padding = new Thickness(6.0, 0.0, 6.0, 0.0),
+			VerticalContentAlignment = VerticalAlignment.Center
+		};
+		box.SetResourceReference(FrameworkElement.StyleProperty, "Metro81.TextBox");
+		return box;
+	}
+
 	// An inline line under a row (an error, a note) in the secondary or error ink.
 	private TextBlock InlineNote(string text, bool error = false)
 	{

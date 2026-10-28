@@ -617,17 +617,8 @@ public sealed partial class PcSettingsWindow
 			pg.Add(ActionRow("start.matchtheme", delegate { start.SyncStartAccentToTheme(); }, "The accent follows the Start background again", "Match the Start screen theme", ""));
 		}
 		pg.Header("Live tiles");
-		TextBox city = new TextBox
-		{
-			Text = s.WeatherCity ?? "",
-			Width = 180.0,
-			Height = 28.0,
-			MinHeight = 28.0,
-			FontSize = 13.5,
-			Padding = new Thickness(6.0, 0.0, 6.0, 0.0),
-			VerticalContentAlignment = VerticalAlignment.Center
-		};
-		city.SetResourceReference(FrameworkElement.StyleProperty, "Metro81.TextBox");
+		TextBox city = FieldBox(180.0);
+		city.Text = s.WeatherCity ?? "";
 		city.LostKeyboardFocus += delegate
 		{
 			string c = city.Text.Trim();
@@ -673,17 +664,8 @@ public sealed partial class PcSettingsWindow
 		NewsFeedService.Source[] sources = NewsFeedService.Sources;
 		string[] names = sources.Select((NewsFeedService.Source x) => x.Name).Append("Custom feed").ToArray();
 		int index = Array.FindIndex(sources, (NewsFeedService.Source x) => x.Url == feed);
-		TextBox box = new TextBox
-		{
-			Text = feed,
-			Width = 240.0,
-			Height = 28.0,
-			MinHeight = 28.0,
-			FontSize = 13.5,
-			Padding = new Thickness(6.0, 0.0, 6.0, 0.0),
-			VerticalContentAlignment = VerticalAlignment.Center
-		};
-		box.SetResourceReference(FrameworkElement.StyleProperty, "Metro81.TextBox");
+		TextBox box = FieldBox(240.0);
+		box.Text = feed;
 		TextBlock note = InlineNote(string.Empty, error: true);
 		note.Visibility = Visibility.Collapsed;
 		ComboBox? choice = null;

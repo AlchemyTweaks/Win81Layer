@@ -1168,8 +1168,7 @@ public sealed partial class PcSettingsWindow
 		ISettingsWorld world = SettingsWorld.Current;
 		PowerPlanKnob k = (PowerPlanKnob)HubKnobs.Get("power.plan")!;
 		KnobBinding b = Bind("power.plan", k, "Power plan", "power/plans");
-		TextBox filter = new TextBox { Width = 220.0, Height = 28.0, VerticalContentAlignment = VerticalAlignment.Center, FontSize = 13.5 };
-		filter.SetResourceReference(FrameworkElement.StyleProperty, "Metro81.TextBox");
+		TextBox filter = FieldBox(220.0);
 		filter.SetResourceReference(FrameworkElement.FocusVisualStyleProperty, "Metro81.Focus");
 		pg.Header("Find a plan");
 		Grid filterRow = RowShell("Filter", null, null, filter, out _);
@@ -1400,8 +1399,7 @@ public sealed partial class PcSettingsWindow
 		pg.Header("Repeat");
 		pg.Add(KnobRow("keyboard.delay"));
 		pg.Add(KnobRow("keyboard.rate"));
-		_repeatTest = new TextBox { Width = 220.0, Height = 28.0, VerticalContentAlignment = VerticalAlignment.Center, FontSize = 13.5 };
-		_repeatTest.SetResourceReference(FrameworkElement.StyleProperty, "Metro81.TextBox");
+		_repeatTest = FieldBox(220.0);
 		_repeatTest.SetResourceReference(FrameworkElement.FocusVisualStyleProperty, "Metro81.Focus");
 		Grid test = RowShell("Test", "Hold a key here", null, _repeatTest, out _);
 		AutomationProperties.SetName(_repeatTest, "Test the repeat");

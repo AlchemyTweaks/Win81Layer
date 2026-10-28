@@ -27,6 +27,7 @@ internal static partial class PcHubDiagnostics
 		ReadOnlyValues();
 		TilesAndGrids();
 		SearchCue();
+		FieldHeights();
 		DisplaysAndLinks();
 		UndoScope();
 		RadiosUndo();
@@ -187,15 +188,60 @@ internal static partial class PcHubDiagnostics
 			// the cue would be hidden by the text anyway; the text is rendered alone
 			Pump();
 			Int32Rect typed = InkBounds(w.QaSearchHost);
+			// a word without descenders: its ink runs from the ascenders to the baseline, so its middle is the line's
+			// optical centre, which has to sit on the field's centre line (the magnifier glyph is centred on it)
+			w.QaSearchBox.Text = "Search";
+			Pump();
+			Int32Rect word = InkBounds(w.QaSearchHost);
+			FrameworkElement? content = w.QaSearchBox.Template?.FindName("PART_ContentHost", w.QaSearchBox) as FrameworkElement;
+			double contentY = content?.TranslatePoint(new Point(0.0, 0.0), w.QaSearchHost).Y ?? double.NaN;
+			Rect first = w.QaSearchBox.GetRectFromCharacterIndex(0);
 			w.QaSearchBox.Text = "";
 			Pump();
 			bool ok = cue.Width > 0 && typed.Width > 0 && Math.Abs(cue.X - typed.X) <= 1 && Math.Abs(cue.Y - typed.Y) <= 1;
 			Check("search-cue-aligned", ok, $"cue ink at {cue.X},{cue.Y} {cue.Width}x{cue.Height}; typed text at {typed.X},{typed.Y} {typed.Width}x{typed.Height}");
+			double mid = word.Y + word.Height / 2.0;
+			double boxMid = w.QaSearchHost.ActualHeight / 2.0;
+			Check("search-text-centered", word.Height > 0 && Math.Abs(mid - boxMid) <= 1.0, $"'Search' ink rows {word.Y}..{word.Y + word.Height - 1}, middle {mid:0.0} vs field middle {boxMid:0.0}; text host at y {contentY:0.#} h {content?.ActualHeight:0.#} in a {w.QaSearchBox.ActualHeight:0.#} DIP box; first character line y {first.Y:0.#} h {first.Height:0.#}");
 		}
 		finally
 		{
 			w.Close();
 		}
+	}
+
+	// Every one-line text field on the pages is laid out at the hub's 28 DIP height (not the Metro style's 36) and its
+	// text line is centred in it.
+	private static void FieldHeights()
+	{
+		List<string> got = new List<string>();
+		bool ok = true;
+		foreach ((string page, string row) in new[] { ("start", "start.weathercity"), ("start", "start.newsfeed"), ("power/plans", "power.plans.filter"), ("keyboard", "keyboard.test") })
+		{
+			PcSettingsWindow w = Stage2Window(page);
+			try
+			{
+				w.QaWaitReads();
+				TextBox? box = w.QaRowElement(row) is DependencyObject r ? PcSettingsWindow.Descendants<TextBox>(r).FirstOrDefault() : null;
+				if (box == null)
+				{
+					ok = false;
+					got.Add(row + ": no field");
+					continue;
+				}
+				box.UpdateLayout();
+				FrameworkElement? content = box.Template?.FindName("PART_ContentHost", box) as FrameworkElement;
+				double mid = content == null ? double.NaN : content.TranslatePoint(new Point(0.0, content.ActualHeight / 2.0), box).Y;
+				bool fine = Math.Abs(box.ActualHeight - 28.0) < 0.5 && Math.Abs(mid - 14.0) <= 1.0;
+				ok &= fine;
+				got.Add($"{row} h {box.ActualHeight:0.#} text middle {mid:0.#}");
+			}
+			finally
+			{
+				w.Close();
+			}
+		}
+		Check("fields-28", ok, string.Join("; ", got));
 	}
 
 	// The bounds of the text ink in the search field (right of the magnifier glyph): the window's root is rendered and the

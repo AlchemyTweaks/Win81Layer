@@ -582,7 +582,8 @@ public sealed partial class PcSettingsWindow : Window
 		_railGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(CaptionH + 8.0) });
 		_railGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 		_railGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1.0, GridUnitType.Star) });
-		// search (fixed, does not scroll)
+		// search (fixed, does not scroll); MinHeight 0 because the window's Metro81.TextBox style asks for 36 DIP, which
+		// would lay the field out taller than its 28 DIP box and centre the text 4 DIP low
 		_search = new TextBox
 		{
 			BorderThickness = new Thickness(0.0),
@@ -590,6 +591,7 @@ public sealed partial class PcSettingsWindow : Window
 			FontFamily = SegoeUi,
 			FontSize = 13.5,
 			VerticalContentAlignment = VerticalAlignment.Center,
+			MinHeight = 0.0,
 			Padding = new Thickness(0.0),
 			Margin = new Thickness(26.0, 0.0, 6.0, 0.0),
 			Template = PlainTextBoxTemplate()
